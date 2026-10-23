@@ -11,6 +11,8 @@ A mobile-first Three.js toy: a touchable 3D object you can switch between materi
 
 Switch between **Orb** and **Cube** in the bottom panel; the shape morphs and every material works on both. The play/pause button starts or stops the slow idle spin; the three dots pick the setting: a white **Studio**, **Dusk** or **Night** (the default). The UI goes dark on the two dark settings. Drag the background to spin. On desktop, keys 1–4 switch material, O / C switch shape, B cycles the setting and S starts or stops the idle spin.
 
+The URL follows the scene, so a reload (or a shared link) opens on the same view, e.g. `?material=fur&shape=cube&setting=studio&spin=off`. Each part is optional and defaults to water, orb, night and spin on.
+
 ## Development
 
 Requires Node 20+.

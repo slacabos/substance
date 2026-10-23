@@ -25,8 +25,10 @@ export class SpinController {
     this.angularVelocity.copy(this.idle);
   }
 
-  setIdle(on: boolean): void {
+  /** Turns the slow idle spin on or off; `instant` jumps straight to it instead of easing over. */
+  setIdle(on: boolean, instant = false): void {
     this.idle.set(0, on ? this.idleSpeed : 0, 0);
+    if (instant) this.angularVelocity.copy(this.idle);
   }
 
   grab(): void {

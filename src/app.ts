@@ -1,5 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import { intersectShape } from './core/hit';
+import { parseScene, sceneQuery, type SceneState } from './core/scene';
 import { Spring, stepSprings } from './core/spring';
 import type { DeviceProfile } from './device';
 import { createDeformGeometry } from './materials/deform';
@@ -15,8 +16,6 @@ import { ShapeMorph } from './scene/shape';
 import { Stage } from './scene/stage';
 import { Controls } from './ui/controls';
 
-const DEFAULT_SETTING: SettingId = 'night';
-
 export class App implements PointerTarget {
   private readonly stage: Stage;
   private readonly device: DeviceProfile;
@@ -28,8 +27,8 @@ export class App implements PointerTarget {
   /** Scale "pop" when switching material. */
   private readonly pop = new Spring(240, 13, 1, 1);
   private current: Substance;
-  private setting: SettingId = DEFAULT_SETTING;
-  private autoSpin = true;
+  private setting: SettingId;
+  private autoSpin: boolean;
   private time = 0;
   private last = performance.now();
 
@@ -39,15 +38,18 @@ export class App implements PointerTarget {
   private readonly rayOrigin = new Vector3();
   private readonly rayDir = new Vector3();
 
-  /** Starts the renderer (WebGPU only) and builds the app. */
+  /** Starts the renderer (WebGPU only) and builds the app, opening on the scene the URL asks for. */
   static async create(canvas: HTMLCanvasElement, device: DeviceProfile): Promise<App> {
-    const stage = await Stage.create(canvas, DEFAULT_SETTING, !device.coarse);
-    return new App(canvas, device, stage);
+    const scene = parseScene(location.search);
+    const stage = await Stage.create(canvas, scene.setting, !device.coarse);
+    return new App(canvas, device, stage, scene);
   }
 
-  private constructor(canvas: HTMLCanvasElement, device: DeviceProfile, stage: Stage) {
+  private constructor(canvas: HTMLCanvasElement, device: DeviceProfile, stage: Stage, scene: SceneState) {
     this.device = device;
     this.stage = stage;
+    this.setting = scene.setting;
+    this.autoSpin = scene.spin;
     const geometry = createDeformGeometry(device.coarse);
     this.materials = {
       water: new Water(geometry, device.coarse),
@@ -62,6 +64,7 @@ export class App implements PointerTarget {
     this.current = this.materials.water;
 
     this.spin = new SpinController(this.stage.anchor.quaternion, device.reduceMotion ? 0.06 : 0.2);
+    this.spin.setIdle(this.autoSpin, true);
     this.ctx = {
       time: 0,
       dt: 0,
@@ -87,11 +90,12 @@ export class App implements PointerTarget {
     new ResizeObserver(resize).observe(this.controls.dock);
     resize();
 
-    this.controls.showShape('orb');
+    this.morph.set(scene.shape, true);
+    this.controls.showShape(scene.shape);
     this.controls.showSetting(this.setting);
     this.controls.showAutoSpin(this.autoSpin);
-    this.setMaterial('water', false);
-    this.materials.water.enter(new Vector3(0, 0, 1));
+    this.setMaterial(scene.material, false);
+    this.current.enter(new Vector3(0, 0, 1));
   }
 
   start(): void {
@@ -110,6 +114,7 @@ export class App implements PointerTarget {
     this.stage.backdrop.setPool(this.current.accent, this.current.poolStrength);
     this.controls.showMaterial(id, this.current.hint(this.device.coarse));
     this.controls.showReadout(this.current.readout());
+    this.syncUrl();
     if (animate) {
       this.pop.value = this.device.reduceMotion ? 0.97 : 0.84;
       this.pop.velocity = 0;
@@ -121,6 +126,7 @@ export class App implements PointerTarget {
     if (id === this.morph.shape) return;
     this.morph.set(id, this.device.reduceMotion);
     this.controls.showShape(id);
+    this.syncUrl();
     this.current.onShapeChange?.(this.frontDirection());
   }
 
@@ -128,12 +134,27 @@ export class App implements PointerTarget {
     this.setting = id;
     this.stage.backdrop.setSetting(id, this.device.reduceMotion);
     this.controls.showSetting(id);
+    this.syncUrl();
   }
 
   setAutoSpin(on: boolean): void {
     this.autoSpin = on;
     this.spin.setIdle(on);
     this.controls.showAutoSpin(on);
+    this.syncUrl();
+  }
+
+  /** Mirrors the scene into the URL (without adding history entries), so a reload opens on the same view. */
+  private syncUrl(): void {
+    const scene = {
+      material: this.current.id,
+      shape: this.morph.shape,
+      setting: this.setting,
+      spin: this.autoSpin,
+    };
+    const query = sceneQuery(scene, location.search);
+    if (query !== location.search)
+      history.replaceState(history.state, '', `${location.pathname}${query}${location.hash}`);
   }
 
   // ---- PointerTarget ----
