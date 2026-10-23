@@ -8,10 +8,6 @@ export interface FrameContext {
   dt: number;
   /** The rotating object everything is attached to. */
   anchor: Object3D;
-  /** Lagged angular velocity in object space, for things that trail behind a spin. */
-  omegaLocal: Vector3;
-  /** World down in object space. */
-  gravityLocal: Vector3;
 }
 
 /** The figures shown in the top-left readout: a title and two detail lines. */

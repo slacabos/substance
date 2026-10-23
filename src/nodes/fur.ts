@@ -1,65 +1,42 @@
-import { Color, MathUtils, Vector2, Vector3, Vector4, type PerspectiveCamera } from 'three';
-import type { Node, UniformArrayNode } from 'three/webgpu';
+import { Color, MathUtils, Vector2, Vector3, type PerspectiveCamera } from 'three';
+import type { Node } from 'three/webgpu';
 import {
-  abs,
-  acos,
-  attribute,
   cameraPosition,
   clamp,
-  Continue,
   cross,
   dot,
-  exp,
-  float,
+  floor,
   Fn,
-  If,
+  instanceIndex,
   length,
-  Loop,
   max,
+  min,
   mix,
   modelViewMatrix,
-  modelWorldMatrixInverse,
   normalize,
   positionGeometry,
   positionView,
   pow,
   select,
-  sin,
   smoothstep,
   sqrt,
   transformNormalToView,
+  uint,
   uniform,
-  uniformArray,
   varyingProperty,
   vec3,
   vec4,
 } from 'three/tsl';
-import { FUR, MAX_BRUSHES } from '../config';
+import { FUR } from '../config';
+import type { FurSim } from '../materials/furSim';
 import { baseN, baseR } from './shape';
 
 // Fur: camera-facing strand ribbons over a dark skin. Strand template: position.x is the side (-1 or 1),
-// position.y runs 0 at the root to 1 at the tip; per-strand aRoot (unit root direction) and aRand.
+// position.y runs 0 at the root to 1 at the tip. Each strand follows the points FurSim simulates.
 
 export function createFurUniforms() {
-  const brushes = Array.from({ length: MAX_BRUSHES }, () => new Vector4(0, 1, 0, 0));
-  const strokes = Array.from({ length: MAX_BRUSHES }, () => new Vector4());
   return {
-    len: uniform(FUR.length),
     density: uniform(FUR.density),
-    time: uniform(0),
-    /** Gravity in object space. */
-    grav: uniform(new Vector3(0, -1, 0)),
-    /** Lagged spin in object space. */
-    omega: uniform(new Vector3()),
-    /** xyz contact direction, w strength. */
-    brush: uniformArray(brushes, 'vec4') as UniformArrayNode<'vec4'>,
-    /** xyz stroke direction. */
-    brushT: uniformArray(strokes, 'vec4') as UniformArrayNode<'vec4'>,
-    /** The arrays behind brush and brushT: write to these, they upload every frame. */
-    brushes,
-    strokes,
-    /** xyz direction, w press amount. */
-    press: uniform(new Vector4(0, 0, 1, 0)),
     root: uniform(new Color('#2a1107')),
     tip: uniform(new Color('#f3b97f')),
     /** Key light direction, in view space. */
@@ -79,53 +56,27 @@ const pixelPerDistance = uniform(0).onRenderUpdate(({ camera, renderer }) => {
   return (2 * Math.tan(fov / 2)) / renderer!.getDrawingBufferSize(bufferSize).y;
 });
 
-/** How far the hair bends: gravity, spin trailing, a gentle sway, brush strokes and the press parting. */
-function hairBend(p: Vec3, n: Vec3, u: FurUniforms) {
-  const t = u.time;
-  const bend = u.grav.mul(0.32).toVar();
-  bend.addAssign(cross(p, u.omega).mul(0.2)); // hair trails behind when the object spins
-  bend.addAssign(
-    vec3(
-      sin(t.mul(1.3).add(p.y.mul(5))),
-      sin(t.mul(1.1).add(p.z.mul(4))),
-      sin(t.mul(1.7).add(p.x.mul(4.5))),
-    ).mul(0.045),
-  );
-  Loop(MAX_BRUSHES, ({ i }) => {
-    const b = u.brush.element(i);
-    If(abs(b.w).lessThan(1e-3), () => {
-      Continue();
-    });
-    const s = acos(clamp(dot(p, b.xyz), -1, 1));
-    bend.addAssign(
-      u.brushT
-        .element(i)
-        .xyz.mul(b.w)
-        .mul(exp(s.mul(s).div(-0.05))),
-    );
-  });
-  const away = p.sub(u.press.xyz.mul(dot(p, u.press.xyz)));
-  const al = length(away);
-  const ps = acos(clamp(dot(p, u.press.xyz), -1, 1));
-  If(al.greaterThan(1e-4), () => {
-    bend.addAssign(
-      away
-        .div(al)
-        .mul(u.press.w.mul(1.3))
-        .mul(exp(ps.mul(ps).div(-0.035)))
-        .mul(smoothstep(0, 0.08, ps)),
-    );
-  });
-  bend.subAssign(n.mul(dot(bend, n)));
-  const bl = length(bend).toVar();
-  If(bl.greaterThan(1.2), () => {
-    bend.mulAssign(float(1.2).div(bl));
-    bl.assign(1.2);
-  });
-  return { bend, bl };
+/** Uniform Catmull-Rom spline through p1..p2 (p0 and p3 shape it), at fraction f: position and tangent. */
+function catmullRom(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, f: Node<'float'>) {
+  const a = p2.sub(p0);
+  const b = p0.mul(2).sub(p1.mul(5)).add(p2.mul(4)).sub(p3);
+  const c = p1.mul(3).sub(p0).sub(p2.mul(3)).add(p3);
+  const point = p1
+    .mul(2)
+    .add(a.mul(f))
+    .add(b.mul(f.mul(f)))
+    .add(c.mul(f.mul(f).mul(f)))
+    .mul(0.5);
+  const tangent = a
+    .add(b.mul(f.mul(2)))
+    .add(c.mul(f.mul(f).mul(3)))
+    .mul(0.5);
+  return { point, tangent };
 }
 
-export function createStrandNodes(u: FurUniforms) {
+export function createStrandNodes(u: FurUniforms, sim: FurSim) {
+  const { roots, rand, pos } = sim.renderBuffers();
+  const K = sim.points;
   const vH = varyingProperty('float', 'vH'); // height along the full fur length, 0 at the skin
   const vT = varyingProperty('float', 'vT'); // 0 at the root, 1 at the tip of this strand
   const vThin = varyingProperty('float', 'vThin'); // < 1 when drawn wider than the strand, and fainter
@@ -133,33 +84,41 @@ export function createStrandNodes(u: FurUniforms) {
   const vN = varyingProperty('vec3', 'vN');
   const vTan = varyingProperty('vec3', 'vTan');
 
+  // The strands are in world space (the mesh sits at the scene root), following the simulated points.
   const position = Fn(() => {
-    const p = attribute<'vec3'>('aRoot', 'vec3');
-    const rnd = attribute<'vec3'>('aRand', 'vec3');
-    const q = p.mul(baseR(p));
-    const n = baseN(p, q);
-    const { bend, bl } = hairBend(p, n, u);
+    const p = roots.element(instanceIndex);
+    const rnd = rand.element(instanceIndex);
+    const n = normalize(sim.uniforms.anchor.mul(vec4(baseN(p, p.mul(baseR(p))), 0)).xyz);
 
     const t = positionGeometry.y;
-    const h = t.mul(rnd.x.mul(0.45).add(0.55));
-    const up = u.len.mul(bl.mul(-0.35).add(1));
-    const pos = q.add(n.mul(h).mul(up)).add(bend.mul(u.len).mul(h).mul(h));
-    const dir = normalize(n.mul(up).add(bend.mul(h.mul(2).mul(u.len))));
+    const f = t.mul(K - 1);
+    const segment = min(floor(f), K - 2);
+    const i = uint(segment);
+    const base = instanceIndex.mul(K);
+    const p1 = pos.element(base.add(i));
+    const p2 = pos.element(base.add(i).add(1));
+    // past either end, extend the first or last segment straight
+    const before = pos.element(base.add(uint(max(segment, 1).sub(1))));
+    const after = pos.element(base.add(uint(min(segment.add(2), K - 1))));
+    const p0 = select(i.equal(0), p1.mul(2).sub(p2), before);
+    const p3 = select(i.equal(K - 2), p2.mul(2).sub(p1), after);
+    const { point, tangent } = catmullRom(p0, p1, p2, p3, f.sub(segment));
+    const dir = normalize(tangent);
 
     // Width tapers to a fine tip. Directions spread out where the cube's surface stretches away from the
     // sphere, so strands there get wider to keep the coat looking as dense.
     const r = baseR(p);
-    const stretch = sqrt(r.mul(r).div(max(dot(p, n), 0.3)));
+    const stretch = sqrt(r.mul(r).div(max(dot(p, baseN(p, p.mul(r))), 0.3)));
     const width = pow(t.oneMinus(), 0.6)
       .mul(0.92)
       .add(0.1)
       .mul(rnd.y.mul(0.4).add(0.8))
       .mul(stretch)
+      .mul(sim.uniforms.scale)
       .div(u.density);
     // Never thinner than a pixel.
-    const toCamera = modelWorldMatrixInverse.mul(vec4(cameraPosition, 1)).xyz.sub(pos);
-    const pixel = pixelPerDistance.mul(length(toCamera));
-    const drawn = max(width, pixel);
+    const toCamera = cameraPosition.sub(point);
+    const drawn = max(width, pixelPerDistance.mul(length(toCamera)));
 
     // Face the camera; a strand pointing straight at it just needs some sideways direction.
     const side0 = cross(dir, toCamera);
@@ -169,13 +128,13 @@ export function createStrandNodes(u: FurUniforms) {
       normalize(cross(n, vec3(0.31, 0.83, 0.46))),
     );
 
-    vH.assign(h);
+    vH.assign(t.mul(rnd.x.mul(0.45).add(0.55)));
     vT.assign(t);
     vThin.assign(width.div(drawn));
     vRand.assign(rnd.z);
     vN.assign(transformNormalToView(n));
     vTan.assign(normalize(modelViewMatrix.mul(vec4(dir, 0)).xyz));
-    return pos.add(side.mul(positionGeometry.x).mul(drawn).mul(0.5));
+    return point.add(side.mul(positionGeometry.x).mul(drawn).mul(0.5));
   })();
 
   // Kajiya-Kay style strand shading with a soft wrap diffuse and a rim for fuzz.

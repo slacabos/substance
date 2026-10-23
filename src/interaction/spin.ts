@@ -7,14 +7,11 @@ const MAX_FLICK = 14;
 /**
  * Spins a quaternion: drag to rotate, flick for inertia, then it eases back to a slow idle spin (or to rest,
  * with the idle spin off).
- * Also keeps a lagged copy of the angular velocity for things that trail behind (fur).
  */
 export class SpinController {
   readonly angularVelocity = new Vector3();
-  readonly laggedVelocity = new Vector3();
   private readonly idle: Vector3;
   private readonly idleSpeed: number;
-  private readonly lagVelocity = new Vector3();
   private readonly previous = new Vector3();
   private readonly dq = new Quaternion();
   private readonly axis = new Vector3();
@@ -68,13 +65,6 @@ export class SpinController {
     } else if (msSinceLastMove > 60) {
       this.angularVelocity.multiplyScalar(Math.exp(-dt * 12));
     }
-
-    // springy lag: overshoots a little when the spin stops, so hair swings past and settles
-    this.lagVelocity
-      .addScaledVector(this.tmp.subVectors(this.angularVelocity, this.laggedVelocity), 30 * dt)
-      .multiplyScalar(Math.exp(-dt * 5));
-    this.laggedVelocity.addScaledVector(this.lagVelocity, dt);
-    if (this.laggedVelocity.length() > 5) this.laggedVelocity.setLength(5);
 
     const jerk = this.tmp.subVectors(this.angularVelocity, this.previous);
     this.previous.copy(this.angularVelocity);

@@ -1,23 +1,17 @@
 import {
   BufferAttribute,
-  InstancedBufferAttribute,
   InstancedBufferGeometry,
   Mesh,
   SphereGeometry,
   Vector3,
+  type Object3D,
 } from 'three';
-import { MeshBasicNodeMaterial } from 'three/webgpu';
-import { FUR, MAX_BRUSHES } from '../config';
-import { approach, Spring, stepSprings } from '../core/spring';
+import { MeshBasicNodeMaterial, type WebGPURenderer } from 'three/webgpu';
+import { FUR } from '../config';
+import { approach } from '../core/spring';
 import { createFurUniforms, createSkinNodes, createStrandNodes } from '../nodes/fur';
+import { FurSim } from './furSim';
 import type { FrameContext, Readout, Substance } from './types';
-
-interface Brush {
-  dir: Vector3;
-  stroke: Vector3;
-  strength: Spring;
-  live: boolean;
-}
 
 /** How many strands cover the skin at a given density (strands per unit length). */
 export function strandCount(density: number): number {
@@ -65,8 +59,8 @@ function createRoots(count: number): { roots: Float32Array; rand: Float32Array }
 }
 
 /**
- * Fur made of individual strands over a dark skin. Strokes leave springy "brushes" that bend nearby hair
- * along the stroke; pressing parts the fur; spinning makes it trail behind.
+ * Fur made of individual strands over a dark skin, simulated on the GPU (see FurSim): hair has weight and
+ * momentum, trails behind a spin, stays combed where it's stroked and parts where it's pressed.
  */
 export class Fur implements Substance {
   readonly id = 'fur';
@@ -74,50 +68,46 @@ export class Fur implements Substance {
   readonly poolStrength = 0.07;
   readonly hitPadding = FUR.length * 0.6;
   readonly objects;
+  readonly worldObjects;
 
-  private readonly uniforms;
-  private readonly brushes: Brush[] = Array.from({ length: MAX_BRUSHES }, () => ({
-    dir: new Vector3(0, 1, 0),
-    stroke: new Vector3(),
-    strength: new Spring(13, 4.2),
-    live: false,
-  }));
-  private ring = 0;
+  private readonly sim: FurSim;
+  private readonly strands: Mesh;
+  private readonly anchor: Object3D;
   private last: Vector3 | null = null;
   private hoverLast: Vector3 | null = null;
   private press = 0;
   private pressTarget = 0;
-  private readonly pressDir = new Vector3(0, 0, 1);
   private readonly delta = new Vector3();
 
-  constructor(coarse: boolean) {
-    const count = strandCount(FUR.density);
+  constructor(coarse: boolean, renderer: WebGPURenderer, anchor: Object3D) {
+    this.anchor = anchor;
+    const { roots, rand } = createRoots(strandCount(FUR.density));
+    this.sim = new FurSim(renderer, roots, rand, FUR.points(coarse));
+    const uniforms = createFurUniforms();
+
     const geometry = createStrandTemplate(FUR.segments(coarse));
-    const { roots, rand } = createRoots(count);
-    geometry.setAttribute('aRoot', new InstancedBufferAttribute(roots, 3));
-    geometry.setAttribute('aRand', new InstancedBufferAttribute(rand, 3));
-    geometry.instanceCount = count;
-
-    this.uniforms = createFurUniforms();
-
-    const strandNodes = createStrandNodes(this.uniforms);
+    geometry.instanceCount = this.sim.count;
+    const strandNodes = createStrandNodes(uniforms, this.sim);
     // with MSAA, faint coverage becomes a share of each pixel's samples, so strands need no sorting
     const strandMaterial = new MeshBasicNodeMaterial({ alphaToCoverage: true });
     strandMaterial.positionNode = strandNodes.position;
     strandMaterial.colorNode = strandNodes.color;
     strandMaterial.opacityNode = strandNodes.opacity;
-    const strands = new Mesh(geometry, strandMaterial);
-    strands.frustumCulled = false;
-    strands.renderOrder = 1;
+    this.strands = new Mesh(geometry, strandMaterial);
+    this.strands.frustumCulled = false;
+    this.strands.renderOrder = 1;
 
-    const skinNodes = createSkinNodes(this.uniforms);
+    const skinNodes = createSkinNodes(uniforms);
     const skinMaterial = new MeshBasicNodeMaterial();
     skinMaterial.positionNode = skinNodes.position;
     skinMaterial.colorNode = skinNodes.color;
     const skin = new Mesh(new SphereGeometry(1, coarse ? 96 : 128, coarse ? 64 : 96), skinMaterial);
     skin.frustumCulled = false;
 
-    this.objects = [skin, strands] as const;
+    this.objects = [skin] as const;
+    // the simulated strands are in world space, so they hang off the scene rather than the spinning anchor
+    this.worldObjects = [this.strands] as const;
+    this.sim.reset(anchor);
   }
 
   hint(coarse: boolean): string {
@@ -130,7 +120,7 @@ export class Fur implements Substance {
     return ['Fur', `≈ ${strandEstimate(FUR.density)}k strands`, 'keratin n ≈ 1.55'];
   }
 
-  /** Records a stroke from `last` to `dir`. Returns false when the contact barely moved. */
+  /** Combs along a stroke from `last` to `dir`. Returns false when the contact barely moved. */
   private stroke(dir: Vector3, last: Vector3, dt: number, factor: number): boolean {
     const delta = this.delta.subVectors(dir, last);
     delta.addScaledVector(dir, -delta.dot(dir)); // keep it tangent to the surface
@@ -138,30 +128,21 @@ export class Fur implements Substance {
     if (moved < 0.004) return false;
     const speed = moved / Math.max(dt, 0.008);
     const strength = Math.min(1, 0.35 + speed * 0.12) * factor;
-    delta.normalize();
-
-    let brush = this.brushes[(this.ring + MAX_BRUSHES - 1) % MAX_BRUSHES]!;
-    if (!brush.live || brush.dir.angleTo(dir) > 0.12) {
-      brush = this.brushes[this.ring++ % MAX_BRUSHES]!;
-      brush.stroke.copy(delta);
-      brush.strength.value = 0;
-    }
-    brush.dir.copy(dir);
-    brush.stroke.lerp(delta, 0.5).normalize();
-    brush.strength.value = Math.max(brush.strength.value, strength);
-    brush.strength.velocity = 0;
-    brush.live = true;
+    const u = this.sim.uniforms;
+    u.brushDir.value.copy(dir);
+    u.brushStroke.value.copy(delta.normalize()).multiplyScalar(strength);
+    u.brushAmount.value = 1;
     return true;
   }
 
   down(dir: Vector3): void {
     this.last = dir.clone();
     this.pressTarget = 1;
-    this.pressDir.copy(dir);
+    this.sim.uniforms.pressDir.value.copy(dir);
   }
 
   move(dir: Vector3, dt: number): void {
-    this.pressDir.copy(dir);
+    this.sim.uniforms.pressDir.value.copy(dir);
     if (!this.last) {
       this.last = dir.clone();
       return;
@@ -191,28 +172,15 @@ export class Fur implements Substance {
 
   enter(): void {
     this.press = 0;
+    // the simulation pauses while the fur is hidden, so start it fresh rather than from stale positions
+    this.sim.reset(this.anchor);
   }
 
   update(ctx: FrameContext): void {
-    const live = this.brushes.filter((b) => b.live);
-    stepSprings(
-      live.map((b) => b.strength),
-      ctx.dt,
-      0.008,
-    );
-    this.brushes.forEach((b, i) => {
-      if (b.live && b.strength.isSettled(1e-3, 1e-2)) {
-        b.live = false;
-        b.strength.value = 0;
-      }
-      this.uniforms.brushes[i]!.set(b.dir.x, b.dir.y, b.dir.z, b.live ? b.strength.value : 0);
-      this.uniforms.strokes[i]!.set(b.stroke.x, b.stroke.y, b.stroke.z, 0);
-    });
+    const u = this.sim.uniforms;
+    u.brushAmount.value *= 1 - approach(12, ctx.dt); // a stroke only combs while it keeps moving
     this.press += (this.pressTarget - this.press) * approach(9, ctx.dt);
-    const p = this.pressDir;
-    this.uniforms.press.value.set(p.x, p.y, p.z, this.press);
-    this.uniforms.time.value = ctx.time;
-    this.uniforms.omega.value.copy(ctx.omegaLocal);
-    this.uniforms.grav.value.copy(ctx.gravityLocal);
+    u.press.value = this.press;
+    if (this.strands.visible) this.sim.update(this.anchor, ctx.time, ctx.dt);
   }
 }

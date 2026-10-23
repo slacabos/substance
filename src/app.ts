@@ -53,7 +53,7 @@ export class App implements PointerTarget {
       water: new Water(geometry, device.coarse),
       ocean: new Ocean(geometry),
       slime: new Slime(geometry),
-      fur: new Fur(device.coarse),
+      fur: new Fur(device.coarse, stage.renderer, stage.anchor),
     };
     for (const m of Object.values(this.materials)) {
       this.stage.anchor.add(...m.objects);
@@ -66,8 +66,6 @@ export class App implements PointerTarget {
       time: 0,
       dt: 0,
       anchor: this.stage.anchor,
-      omegaLocal: new Vector3(),
-      gravityLocal: new Vector3(0, -1, 0),
     };
 
     this.controls = new Controls({
@@ -210,8 +208,6 @@ export class App implements PointerTarget {
 
     this.ctx.time = this.time;
     this.ctx.dt = dt;
-    this.ctx.omegaLocal.copy(this.spin.laggedVelocity).applyQuaternion(this.invQ);
-    this.ctx.gravityLocal.set(0, -1, 0).applyQuaternion(this.invQ);
     // keep every material's simulation running so switching back mid-ripple looks continuous
     for (const m of Object.values(this.materials)) m.update(this.ctx);
 
