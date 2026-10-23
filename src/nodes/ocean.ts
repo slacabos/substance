@@ -49,6 +49,7 @@ export function oceanFoam(
   weather: Float,
   simulated: Float,
   u: DeformUniforms,
+  shore?: Float,
 ): Float {
   // Narrow in the swell direction and stretched along each crest.
   const scale = float(OCEAN_REFERENCE_WAVELENGTH).div(u.uOceanWavelength);
@@ -76,7 +77,14 @@ export function oceanFoam(
     .mul(coverage)
     .mul(mix(0.2, 0.76, smoothstep(0.14, 0.65, weather)));
   const sprayFoam = smoothstep(0.09, 0.6, simulated).mul(smoothstep(0.36, 0.72, n));
-  return clamp(max(crests, sprayFoam).mul(u.uOceanFoam), 0, 1);
+  let foam = max(crests, sprayFoam);
+  if (shore) {
+    const wash = smoothstep(0.1, 0.62, simulated)
+      .mul(float(1).sub(smoothstep(0.03, 0.13, shore)))
+      .mul(mix(0.5, 0.9, n));
+    foam = max(foam, wash);
+  }
+  return clamp(foam.mul(u.uOceanFoam), 0, 1);
 }
 
 /** Approximate absorption through a deep body of water, plus a blue grazing-angle glint. */

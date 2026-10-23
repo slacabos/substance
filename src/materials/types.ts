@@ -1,6 +1,6 @@
 import type { Object3D, Vector3 } from 'three';
 
-export type MaterialId = 'water' | 'ocean' | 'slime' | 'fur';
+export type MaterialId = 'water' | 'ocean' | 'coast' | 'slime' | 'fur';
 export type ShapeId = 'orb' | 'cube';
 
 export interface FrameContext {

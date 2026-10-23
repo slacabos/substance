@@ -30,4 +30,8 @@ describe('scene query strings', () => {
     expect(query).toBe('?debug=1&material=ocean&shape=cube&setting=dusk&spin=off');
     expect(parseScene(query)).toEqual(scene);
   });
+
+  it('keeps the coastal variant in shareable scene URLs', () => {
+    expect(parseScene(sceneQuery({ ...DEFAULT_SCENE, material: 'coast' })).material).toBe('coast');
+  });
 });

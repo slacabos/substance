@@ -4,11 +4,13 @@ import { Fn, normalize, positionGeometry } from 'three/tsl';
 import { OceanWeather, weatherRadius } from '../core/oceanWeather';
 import type { OceanTuning } from '../core/oceanTuning';
 import { baseR } from '../nodes/shape';
+import { morphUniform } from '../scene/shape';
 import { createDeformMaterial, DeformMode, type DeformUniforms } from './deform';
 import { OceanFoamFlecks } from './oceanFoamFlecks';
 import { OceanSim, oceanReleaseImpulse, type OceanForce } from './oceanSim';
+import { OceanShores } from './oceanShores';
 import { OceanSpray } from './oceanSpray';
-import type { FrameContext, Readout, Substance } from './types';
+import type { FrameContext, MaterialId, Readout, Substance } from './types';
 
 /** Storm level (1 = calm) to a Beaufort number for the readout. */
 export function beaufortFor(storm: number): number {
@@ -17,13 +19,14 @@ export function beaufortFor(storm: number): number {
 
 /** A water-covered miniature orb with coherent swells and local, touch-driven rough weather. */
 export class Ocean implements Substance {
-  readonly id = 'ocean';
+  readonly id: MaterialId;
   readonly accent = '#328eaf';
   readonly poolStrength = 0.14;
   readonly hitPadding = 0.1;
   readonly objects;
 
   private readonly sim: OceanSim;
+  private readonly shores: OceanShores | null;
   private readonly spray: OceanSpray;
   private readonly foamFlecks: OceanFoamFlecks;
   private readonly weatherField = new OceanWeather();
@@ -40,9 +43,17 @@ export class Ocean implements Substance {
   private lastSprayTime = -Infinity;
   private lastWhitewaterTime = -Infinity;
 
-  constructor(geometry: BufferGeometry, coarse: boolean, skyReflection: Texture, tuning: OceanTuning) {
+  constructor(
+    geometry: BufferGeometry,
+    coarse: boolean,
+    skyReflection: Texture,
+    tuning: OceanTuning,
+    coastal = false,
+  ) {
+    this.id = coastal ? 'coast' : 'ocean';
     this.tuning = tuning;
-    this.sim = new OceanSim(geometry);
+    this.shores = coastal ? new OceanShores(coarse) : null;
+    this.sim = new OceanSim(geometry, coastal, tuning);
     this.spray = new OceanSpray(coarse);
     this.foamFlecks = new OceanFoamFlecks(coarse, tuning);
     const { material, uniforms } = createDeformMaterial(
@@ -60,6 +71,7 @@ export class Ocean implements Substance {
         envMapIntensity: 0.92,
       },
       DeformMode.Ocean,
+      coastal,
     );
     const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
@@ -72,15 +84,24 @@ export class Ocean implements Substance {
     interior.frustumCulled = false;
     this.uniforms = uniforms;
     this.applyTuning();
-    this.objects = [mesh, interior, this.foamFlecks.mesh, this.spray.mesh, this.spray.mistMesh] as const;
+    this.objects = [
+      mesh,
+      interior,
+      this.foamFlecks.mesh,
+      this.spray.mesh,
+      this.spray.mistMesh,
+      ...(this.shores ? [this.shores.mesh] : []),
+    ];
   }
 
   hint(): string {
-    return 'Press longer for bigger waves. Drag to churn the sea.';
+    return this.shores
+      ? 'Press for waves. Watch them break on the scattered shores.'
+      : 'Press longer for bigger waves. Drag to churn the sea.';
   }
 
   readout(): Readout {
-    return ['Ocean', `Beaufort ${beaufortFor(this.storm)}`, '35 g/kg salt'];
+    return [this.shores ? 'Coast' : 'Ocean', `Beaufort ${beaufortFor(this.storm)}`, '35 g/kg salt'];
   }
 
   down(dir: Vector3): void {
@@ -132,17 +153,24 @@ export class Ocean implements Substance {
   update(ctx: FrameContext): void {
     this.time = ctx.time;
     this.uniforms.uTime.value = ctx.time;
-    if (this.objects[0].visible) {
+    if (this.objects[0]!.visible) {
+      this.shores?.updateMorph(morphUniform.value);
       if (this.pressing) {
         this.heldSeconds = Math.min(2, (performance.now() - this.pressStartedAt) / 1000);
         this.sim.setPressure(this.pressDir, this.heldSeconds);
       }
       this.weatherField.update(ctx.dt);
-      this.sim.update(ctx.dt, this.pendingForces);
+      this.sim.update(ctx.dt, this.pendingForces, ctx.time);
       if (ctx.time - this.lastWhitewaterTime > 0.075) {
         for (const site of this.sim.whitewaterSites(8)) {
-          this.spray.emitCrest(site.dir, site.flow, site.strength, 2);
-          this.foamFlecks.emit(site.dir, site.flow, site.strength, 4);
+          this.spray.emitCrest(
+            site.dir,
+            site.flow,
+            site.strength,
+            site.coastal ? 3 : 2,
+            site.coastal ? site.height : undefined,
+          );
+          this.foamFlecks.emit(site.dir, site.flow, site.strength, site.coastal ? 2 : 4);
         }
         this.lastWhitewaterTime = ctx.time;
       }

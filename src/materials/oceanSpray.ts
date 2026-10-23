@@ -75,10 +75,16 @@ export class OceanSpray {
     this.emitCrest(dir, null, strength, count);
   }
 
-  emitCrest(dir: Vector3, travel: Vector3 | null, strength: number, count: number): void {
+  emitCrest(
+    dir: Vector3,
+    travel: Vector3 | null,
+    strength: number,
+    count: number,
+    surfaceHeight?: number,
+  ): void {
     this.tangentA.crossVectors(dir, Math.abs(dir.y) < 0.9 ? UP : SIDE).normalize();
     this.tangentB.crossVectors(dir, this.tangentA).normalize();
-    const origin = this.surfaceRadius(dir) + 0.035;
+    const origin = this.surfaceRadius(dir) + (surfaceHeight === undefined ? 0.035 : surfaceHeight + 0.012);
     for (let i = 0; i < count; i++) {
       const drop = this.drops[this.dropHead++ % this.drops.length]!;
       this.launch(drop, dir, travel, origin, strength, false);
@@ -141,7 +147,8 @@ export class OceanSpray {
         drop.pos.addScaledVector(drop.vel, dt);
         drop.life -= dt;
         this.tmp.copy(drop.pos).normalize();
-        if (drop.pos.length() < this.surfaceRadius(this.tmp) + 0.012) {
+        const ground = sim?.groundHeight(this.tmp) ?? 0;
+        if (drop.pos.length() < this.surfaceRadius(this.tmp) + Math.max(0.012, ground + 0.004)) {
           drop.life = 0;
           if (sim) sim.depositFoam(this.tmp, mist ? 0.004 : 0.012, mist ? 0.035 : 0.05);
         }

@@ -3,6 +3,7 @@ import type { Node, UniformArrayNode, UniformNode } from 'three/webgpu';
 import {
   abs,
   acos,
+  attribute,
   clamp,
   Continue,
   cos,
@@ -203,13 +204,21 @@ export function orbDeform(
   p: Vec3,
   mode: DeformMode,
   u: DeformUniforms,
+  coastal = false,
 ): { pos: Vec3; nrm: Vec3; height: Float; breaking: Float; weather: Float } {
   const weather = mode === DeformMode.Ocean ? oceanWeatherAt(p, u).toVar() : float(0);
+  const shoreData = coastal ? attribute('oceanShoreData', 'vec4') : null;
+  const shoreDistance = shoreData?.w;
+  const shoreNormal = shoreData?.xyz;
   const at = (q: Vec3): { pos: Vec3; height: Float; breaking: Float } => {
     if (mode === DeformMode.Ocean) {
       const wave = oceanAt(q, u, weather);
-      const height = wave.height;
-      const direction = normalize(q.add(wave.tangent));
+      const offshore =
+        shoreDistance && shoreNormal
+          ? smoothstep(0, 0.1, shoreDistance.add(dot(q.sub(p), shoreNormal)))
+          : float(1);
+      const height = wave.height.mul(offshore.mul(0.82).add(0.18));
+      const direction = normalize(q.add(wave.tangent.mul(offshore)));
       return { pos: direction.mul(baseR(direction).add(height)), height, breaking: wave.breaking };
     }
     const height = dispAt(q, mode, u);

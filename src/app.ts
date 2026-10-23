@@ -52,15 +52,24 @@ export class App implements PointerTarget {
     this.setting = scene.setting;
     this.autoSpin = scene.spin;
     const geometry = createDeformGeometry(device.coarse);
+    const oceanTuning = readOceanTuning(location.search);
     const ocean = new Ocean(
       createDeformGeometry(true, oceanDetail(device.coarse)),
       device.coarse,
       stage.oceanEnvironment,
-      readOceanTuning(location.search),
+      oceanTuning,
+    );
+    const coast = new Ocean(
+      createDeformGeometry(true, oceanDetail(device.coarse)),
+      device.coarse,
+      stage.oceanEnvironment,
+      oceanTuning,
+      true,
     );
     this.materials = {
       water: new Water(geometry, device.coarse),
       ocean,
+      coast,
       slime: new Slime(geometry),
       fur: new Fur(device.coarse, stage.renderer, stage.anchor),
     };

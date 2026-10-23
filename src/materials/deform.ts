@@ -31,6 +31,7 @@ const vec4s = (n: number) => Array.from({ length: n }, () => new Vector4());
 export function createDeformMaterial(
   params: MeshPhysicalNodeMaterialParameters,
   mode: DeformMode,
+  coastal = false,
 ): { material: MeshPhysicalNodeMaterial; uniforms: DeformUniforms } {
   const material = new MeshPhysicalNodeMaterial(params);
   const imp = vec4s(MAX_IMPULSES).map((v) => v.set(0, 1, 0, 0));
@@ -64,9 +65,16 @@ export function createDeformMaterial(
   const simulatedFoam = varyingProperty('float', 'vSimFoam');
   const turbulence = varyingProperty('float', 'vTurbulence');
   const obj = varyingProperty('vec3', 'vObj');
+  const shore = coastal ? varyingProperty('float', 'vShoreDistance') : undefined;
   material.positionNode = Fn(() => {
     const p = normalize(positionGeometry);
-    const { pos, nrm, height, breaking: breakAmount, weather: localWeather } = orbDeform(p, mode, uniforms);
+    const {
+      pos,
+      nrm,
+      height,
+      breaking: breakAmount,
+      weather: localWeather,
+    } = orbDeform(p, mode, uniforms, coastal);
     if (mode === DeformMode.Ocean) {
       const simHeight = attribute('oceanHeight', 'float');
       normalLocal.assign(normalize(nrm.sub(attribute('oceanGradient', 'vec3'))));
@@ -76,6 +84,7 @@ export function createDeformMaterial(
       simulatedFoam.assign(attribute('oceanFoam', 'float'));
       turbulence.assign(attribute('oceanTurbulence', 'float'));
       obj.assign(p.sub(attribute('oceanDrift', 'vec3')));
+      shore?.assign(attribute('oceanShoreData', 'vec4').w);
       return pos.add(normalize(pos).mul(simHeight));
     }
     normalLocal.assign(nrm);
@@ -83,7 +92,7 @@ export function createDeformMaterial(
   })();
 
   if (mode === DeformMode.Ocean) {
-    const foam = oceanFoam(obj, breaking, weatherAmount, simulatedFoam, uniforms);
+    const foam = oceanFoam(obj, breaking, weatherAmount, simulatedFoam, uniforms, shore);
     material.colorNode = oceanColor(wave, foam, weatherAmount, uniforms);
     material.roughnessNode = mix(materialRoughness.add(turbulence.mul(0.1)), 0.92, foam);
     material.specularIntensityNode = mix(float(0.75), float(0.08), foam);

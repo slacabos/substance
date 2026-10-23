@@ -30,6 +30,9 @@ body {
 body[data-mat='ocean'] {
   --accent: #2fb8b0;
 }
+body[data-mat='coast'] {
+  --accent: #d0b683;
+}
 body[data-mat='slime'] {
   --accent: #86d94a;
 }
@@ -217,7 +220,7 @@ body[data-shape='cube'] .top-left {
 
 .picker {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 6px;
 }
 .picker button {
@@ -252,6 +255,11 @@ body[data-shape='cube'] .top-left {
 .sw-ocean {
   background: repeating-linear-gradient(160deg, transparent 0 5px, rgba(220, 250, 255, 0.35) 5px 6px),
     radial-gradient(circle at 33% 28%, #d8fbff 0 4%, #2aa5b5 22%, #0b4a6e 60%, #031a2c 100%);
+}
+.sw-coast {
+  background: radial-gradient(circle at 64% 32%, #d9c9a0 0 18%, #76836b 22%, transparent 25%),
+    radial-gradient(circle at 24% 69%, #e6d5a5 0 12%, transparent 17%),
+    radial-gradient(circle at 45% 38%, #4ca7b4, #0b5270 65%, #062d48);
 }
 .sw-slime {
   background: radial-gradient(circle at 33% 28%, #f7ffe4 0 5%, #c2ff73 16%, #54c72c 55%, #174d0c 100%);

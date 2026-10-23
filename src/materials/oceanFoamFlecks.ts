@@ -1,10 +1,10 @@
 import {
   DoubleSide,
+  CircleGeometry,
   DynamicDrawUsage,
   InstancedMesh,
   Matrix4,
   MeshBasicMaterial,
-  PlaneGeometry,
   Vector3,
 } from 'three';
 import { sampleOceanSurface } from '../core/oceanSpectrum';
@@ -36,6 +36,7 @@ export class OceanFoamFlecks {
   private readonly tangent = new Vector3();
   private readonly side = new Vector3();
   private readonly surface = new Vector3();
+  private readonly base = new Vector3();
   private head = 0;
   private seed = 28734621;
   private readonly tuning: Readonly<OceanTuning>;
@@ -50,7 +51,7 @@ export class OceanFoamFlecks {
       depthWrite: false,
       side: DoubleSide,
     });
-    this.mesh = new InstancedMesh(new PlaneGeometry(1, 1), this.fleckMaterial, count);
+    this.mesh = new InstancedMesh(new CircleGeometry(0.5, 6), this.fleckMaterial, count);
     this.mesh.frustumCulled = false;
     this.mesh.instanceMatrix.setUsage(DynamicDrawUsage);
     this.flecks = Array.from({ length: count }, () => ({
@@ -81,7 +82,7 @@ export class OceanFoamFlecks {
         .normalize();
       fleck.duration = 1.1 + this.random() * 1.4;
       fleck.life = fleck.duration;
-      fleck.length = (0.025 + this.random() * 0.045) * (0.5 + strength * 0.5);
+      fleck.length = (0.008 + this.random() * 0.014) * (0.5 + strength * 0.5);
       fleck.width = 0.003 + this.random() * 0.005;
     }
   }
@@ -96,11 +97,17 @@ export class OceanFoamFlecks {
       const fleck = this.flecks[i]!;
       if (fleck.life > 0 && sim && weather && dt > 0) {
         const state = sim.sampleAt(fleck.dir);
+        if (state.shoreDistance <= 0) {
+          fleck.life = 0;
+          this.matrix.makeScale(0, 0, 0);
+          this.mesh.setMatrixAt(i, this.matrix);
+          continue;
+        }
         this.flow.set(state.flowX, state.flowY, state.flowZ);
         this.flow.addScaledVector(fleck.dir, -this.flow.dot(fleck.dir));
         fleck.dir.addScaledVector(this.flow, dt).normalize();
         fleck.life -= dt;
-        sampleOceanSurface(
+        const analyticHeight = sampleOceanSurface(
           fleck.dir,
           time,
           weather.strengthAt(fleck.dir),
@@ -108,6 +115,15 @@ export class OceanFoamFlecks {
           this.surface,
           this.tuning,
         );
+        if (state.shoreDistance < 0.1) {
+          const t = Math.min(1, Math.max(0, state.shoreDistance / 0.1));
+          const offshore = t * t * (3 - 2 * t);
+          const p = fleck.dir;
+          const power = Math.abs(p.x) ** 10 + Math.abs(p.y) ** 10 + Math.abs(p.z) ** 10;
+          const radius = 1 + (0.8 / power ** 0.1 - 1) * morphUniform.value;
+          this.surface.lerp(this.base.copy(p).multiplyScalar(radius), 1 - offshore);
+          this.surface.addScaledVector(p, analyticHeight * 0.18 * (1 - offshore));
+        }
         this.surface.addScaledVector(fleck.dir, state.height + 0.004);
         this.tangent.copy(this.flow).addScaledVector(fleck.dir, -this.flow.dot(fleck.dir));
         if (this.tangent.lengthSq() < 1e-5)

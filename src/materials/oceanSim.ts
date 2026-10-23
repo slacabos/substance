@@ -1,5 +1,7 @@
 import { BufferAttribute, DynamicDrawUsage, Vector3, type BufferGeometry } from 'three';
 import { oceanMesh } from '../core/oceanMesh';
+import { sampleShoreSurf, shoreDistance as distanceToShore, shoreGroundHeight } from '../core/oceanShores';
+import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 
 export interface OceanForce {
   dir: Vector3;
@@ -11,6 +13,8 @@ export interface OceanWhitewaterSite {
   dir: Vector3;
   flow: Vector3;
   strength: number;
+  height: number;
+  coastal: boolean;
 }
 
 export interface OceanSample {
@@ -20,6 +24,7 @@ export interface OceanSample {
   flowX: number;
   flowY: number;
   flowZ: number;
+  shoreDistance: number;
 }
 
 const smoothstep = (a: number, b: number, x: number): number => {
@@ -43,6 +48,15 @@ export class OceanSim {
   readonly count: number;
   private readonly positions: Float32Array;
   private readonly neighbors: Uint32Array;
+  private readonly shoreDistance: Float32Array | null;
+  private readonly shoreNormal: Float32Array | null;
+  private readonly shoreAlong: Float32Array;
+  private readonly shoreExposure: Float32Array;
+  private readonly surfHeight: Float32Array;
+  private readonly surfBreaking: Float32Array;
+  private readonly tuning: Readonly<OceanTuning>;
+  private readonly shoreDir = new Vector3();
+  private readonly surfSample = { height: 0, breaking: 0 };
   private readonly forceGrain: Float32Array;
   private readonly foamGrain: Float32Array;
   private readonly force: Float32Array;
@@ -75,11 +89,45 @@ export class OceanSim {
   private readonly gradientAttribute: BufferAttribute;
   private windSpeed = 1;
 
-  constructor(geometry: BufferGeometry) {
+  constructor(geometry: BufferGeometry, coastal = false, tuning: Readonly<OceanTuning> = OCEAN_DEFAULTS) {
     const mesh = oceanMesh(geometry);
     this.positions = mesh.positions;
     this.neighbors = mesh.neighbors;
     this.count = mesh.positions.length / 3;
+    this.tuning = tuning;
+    this.shoreDistance = coastal ? new Float32Array(this.count) : null;
+    this.shoreNormal = coastal ? new Float32Array(this.count * 3) : null;
+    this.shoreAlong = new Float32Array(this.count);
+    this.shoreExposure = new Float32Array(this.count);
+    this.surfHeight = new Float32Array(this.count);
+    this.surfBreaking = new Float32Array(this.count);
+    if (this.shoreDistance) {
+      for (let i = 0; i < this.count; i++) {
+        this.shoreDir.fromArray(this.positions, i * 3);
+        this.shoreDistance[i] = distanceToShore(this.shoreDir);
+      }
+      this.prepareShoreFields();
+      // WebGPU guarantees eight vertex buffers. Pack the normal and distance into one attribute.
+      const shoreData = new Float32Array(this.count * 4);
+      for (let i = 0; i < this.count; i++) {
+        shoreData[i * 4] = this.shoreNormal![i * 3]!;
+        shoreData[i * 4 + 1] = this.shoreNormal![i * 3 + 1]!;
+        shoreData[i * 4 + 2] = this.shoreNormal![i * 3 + 2]!;
+        shoreData[i * 4 + 3] = this.shoreDistance[i]!;
+      }
+      geometry.setAttribute('oceanShoreData', new BufferAttribute(shoreData, 4));
+      // Inland water triangles are covered by terrain and can be removed from the mesh.
+      const original = geometry.getIndex()!;
+      const wetTriangles: number[] = [];
+      for (let i = 0; i < original.count; i += 3) {
+        const a = original.getX(i);
+        const b = original.getX(i + 1);
+        const c = original.getX(i + 2);
+        if (this.shoreDistance[a]! > 0 || this.shoreDistance[b]! > 0 || this.shoreDistance[c]! > 0)
+          wetTriangles.push(a, b, c);
+      }
+      geometry.setIndex(wetTriangles);
+    }
     this.invSpacing = 1 / mesh.spacing;
     this.stiffness = (0.24 * 0.24 * 4) / (mesh.spacing * mesh.spacing);
     this.forceGrain = new Float32Array(this.count);
@@ -145,7 +193,7 @@ export class OceanSim {
       const dy = this.positions[i * 3 + 1]! - dir.y;
       const dz = this.positions[i * 3 + 2]! - dir.z;
       const w = 1 / (dx * dx + dy * dy + dz * dz + 0.0002);
-      h += this.height[i]! * w;
+      h += (this.height[i]! + this.surfHeight[i]!) * w;
       v += this.velocity[i]! * w;
       f += this.foam[i]! * w;
       flowX += this.flow[i * 3]! * w;
@@ -153,7 +201,9 @@ export class OceanSim {
       flowZ += this.flow[i * 3 + 2]! * w;
       weight += w;
     });
-    if (weight === 0) return { height: 0, velocity: 0, foam: 0, flowX: 0, flowY: 0, flowZ: 0 };
+    const shore = this.shoreDistance ? distanceToShore(dir) : 1;
+    if (weight === 0)
+      return { height: 0, velocity: 0, foam: 0, flowX: 0, flowY: 0, flowZ: 0, shoreDistance: shore };
     return {
       height: h / weight,
       velocity: v / weight,
@@ -161,7 +211,12 @@ export class OceanSim {
       flowX: flowX / weight,
       flowY: flowY / weight,
       flowZ: flowZ / weight,
+      shoreDistance: shore,
     };
+  }
+
+  groundHeight(dir: Vector3): number {
+    return this.shoreDistance ? shoreGroundHeight(dir) : 0;
   }
 
   /** Small foam deposits made by splashes and falling spray. */
@@ -176,7 +231,7 @@ export class OceanSim {
       const dy = this.positions[i * 3 + 1]! - dir.y;
       const dz = this.positions[i * 3 + 2]! - dir.z;
       const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 >= r2) return;
+      if (d2 >= r2 || (this.shoreDistance && this.shoreDistance[i]! <= 0)) return;
       const falloff = 1 - smoothstep(0, r2, d2);
       this.foam[i] = clamp(this.foam[i]! + amount * falloff, 0, 1);
       this.turbulence[i] = clamp(this.turbulence[i]! + amount * falloff * 0.35, 0, 1);
@@ -194,6 +249,8 @@ export class OceanSim {
       this.nextFoam,
       this.turbulence,
       this.nextTurbulence,
+      this.surfHeight,
+      this.surfBreaking,
     ])
       field.fill(0);
     this.flow.set(this.baseFlow);
@@ -208,6 +265,7 @@ export class OceanSim {
     this.windSpeed = speed;
     const p = this.positions;
     for (let i = 0; i < this.count; i++) {
+      if (this.shoreDistance && this.shoreDistance[i]! <= 0) continue;
       const x = p[i * 3]!;
       const y = p[i * 3 + 1]!;
       const z = p[i * 3 + 2]!;
@@ -238,20 +296,25 @@ export class OceanSim {
         this.positions[i * 3]! * dir.x +
         this.positions[i * 3 + 1]! * dir.y +
         this.positions[i * 3 + 2]! * dir.z;
-      this.pressureWeight[i] = alignment > 0.93 ? Math.exp((alignment - 1) * 180) : 0;
+      this.pressureWeight[i] =
+        alignment > 0.93 && (!this.shoreDistance || this.shoreDistance[i]! > 0)
+          ? Math.exp((alignment - 1) * 180)
+          : 0;
     }
   }
 
-  update(dt: number, events: readonly OceanForce[]): void {
+  update(dt: number, events: readonly OceanForce[], time = 0): void {
     if (dt <= 0) return;
     const pairs = Math.min(4, Math.max(1, Math.ceil(dt * 60)));
     const passes = pairs * 2;
     const step = dt / passes;
     const impulseShare = 1 / passes;
     this.prepareForces(events);
+    this.updateSurf(dt, time);
 
     const velocityDrag = Math.exp(-step * 0.55);
     const foamDecay = Math.exp(-step * 0.8);
+    const surfFoamDecay = Math.exp(-step * 1.7);
     const turbulenceDecay = Math.exp(-step * 0.9);
     const p = this.positions;
     const flow = this.flow;
@@ -265,6 +328,13 @@ export class OceanSim {
       const nextF = this.nextFoam;
       const nextT = this.nextTurbulence;
       for (let i = 0; i < this.count; i++) {
+        if (this.shoreDistance && this.shoreDistance[i]! <= 0) {
+          nextH[i] = 0;
+          nextV[i] = 0;
+          nextF[i] = 0;
+          nextT[i] = 0;
+          continue;
+        }
         const base = i * 6;
         const x = p[i * 3]!;
         const y = p[i * 3 + 1]!;
@@ -280,8 +350,10 @@ export class OceanSim {
         let divergence = 0;
         for (let k = 0; k < 6; k++) {
           const j = this.neighbors[base + k]!;
-          sumHeight += h[j]!;
-          sumFoam += f[j]!;
+          const wet = !this.shoreDistance || this.shoreDistance[j]! > 0;
+          sumHeight += wet ? h[j]! : h[i]!;
+          sumFoam += wet ? f[j]! : f[i]!;
+          if (!wet) continue;
           sumDelta += Math.abs(h[j]! - h[i]!);
           const dx = x - p[j * 3]!;
           const dy = y - p[j * 3 + 1]!;
@@ -313,7 +385,9 @@ export class OceanSim {
         const travel = clamp(step * Math.hypot(fx, fy, fz) * this.invSpacing * 0.65, 0, 0.35);
         const carried = f[i]! * (1 - travel) + (upwindFoam / Math.max(upwindWeight, 1e-5)) * travel;
         const foam = clamp(
-          carried * foamDecay + (sumFoam / 6 - f[i]!) * step * 0.25 + breaking * step * 3.5,
+          carried * (this.shoreDistance && this.shoreDistance[i]! < 0.15 ? surfFoamDecay : foamDecay) +
+            (sumFoam / 6 - f[i]!) * step * 0.25 +
+            breaking * step * 3.5,
           0,
           1,
         );
@@ -345,8 +419,16 @@ export class OceanSim {
   /** Sparse sites where a moving, aerated surface can shed spray. */
   whitewaterSites(maxCount: number): OceanWhitewaterSite[] {
     const sites: OceanWhitewaterSite[] = [];
+    const candidates: { index: number; score: number; coastal: boolean }[] = [];
     for (let i = 0; i < this.count; i++) {
+      if (this.shoreDistance && this.shoreDistance[i]! <= 0) continue;
       const g = i * 3;
+      const coastal = !!this.shoreDistance && this.shoreDistance[i]! < 0.09;
+      if (coastal) {
+        if (this.surfBreaking[i]! > 0.22)
+          candidates.push({ index: i, score: this.surfBreaking[i]!, coastal });
+        continue;
+      }
       const slope = Math.hypot(
         this.gradientUpload[g]!,
         this.gradientUpload[g + 1]!,
@@ -356,13 +438,88 @@ export class OceanSim {
       if (this.foam[i]! < 0.18) continue;
       const score = this.foam[i]! * 0.82 + this.turbulence[i]! * 0.3 + slope * 0.12;
       if (score < 0.18) continue;
+      candidates.push({ index: i, score, coastal: false });
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    for (const { index: i, score, coastal } of candidates) {
+      const g = i * 3;
       const dir = new Vector3(this.positions[g], this.positions[g + 1], this.positions[g + 2]);
-      if (sites.some((site) => site.dir.dot(dir) > 0.9975)) continue;
-      const flow = new Vector3(this.flow[g], this.flow[g + 1], this.flow[g + 2]);
-      sites.push({ dir, flow, strength: clamp(score, 0.25, 0.9) });
+      if (sites.some((site) => site.dir.dot(dir) > 0.9985)) continue;
+      const flow = coastal
+        ? new Vector3().fromArray(this.shoreNormal!, g).multiplyScalar(0.18)
+        : new Vector3(this.flow[g], this.flow[g + 1], this.flow[g + 2]);
+      sites.push({
+        dir,
+        flow,
+        strength: clamp(score, 0.25, 0.95),
+        height: this.height[i]! + this.surfHeight[i]!,
+        coastal,
+      });
       if (sites.length >= maxCount) break;
     }
     return sites;
+  }
+
+  private prepareShoreFields(): void {
+    const distances = this.shoreDistance!;
+    const normals = this.shoreNormal!;
+    for (let i = 0; i < this.count; i++) {
+      const g = i * 3;
+      const x = this.positions[g]!;
+      const y = this.positions[g + 1]!;
+      const z = this.positions[g + 2]!;
+      let gx = 0;
+      let gy = 0;
+      let gz = 0;
+      for (let k = 0; k < 6; k++) {
+        const j = this.neighbors[i * 6 + k]!;
+        const projection =
+          x * this.positions[j * 3]! + y * this.positions[j * 3 + 1]! + z * this.positions[j * 3 + 2]!;
+        const tx = this.positions[j * 3]! - x * projection;
+        const ty = this.positions[j * 3 + 1]! - y * projection;
+        const tz = this.positions[j * 3 + 2]! - z * projection;
+        const factor = (distances[j]! - distances[i]!) / Math.max(1e-6, tx * tx + ty * ty + tz * tz);
+        gx += tx * factor;
+        gy += ty * factor;
+        gz += tz * factor;
+      }
+      const length = Math.hypot(gx, gy, gz) || 1;
+      normals[g] = gx / length;
+      normals[g + 1] = gy / length;
+      normals[g + 2] = gz / length;
+      this.shoreAlong[i] = -x * 0.88 + y * 0.32 + z * 0.34;
+      const windDot = x * 0.35 + y * 0.9 + z * 0.25;
+      const windLength = Math.hypot(0.35 - x * windDot, 0.9 - y * windDot, 0.25 - z * windDot) || 1;
+      this.shoreExposure[i] =
+        0.45 + 0.55 * Math.max(0, -(gx * 0.35 + gy * 0.9 + gz * 0.25) / length / windLength);
+    }
+  }
+
+  private updateSurf(dt: number, time: number): void {
+    if (!this.shoreDistance) return;
+    for (let i = 0; i < this.count; i++) {
+      const distance = this.shoreDistance[i]!;
+      if (distance < 0 || distance > 0.22) continue;
+      sampleShoreSurf(
+        distance,
+        this.shoreAlong[i]!,
+        time,
+        this.shoreExposure[i]!,
+        this.tuning.windSpeed,
+        this.tuning.amplitude,
+        this.surfSample,
+      );
+      this.surfHeight[i] = this.surfSample.height;
+      const impact = clamp(
+        this.surfSample.breaking +
+          smoothstep(0.005, 0.045, this.height[i]!) * (1 - smoothstep(0.02, 0.08, distance)),
+        0,
+        1,
+      );
+      this.surfBreaking[i] = impact;
+      this.foam[i] = clamp(this.foam[i]! + impact * dt * (2.8 + this.foamGrain[i]! * 1.2), 0, 1);
+      this.turbulence[i] = Math.max(this.turbulence[i]!, impact * 0.75);
+    }
   }
 
   private prepareStaticFields(): void {
@@ -373,9 +530,10 @@ export class OceanSim {
       const z = p[i * 3 + 2]!;
       this.forceGrain[i] = 0.85 + Math.sin((x * 37 + y * 51 + z * 83) * 11) * 0.15;
       this.foamGrain[i] = fract(Math.sin((x * 43.7 + y * 91.3 + z * 67.9) * 67.3) * 43758.5453);
-      this.baseFlow[i * 3] = (z - y * 0.2) * 0.035;
-      this.baseFlow[i * 3 + 1] = (x * 0.2 - z * 0.15) * 0.035;
-      this.baseFlow[i * 3 + 2] = (y * 0.15 - x) * 0.035;
+      const wet = !this.shoreDistance || this.shoreDistance[i]! > 0;
+      this.baseFlow[i * 3] = wet ? (z - y * 0.2) * 0.035 : 0;
+      this.baseFlow[i * 3 + 1] = wet ? (x * 0.2 - z * 0.15) * 0.035 : 0;
+      this.baseFlow[i * 3 + 2] = wet ? (y * 0.15 - x) * 0.035 : 0;
     }
     this.flow.set(this.baseFlow);
   }
@@ -386,6 +544,7 @@ export class OceanSim {
     const p = this.positions;
     for (const event of events) {
       for (let i = 0; i < this.count; i++) {
+        if (this.shoreDistance && this.shoreDistance[i]! <= 0) continue;
         const alignment = p[i * 3]! * event.dir.x + p[i * 3 + 1]! * event.dir.y + p[i * 3 + 2]! * event.dir.z;
         if (alignment < 0.88) continue;
         const falloff = Math.exp((alignment - 1) * 110) * this.forceGrain[i]!;
@@ -421,6 +580,7 @@ export class OceanSim {
     const drag = Math.exp(-dt * 0.75);
     const p = this.positions;
     for (let i = 0; i < this.count; i++) {
+      if (this.shoreDistance && this.shoreDistance[i]! <= 0) continue;
       const g = i * 3;
       const x = p[g]!;
       const y = p[g + 1]!;
@@ -430,6 +590,7 @@ export class OceanSim {
       let gz = 0;
       for (let k = 0; k < 6; k++) {
         const j = this.neighbors[i * 6 + k]!;
+        if (this.shoreDistance && this.shoreDistance[j]! <= 0) continue;
         const nx = p[j * 3]!;
         const ny = p[j * 3 + 1]!;
         const nz = p[j * 3 + 2]!;
@@ -437,7 +598,7 @@ export class OceanSim {
         const tx = nx - x * projection;
         const ty = ny - y * projection;
         const tz = nz - z * projection;
-        const dh = this.height[j]! - this.height[i]!;
+        const dh = this.height[j]! + this.surfHeight[j]! - this.height[i]! - this.surfHeight[i]!;
         const factor = dh / Math.max(tx * tx + ty * ty + tz * tz, 1e-5) / 3;
         gx += tx * factor;
         gy += ty * factor;
@@ -459,9 +620,22 @@ export class OceanSim {
         gz * dt * 0.45 +
         this.flowImpulse[g + 2]!;
       const radial = fx * x + fy * y + fz * z;
-      this.flow[g] = clamp(fx - x * radial, -0.28, 0.28);
-      this.flow[g + 1] = clamp(fy - y * radial, -0.28, 0.28);
-      this.flow[g + 2] = clamp(fz - z * radial, -0.28, 0.28);
+      let tx = fx - x * radial;
+      let ty = fy - y * radial;
+      let tz = fz - z * radial;
+      if (this.shoreDistance && this.shoreNormal && this.shoreDistance[i]! < 0.06) {
+        const nx = this.shoreNormal[g]!;
+        const ny = this.shoreNormal[g + 1]!;
+        const nz = this.shoreNormal[g + 2]!;
+        const incoming = Math.min(0, tx * nx + ty * ny + tz * nz);
+        const reflection = incoming * (1 - smoothstep(0, 0.06, this.shoreDistance[i]!)) * 1.15;
+        tx -= nx * reflection;
+        ty -= ny * reflection;
+        tz -= nz * reflection;
+      }
+      this.flow[g] = clamp(tx, -0.28, 0.28);
+      this.flow[g + 1] = clamp(ty, -0.28, 0.28);
+      this.flow[g + 2] = clamp(tz, -0.28, 0.28);
       this.drift[g] = this.drift[g]! + this.flow[g]! * dt;
       this.drift[g + 1] = this.drift[g + 1]! + this.flow[g + 1]! * dt;
       this.drift[g + 2] = this.drift[g + 2]! + this.flow[g + 2]! * dt;
@@ -469,7 +643,7 @@ export class OceanSim {
   }
 
   private upload(): void {
-    this.heightUpload.set(this.height);
+    for (let i = 0; i < this.count; i++) this.heightUpload[i] = this.height[i]! + this.surfHeight[i]!;
     this.foamUpload.set(this.foam);
     this.turbulenceUpload.set(this.turbulence);
     this.heightAttribute.needsUpdate = true;

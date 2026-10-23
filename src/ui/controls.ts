@@ -1,7 +1,13 @@
 import type { MaterialId, Readout, ShapeId } from '../materials/types';
 import { THEME_COLORS, type SettingId } from '../scene/settings';
 
-const MATERIAL_KEYS: Record<string, MaterialId> = { '1': 'water', '2': 'ocean', '3': 'slime', '4': 'fur' };
+const MATERIAL_KEYS: Record<string, MaterialId> = {
+  '1': 'water',
+  '2': 'ocean',
+  '3': 'slime',
+  '4': 'fur',
+  '5': 'coast',
+};
 const SHAPE_KEYS: Record<string, ShapeId> = { o: 'orb', c: 'cube' };
 
 export interface ControlHandlers {
