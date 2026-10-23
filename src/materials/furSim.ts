@@ -33,20 +33,20 @@ import { baseN, baseR } from '../nodes/shape';
 const SIM = {
   /** Fixed physics rate; each frame runs however many steps fit its time (at most maxSteps). */
   rate: 240,
-  maxSteps: 8,
-  gravity: 7,
+  maxSteps: 10,
+  gravity: 15,
   /**
    * Each point is a damped spring toward the strand standing straight along its rest direction: stiff at the
    * root, soft at the tip (per second squared). Tip sag under gravity is about gravity / springTip.
    */
-  springRoot: 1200,
+  springRoot: 1000,
   springTip: 80,
   /** Damping ratio: below 1 the hair bounces a little before it settles. */
   dampingRatio: 0.3,
   /** Share of the body's own motion that turns into hair inertia; the rest carries the hair along. */
   inertia: 0.5,
   /** Cap on how far a point moves per step, in segment lengths, so violent flicks stay well behaved. */
-  maxStep: 0.5,
+  maxStep: 0.9,
   /** How quickly hair under a moving brush picks up the brush's velocity, per second. */
   brushDrag: 25,
   /** How fast a combed parting relaxes, per second. */
