@@ -20,8 +20,7 @@ import {
   vec3,
 } from 'three/tsl';
 import { MAX_IMPULSES } from '../config';
-import { OCEAN_SPECTRUM } from '../core/oceanSpectrum';
-import { OCEAN_DEFAULTS } from '../core/oceanTuning';
+import { OCEAN_REFERENCE_WAVELENGTH, OCEAN_SPECTRUM } from '../core/oceanSpectrum';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { snoise } from './noise';
 import { baseR } from './shape';
@@ -103,7 +102,7 @@ function oceanAt(
     const wind = unit(x, y, z);
     const phase = dot(p, wind)
       .mul(freq)
-      .mul(OCEAN_DEFAULTS.peakWavelength)
+      .mul(OCEAN_REFERENCE_WAVELENGTH)
       .div(u.uOceanWavelength)
       .add(warp)
       .sub(u.uTime.mul(speed).mul(u.uOceanWind));

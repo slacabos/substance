@@ -1,5 +1,4 @@
 import type { MaterialId, Readout, ShapeId } from '../materials/types';
-import { OCEAN_VALUES, type OceanLod, type OceanTuning, type OceanTuningValue } from '../core/oceanTuning';
 import { THEME_COLORS, type SettingId } from '../scene/settings';
 
 const MATERIAL_KEYS: Record<string, MaterialId> = { '1': 'water', '2': 'ocean', '3': 'slime', '4': 'fur' };
@@ -11,8 +10,6 @@ export interface ControlHandlers {
   onSetting(id: SettingId): void;
   onNextSetting(): void;
   onToggleSpin(): void;
-  onOceanTuning(key: OceanTuningValue, value: number): void;
-  onOceanLod(lod: OceanLod): void;
 }
 
 function byId<T extends HTMLElement>(id: string): T {
@@ -29,17 +26,6 @@ export class Controls {
   private readonly readoutEl = byId('readout');
   private readonly fpsEl = byId('fps');
   private readonly spinButton = byId<HTMLButtonElement>('spin');
-  private readonly oceanTuneButton = byId<HTMLButtonElement>('ocean-tune-toggle');
-  private readonly oceanTunePanel = byId<HTMLElement>('ocean-tuning');
-  private readonly oceanTuneClose = byId<HTMLButtonElement>('ocean-tune-close');
-  private readonly oceanLod = byId<HTMLSelectElement>('ocean-lod');
-  private readonly oceanInputs: Record<OceanTuningValue, HTMLInputElement> = {
-    windSpeed: byId('ocean-wind'),
-    peakWavelength: byId('ocean-wavelength'),
-    amplitude: byId('ocean-amplitude'),
-    choppiness: byId('ocean-choppiness'),
-    foam: byId('ocean-foam'),
-  };
   private readonly materialButtons = [...document.querySelectorAll<HTMLButtonElement>('.picker button')];
   private readonly shapeButtons = [...document.querySelectorAll<HTMLButtonElement>('.shapes button')];
   private readonly settingButtons = [...document.querySelectorAll<HTMLButtonElement>('.settings button')];
@@ -53,20 +39,9 @@ export class Controls {
     radioGroup(this.shapeButtons, (b) => handlers.onShape(b.dataset['shape'] as ShapeId));
     radioGroup(this.settingButtons, (b) => handlers.onSetting(b.dataset['setting'] as SettingId));
     this.spinButton.addEventListener('click', () => handlers.onToggleSpin());
-    this.oceanTuneButton.addEventListener('click', () => this.toggleOceanTuning());
-    this.oceanTuneClose.addEventListener('click', () => this.toggleOceanTuning(false));
-    for (const key of OCEAN_VALUES) {
-      this.oceanInputs[key].addEventListener('input', () =>
-        handlers.onOceanTuning(key, Number(this.oceanInputs[key].value)),
-      );
-    }
-    this.oceanLod.addEventListener('change', () => handlers.onOceanLod(this.oceanLod.value as OceanLod));
-
     window.addEventListener('keydown', (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === 'Escape') this.toggleOceanTuning(false);
       if (e.target instanceof HTMLElement && e.target.matches('input, select, textarea')) return;
-      if (e.key.toLowerCase() === 't' && document.body.dataset['mat'] === 'ocean') this.toggleOceanTuning();
       const material = MATERIAL_KEYS[e.key];
       if (material) handlers.onMaterial(material);
       const shape = SHAPE_KEYS[e.key.toLowerCase()];
@@ -78,25 +53,8 @@ export class Controls {
 
   showMaterial(id: MaterialId, hint: string): void {
     document.body.dataset['mat'] = id;
-    this.oceanTuneButton.hidden = id !== 'ocean';
-    if (id !== 'ocean') this.toggleOceanTuning(false);
     this.hint.textContent = hint;
     for (const b of this.materialButtons) b.setAttribute('aria-checked', String(b.dataset['mat'] === id));
-  }
-
-  showOceanTuning(tuning: Readonly<OceanTuning>): void {
-    for (const key of OCEAN_VALUES) {
-      this.oceanInputs[key].value = String(tuning[key]);
-      byId<HTMLOutputElement>(
-        `ocean-${key === 'windSpeed' ? 'wind' : key === 'peakWavelength' ? 'wavelength' : key}-value`,
-      ).value = `${tuning[key].toFixed(2)}${key === 'peakWavelength' ? ' R' : '×'}`;
-    }
-    this.oceanLod.value = tuning.lod;
-  }
-
-  private toggleOceanTuning(open = this.oceanTunePanel.hidden): void {
-    this.oceanTunePanel.hidden = !open;
-    this.oceanTuneButton.setAttribute('aria-expanded', String(open));
   }
 
   showShape(id: ShapeId): void {

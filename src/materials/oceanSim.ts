@@ -33,6 +33,11 @@ const GRID = 64;
 const cell = (v: number): number => Math.max(0, Math.min(GRID - 1, Math.floor((v + 1.2) / CELL)));
 const key = (x: number, y: number, z: number): number => x * GRID * GRID + y * GRID + z;
 
+/** A finger gradually pushes water down; release gives the loaded surface a small upward kick. */
+export const oceanPressLoad = (seconds: number): number => 10 * (1 - Math.exp(-Math.max(0, seconds) / 0.5));
+export const oceanReleaseImpulse = (seconds: number): number =>
+  1.6 * (1 - Math.exp(-Math.max(0, seconds) / 0.7));
+
 /** A spherical free-surface wave field with tangential flow and advected whitewater. */
 export class OceanSim {
   readonly count: number;
@@ -41,6 +46,9 @@ export class OceanSim {
   private readonly forceGrain: Float32Array;
   private readonly foamGrain: Float32Array;
   private readonly force: Float32Array;
+  private readonly pressureWeight: Float32Array;
+  private readonly pressureDir = new Vector3();
+  private pressureStrength = 0;
   private readonly flowImpulse: Float32Array;
   private readonly flow: Float32Array;
   private readonly baseFlow: Float32Array;
@@ -77,6 +85,7 @@ export class OceanSim {
     this.forceGrain = new Float32Array(this.count);
     this.foamGrain = new Float32Array(this.count);
     this.force = new Float32Array(this.count);
+    this.pressureWeight = new Float32Array(this.count);
     this.flowImpulse = new Float32Array(this.count * 3);
     this.flow = new Float32Array(this.count * 3);
     this.baseFlow = new Float32Array(this.count * 3);
@@ -175,6 +184,7 @@ export class OceanSim {
   }
 
   reset(): void {
+    this.setPressure(null, 0);
     for (const field of [
       this.height,
       this.nextHeight,
@@ -210,6 +220,25 @@ export class OceanSim {
         this.flow[j] = this.flow[j]! + next - this.baseFlow[j]!;
         this.baseFlow[j] = next;
       }
+    }
+  }
+
+  /** Applies a local load in acceleration units, independent of frame rate. */
+  setPressure(dir: Vector3 | null, heldSeconds: number): void {
+    if (!dir) {
+      this.pressureStrength = 0;
+      this.pressureDir.set(0, 0, 0);
+      return;
+    }
+    this.pressureStrength = oceanPressLoad(heldSeconds);
+    if (this.pressureDir.distanceToSquared(dir) < 1e-6) return;
+    this.pressureDir.copy(dir);
+    for (let i = 0; i < this.count; i++) {
+      const alignment =
+        this.positions[i * 3]! * dir.x +
+        this.positions[i * 3 + 1]! * dir.y +
+        this.positions[i * 3 + 2]! * dir.z;
+      this.pressureWeight[i] = alignment > 0.93 ? Math.exp((alignment - 1) * 180) : 0;
     }
   }
 
@@ -269,7 +298,13 @@ export class OceanSim {
         const slope = (sumDelta / 6) * this.invSpacing;
         const impulse = this.force[i]! * impulseShare;
         const velocity =
-          (v[i]! + ((sumHeight / 6 - h[i]!) * this.stiffness - h[i]! * 0.9) * step + impulse) * velocityDrag;
+          (v[i]! +
+            ((sumHeight / 6 - h[i]!) * this.stiffness -
+              h[i]! * 0.9 -
+              this.pressureWeight[i]! * this.pressureStrength) *
+              step +
+            impulse) *
+          velocityDrag;
         const height = clamp(h[i]! + velocity * step - divergence * step * 0.012, -0.065, 0.065);
         const breaking =
           smoothstep(0.09, 0.22, slope) *
@@ -278,10 +313,7 @@ export class OceanSim {
         const travel = clamp(step * Math.hypot(fx, fy, fz) * this.invSpacing * 0.65, 0, 0.35);
         const carried = f[i]! * (1 - travel) + (upwindFoam / Math.max(upwindWeight, 1e-5)) * travel;
         const foam = clamp(
-          carried * foamDecay +
-            (sumFoam / 6 - f[i]!) * step * 0.25 +
-            breaking * step * 3 +
-            Math.abs(impulse) * (0.35 + this.foamGrain[i]! * 0.65) * 0.55,
+          carried * foamDecay + (sumFoam / 6 - f[i]!) * step * 0.25 + breaking * step * 3.5,
           0,
           1,
         );
@@ -320,6 +352,8 @@ export class OceanSim {
         this.gradientUpload[g + 1]!,
         this.gradientUpload[g + 2]!,
       );
+      // A pressure dent is turbulent but has no entrained air. Spray starts only after a crest aerates.
+      if (this.foam[i]! < 0.18) continue;
       const score = this.foam[i]! * 0.82 + this.turbulence[i]! * 0.3 + slope * 0.12;
       if (score < 0.18) continue;
       const dir = new Vector3(this.positions[g], this.positions[g + 1], this.positions[g + 2]);

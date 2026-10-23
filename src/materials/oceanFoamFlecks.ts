@@ -44,9 +44,9 @@ export class OceanFoamFlecks {
     this.tuning = tuning;
     const count = coarse ? 240 : 900;
     this.fleckMaterial = new MeshBasicMaterial({
-      color: '#d6eff0',
+      color: '#e0f4f4',
       transparent: true,
-      opacity: 0.58,
+      opacity: 0.66,
       depthWrite: false,
       side: DoubleSide,
     });
@@ -64,7 +64,7 @@ export class OceanFoamFlecks {
   }
 
   setIntensity(foam: number): void {
-    this.fleckMaterial.opacity = Math.min(1, (0.58 * foam) / OCEAN_DEFAULTS.foam);
+    this.fleckMaterial.opacity = Math.min(1, (0.66 * foam) / OCEAN_DEFAULTS.foam);
   }
 
   emit(dir: Vector3, flow: Vector3 | null, strength: number, count: number): void {

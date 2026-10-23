@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { OceanWeather, weatherRadius } from '../src/core/oceanWeather';
 
 describe('ocean weather', () => {
-  it('creates a local patch on touch and strengthens it with movement', () => {
+  it('keeps a stationary press calm and develops rough weather with movement', () => {
     const weather = new OceanWeather();
     weather.down(new Vector3(0, 0, 1));
-    expect(weather.peak).toBeCloseTo(0.55);
-    expect(weather.strengthAt(new Vector3(0, 0, 1))).toBeCloseTo(0.55);
+    expect(weather.peak).toBe(0);
+    expect(weather.strengthAt(new Vector3(0, 0, 1))).toBe(0);
     expect(weather.strengthAt(new Vector3(0, 0, -1))).toBe(0);
     weather.move(new Vector3(0.2, 0, 0.98).normalize(), 0.1);
     expect(weather.peak).toBeGreaterThan(0);
@@ -33,6 +33,7 @@ describe('ocean weather', () => {
     const weather = new OceanWeather();
     for (let i = 0; i < 5; i++) {
       weather.down(new Vector3(0.2 + i * 0.12, 0, 1).normalize());
+      weather.move(new Vector3(0.26 + i * 0.12, 0, 1).normalize(), 0.03);
       weather.up();
       weather.update(0.5);
     }

@@ -2,11 +2,11 @@ import { Color, IcosahedronGeometry, Mesh, Vector3, type BufferGeometry, type Te
 import { MeshBasicNodeMaterial } from 'three/webgpu';
 import { Fn, normalize, positionGeometry } from 'three/tsl';
 import { OceanWeather, weatherRadius } from '../core/oceanWeather';
-import { OCEAN_LIMITS, type OceanTuning, type OceanTuningValue } from '../core/oceanTuning';
+import type { OceanTuning } from '../core/oceanTuning';
 import { baseR } from '../nodes/shape';
 import { createDeformMaterial, DeformMode, type DeformUniforms } from './deform';
 import { OceanFoamFlecks } from './oceanFoamFlecks';
-import { OceanSim, type OceanForce } from './oceanSim';
+import { OceanSim, oceanReleaseImpulse, type OceanForce } from './oceanSim';
 import { OceanSpray } from './oceanSpray';
 import type { FrameContext, Readout, Substance } from './types';
 
@@ -30,7 +30,11 @@ export class Ocean implements Substance {
   private readonly uniforms: DeformUniforms;
   readonly tuning: OceanTuning;
   private readonly lastDrag = new Vector3(0, 0, 1);
+  private readonly pressDir = new Vector3(0, 0, 1);
   private readonly pendingForces: OceanForce[] = [];
+  private pressing = false;
+  private heldSeconds = 0;
+  private pressStartedAt = 0;
   private storm = 1;
   private time = 0;
   private lastSprayTime = -Infinity;
@@ -71,14 +75,8 @@ export class Ocean implements Substance {
     this.objects = [mesh, interior, this.foamFlecks.mesh, this.spray.mesh, this.spray.mistMesh] as const;
   }
 
-  setTuning(key: OceanTuningValue, value: number): void {
-    const [min, max] = OCEAN_LIMITS[key];
-    this.tuning[key] = Math.min(max, Math.max(min, value));
-    this.applyTuning();
-  }
-
   hint(): string {
-    return 'Tap for a splash. Drag to churn the living sea.';
+    return 'Press longer for bigger waves. Drag to churn the sea.';
   }
 
   readout(): Readout {
@@ -88,13 +86,17 @@ export class Ocean implements Substance {
   down(dir: Vector3): void {
     this.weatherField.down(dir);
     this.lastDrag.copy(dir);
-    this.addForce(dir, -0.75);
-    this.sim.depositFoam(dir, 0.2, 0.065);
-    this.foamFlecks.emit(dir, null, 0.8, 20);
-    this.spray.splash(dir, 0.5, 8);
+    this.pressDir.copy(dir);
+    this.pressing = true;
+    this.heldSeconds = 0;
+    this.pressStartedAt = performance.now();
+    this.sim.setPressure(dir, 0);
+    this.addForce(dir, -0.55);
   }
   move(dir: Vector3, dt: number): void {
     this.weatherField.move(dir, dt);
+    this.pressDir.copy(dir);
+    if (this.pressing) this.sim.setPressure(dir, this.heldSeconds);
     const moved = this.lastDrag.angleTo(dir);
     if (moved > 0.015) {
       const strength = Math.min(0.5, (moved / Math.max(dt, 1 / 120)) * 0.14);
@@ -110,9 +112,17 @@ export class Ocean implements Substance {
   }
   up(): void {
     this.weatherField.up();
+    if (this.pressing) {
+      this.heldSeconds = Math.min(2, (performance.now() - this.pressStartedAt) / 1000);
+      this.addForce(this.pressDir, oceanReleaseImpulse(this.heldSeconds));
+    }
+    this.pressing = false;
+    this.sim.setPressure(null, 0);
   }
   enter(front: Vector3): void {
     this.lastDrag.copy(front);
+    this.pressing = false;
+    this.heldSeconds = 0;
     this.sim.reset();
     this.spray.clear();
     this.foamFlecks.clear();
@@ -123,6 +133,10 @@ export class Ocean implements Substance {
     this.time = ctx.time;
     this.uniforms.uTime.value = ctx.time;
     if (this.objects[0].visible) {
+      if (this.pressing) {
+        this.heldSeconds = Math.min(2, (performance.now() - this.pressStartedAt) / 1000);
+        this.sim.setPressure(this.pressDir, this.heldSeconds);
+      }
       this.weatherField.update(ctx.dt);
       this.sim.update(ctx.dt, this.pendingForces);
       if (ctx.time - this.lastWhitewaterTime > 0.075) {

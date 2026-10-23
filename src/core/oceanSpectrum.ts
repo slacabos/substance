@@ -1,6 +1,9 @@
 import { Vector3 } from 'three';
 import { OCEAN_DEFAULTS, type OceanTuning } from './oceanTuning';
 
+/** Wavelength used when the original wave spectrum was authored. */
+export const OCEAN_REFERENCE_WAVELENGTH = 0.33;
+
 /** Directional, short-fetch waves. Distances and amplitudes are relative to the orb radius. */
 export const OCEAN_SPECTRUM = [
   [0.0055, [0.35, 0.9, 0.25], 13, 1.0, 0.45, 0.8],
@@ -26,7 +29,7 @@ export function sampleOceanSurface(
   out: Vector3,
   tuning: Readonly<OceanTuning> = OCEAN_DEFAULTS,
 ): number {
-  const wavelengthScale = OCEAN_DEFAULTS.peakWavelength / tuning.peakWavelength;
+  const wavelengthScale = OCEAN_REFERENCE_WAVELENGTH / tuning.peakWavelength;
   const warp =
     Math.sin((dir.x * 0.34 + dir.y * 0.87 - dir.z * 0.21) * 3.2 - time * 0.17 * tuning.windSpeed) * 0.32 +
     Math.sin((-dir.x * 0.62 + dir.y * 0.14 + dir.z * 0.77) * 5.1 + time * 0.11 * tuning.windSpeed) * 0.15;

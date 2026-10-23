@@ -5,7 +5,7 @@ A mobile-first Three.js toy: a touchable 3D object you can switch between materi
 ## Materials
 
 - **Water**: a clear, refractive blob. Tap for ripples, drag to stir, hold to drip.
-- **Ocean**: a deep-blue miniature sea with small travelling waves. Touching it displaces the spherical free surface and stirs a tangential current; whitewater, drifting foam, droplets and fine mist follow the disturbance and settle. Dragging builds a local storm (the Beaufort readout follows its strongest patch).
+- **Ocean**: a deep-blue miniature sea with small travelling waves. Holding a press loads the spherical free surface; releasing it sends a larger wave the longer it was held. Dragging stirs a tangential current and can build rough weather, whitewater, drifting foam, droplets and mist (the Beaufort readout follows the strongest patch).
 - **Slime**: press to dent it (hold to push deeper), let go and it jiggles. Spinning it hard wobbles it too.
 - **Fur**: stroke to comb it (it stays combed, then slowly relaxes), press to part it, flick it to watch the hair swing and settle. Mouse hover brushes it.
 
@@ -13,7 +13,7 @@ Switch between **Orb** and **Cube** in the bottom panel; the shape morphs and ev
 
 The URL follows the scene, so a reload (or a shared link) opens on the same view, e.g. `?material=fur&shape=cube&setting=studio&spin=off`. Each part is optional and defaults to water, orb, night and spin on.
 
-When Ocean is selected, open **Tune** (or press **T**) to change wind speed, peak wavelength, wave height, choppiness and foam live. **Surface LOD** switches between roughly 8k, 20k and 53k vertices and reloads the scene; higher detail costs more CPU simulation time. Settings are saved in the URL as `oceanWind`, `oceanWavelength`, `oceanAmplitude`, `oceanChop`, `oceanFoam` and `oceanLod`. Peak wavelength is measured relative to the orb radius.
+Ocean uses wind speed **0.90×**, peak wavelength **0.23 orb radii**, wave height **0.95×**, choppiness **2.00×** and foam **1.40×** by default. Its surface has roughly **8k vertices on touch devices** and **24k on desktop**. The five wave values can still be overridden in a link with `oceanWind`, `oceanWavelength`, `oceanAmplitude`, `oceanChop` and `oceanFoam`; mesh detail is chosen by device.
 
 ## Development
 

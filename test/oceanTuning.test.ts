@@ -1,28 +1,31 @@
 import { Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { sampleOceanSurface } from '../src/core/oceanSpectrum';
-import { OCEAN_DEFAULTS, oceanDetail, oceanTuningQuery, readOceanTuning } from '../src/core/oceanTuning';
+import { OCEAN_DEFAULTS, oceanDetail, readOceanTuning } from '../src/core/oceanTuning';
 import { createDeformGeometry } from '../src/materials/deform';
 
 describe('ocean tuning', () => {
-  it('clamps URL values, ignores invalid values, and preserves scene parameters', () => {
+  it('uses the selected defaults, clamps URL overrides, and ignores obsolete LOD settings', () => {
+    expect(readOceanTuning('')).toEqual({
+      windSpeed: 0.9,
+      peakWavelength: 0.23,
+      amplitude: 0.95,
+      choppiness: 2,
+      foam: 1.4,
+    });
     const tuning = readOceanTuning('?oceanWind=9&oceanWavelength=0.2&oceanFoam=nope&oceanLod=high');
-    expect(tuning).toMatchObject({ windSpeed: 3, peakWavelength: 0.2, foam: 1.3, lod: 'high' });
-    const query = oceanTuningQuery('?material=ocean&shape=orb&oceanFoam=2', tuning);
-    expect(new URLSearchParams(query).get('material')).toBe('ocean');
-    expect(new URLSearchParams(query).get('shape')).toBe('orb');
-    expect(new URLSearchParams(query).get('oceanFoam')).toBeNull();
-    expect(readOceanTuning(query)).toEqual(tuning);
+    expect(tuning).toMatchObject({ windSpeed: 3, peakWavelength: 0.2, foam: 1.4 });
+    expect(tuning).not.toHaveProperty('lod');
   });
 
-  it('increases surface detail without changing the orb radius', () => {
-    const counts = (['low', 'medium', 'high'] as const).map((lod) => {
-      const geometry = createDeformGeometry(true, oceanDetail(lod));
+  it('uses about 8k vertices on mobile and 24k on desktop', () => {
+    const counts = [true, false].map((coarse) => {
+      const geometry = createDeformGeometry(true, oceanDetail(coarse));
       const count = geometry.getAttribute('position').count;
       geometry.dispose();
       return count;
     });
-    expect(counts).toEqual([8412, 20252, 53292]);
+    expect(counts).toEqual([8412, 24012]);
   });
 
   it('moves the same spherical surface for amplitude, wavelength, and choppiness', () => {

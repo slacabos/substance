@@ -30,10 +30,10 @@ export class OceanWeather {
     this.active = this.nextSlot();
     const patch = this.patches[this.active]!;
     patch.center.copy(dir);
-    patch.strength = 0.55;
+    patch.strength = 0;
     patch.age = 0;
     this.travel = 0;
-    this.churn = 0.3;
+    this.churn = 0;
   }
 
   move(dir: Vector3, dt: number): void {

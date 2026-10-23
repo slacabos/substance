@@ -20,7 +20,7 @@ import {
   vec3,
 } from 'three/tsl';
 import type { DeformUniforms } from './deform';
-import { OCEAN_DEFAULTS } from '../core/oceanTuning';
+import { OCEAN_REFERENCE_WAVELENGTH } from '../core/oceanSpectrum';
 
 type Vec3 = Node<'vec3'>;
 type Float = Node<'float'>;
@@ -51,7 +51,7 @@ export function oceanFoam(
   u: DeformUniforms,
 ): Float {
   // Narrow in the swell direction and stretched along each crest.
-  const scale = float(OCEAN_DEFAULTS.peakWavelength).div(u.uOceanWavelength);
+  const scale = float(OCEAN_REFERENCE_WAVELENGTH).div(u.uOceanWavelength);
   const q = vec3(
     dot(obj, vec3(0.35, 0.9, 0.25))
       .mul(79)
@@ -68,11 +68,14 @@ export function oceanFoam(
   const n = vnoise(q)
     .mul(0.7)
     .add(vnoise(q.mul(2.35)).mul(0.3));
-  const threshold = mix(0.67, 0.53, weather);
-  const width = max(0.035, n.fwidth().mul(0.8));
+  // Keep the transition narrow while retaining derivative antialiasing at small screen sizes.
+  const threshold = mix(0.655, 0.52, weather);
+  const width = max(0.018, n.fwidth().mul(0.5));
   const coverage = smoothstep(threshold.sub(width), threshold.add(width), n);
-  const crests = breaking.mul(coverage).mul(mix(0.12, 0.68, smoothstep(0.14, 0.65, weather)));
-  const sprayFoam = smoothstep(0.1, 0.75, simulated).mul(mix(0.25, 0.72, n));
+  const crests = smoothstep(0.16, 0.78, breaking)
+    .mul(coverage)
+    .mul(mix(0.2, 0.76, smoothstep(0.14, 0.65, weather)));
+  const sprayFoam = smoothstep(0.09, 0.6, simulated).mul(smoothstep(0.36, 0.72, n));
   return clamp(max(crests, sprayFoam).mul(u.uOceanFoam), 0, 1);
 }
 
@@ -84,12 +87,12 @@ export function oceanColor(wave: Float, foam: Float, weather: Float, u: DeformUn
   const water = mix(u.uDeep, u.uShallow, tint).mul(float(1).sub(weather.mul(0.05)));
   const rim = pow(float(1).sub(facing), 5).mul(0.12);
   const lit = mix(water, vec3(0.08, 0.29, 0.39), rim);
-  return mix(lit, vec3(0.9, 0.96, 0.95), foam);
+  return mix(lit, vec3(0.93, 0.97, 0.965), foam);
 }
 
 /** Subpixel waves change highlights without adding more geometry or aliasing at small sizes. */
 export function oceanFineNormal(obj: Vec3, turbulence: Float, u: DeformUniforms): Vec3 {
-  const scale = float(OCEAN_DEFAULTS.peakWavelength).div(u.uOceanWavelength);
+  const scale = float(OCEAN_REFERENCE_WAVELENGTH).div(u.uOceanWavelength);
   const phaseA = dot(obj, vec3(0.91, 0.2, 0.36))
     .mul(61)
     .mul(scale)

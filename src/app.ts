@@ -1,14 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { intersectShape } from './core/hit';
 import { parseScene, sceneQuery, type SceneState } from './core/scene';
-import {
-  oceanDetail,
-  oceanTuningQuery,
-  readOceanTuning,
-  type OceanLod,
-  type OceanTuning,
-  type OceanTuningValue,
-} from './core/oceanTuning';
+import { oceanDetail, readOceanTuning } from './core/oceanTuning';
 import { Spring, stepSprings } from './core/spring';
 import type { DeviceProfile } from './device';
 import { createDeformGeometry } from './materials/deform';
@@ -28,8 +21,6 @@ export class App implements PointerTarget {
   private readonly stage: Stage;
   private readonly device: DeviceProfile;
   private readonly materials: Record<MaterialId, Substance>;
-  private readonly ocean: Ocean;
-  private readonly oceanTuning: OceanTuning;
   private readonly controls: Controls;
   private readonly pointer: PointerInput;
   private readonly spin: SpinController;
@@ -61,16 +52,15 @@ export class App implements PointerTarget {
     this.setting = scene.setting;
     this.autoSpin = scene.spin;
     const geometry = createDeformGeometry(device.coarse);
-    this.oceanTuning = readOceanTuning(location.search);
-    this.ocean = new Ocean(
-      createDeformGeometry(true, oceanDetail(this.oceanTuning.lod)),
+    const ocean = new Ocean(
+      createDeformGeometry(true, oceanDetail(device.coarse)),
       device.coarse,
       stage.oceanEnvironment,
-      this.oceanTuning,
+      readOceanTuning(location.search),
     );
     this.materials = {
       water: new Water(geometry, device.coarse),
-      ocean: this.ocean,
+      ocean,
       slime: new Slime(geometry),
       fur: new Fur(device.coarse, stage.renderer, stage.anchor),
     };
@@ -95,10 +85,7 @@ export class App implements PointerTarget {
       onToggleSpin: () => this.setAutoSpin(!this.autoSpin),
       onNextSetting: () =>
         this.setSetting(SETTING_ORDER[(SETTING_ORDER.indexOf(this.setting) + 1) % SETTING_ORDER.length]!),
-      onOceanTuning: (key, value) => this.setOceanTuning(key, value),
-      onOceanLod: (lod) => this.setOceanLod(lod),
     });
-    this.controls.showOceanTuning(this.oceanTuning);
     this.pointer = new PointerInput(canvas, this);
 
     const resize = () => {
@@ -162,25 +149,6 @@ export class App implements PointerTarget {
     this.spin.setIdle(on);
     this.controls.showAutoSpin(on);
     this.syncUrl();
-  }
-
-  private setOceanTuning(key: OceanTuningValue, value: number): void {
-    this.ocean.setTuning(key, value);
-    this.controls.showOceanTuning(this.oceanTuning);
-    this.syncOceanTuningUrl();
-  }
-
-  private setOceanLod(lod: OceanLod): void {
-    if (lod === this.oceanTuning.lod) return;
-    this.oceanTuning.lod = lod;
-    this.syncOceanTuningUrl();
-    location.reload();
-  }
-
-  private syncOceanTuningUrl(): void {
-    const query = oceanTuningQuery(location.search, this.oceanTuning);
-    if (query !== location.search)
-      history.replaceState(history.state, '', `${location.pathname}${query}${location.hash}`);
   }
 
   /** Mirrors the scene into the URL (without adding history entries), so a reload opens on the same view. */

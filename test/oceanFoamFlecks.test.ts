@@ -11,10 +11,10 @@ describe('ocean foam flecks', () => {
     const material = foam.mesh.material as MeshBasicMaterial;
     foam.setIntensity(0);
     expect(material.opacity).toBe(0);
-    foam.setIntensity(1.3);
-    expect(material.opacity).toBeCloseTo(0.58);
+    foam.setIntensity(1.4);
+    expect(material.opacity).toBeCloseTo(0.66);
     foam.setIntensity(2.5);
-    expect(material.opacity).toBeGreaterThan(0.58);
+    expect(material.opacity).toBeGreaterThan(0.66);
   });
 
   it('rides the spherical surface and disappears after its lifetime', () => {
