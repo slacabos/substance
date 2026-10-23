@@ -20,6 +20,9 @@ import {
   vec3,
 } from 'three/tsl';
 import { MAX_IMPULSES } from '../config';
+import { OCEAN_SPECTRUM } from '../core/oceanSpectrum';
+import { OCEAN_DEFAULTS } from '../core/oceanTuning';
+import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { snoise } from './noise';
 import { baseR } from './shape';
 
@@ -43,10 +46,18 @@ export interface DeformUniforms {
   uPress: UniformNode<'vec4', Vector4>;
   /** xyz axis, w amount of the squash-and-stretch mode. */
   uWob: UniformNode<'vec4', Vector4>;
-  uStorm: UniformNode<'float', number>;
+  /** xyz patch centre, w intensity; matching x radius in radians. */
+  uWeather: UniformArrayNode<'vec4'>;
+  uWeatherB: UniformArrayNode<'vec4'>;
+  weather: Vector4[];
+  weatherB: Vector4[];
   uDeep: UniformNode<'color', Color>;
   uShallow: UniformNode<'color', Color>;
-  uScatter: UniformNode<'color', Color>;
+  uOceanWind: UniformNode<'float', number>;
+  uOceanWavelength: UniformNode<'float', number>;
+  uOceanAmplitude: UniformNode<'float', number>;
+  uOceanChoppiness: UniformNode<'float', number>;
+  uOceanFoam: UniformNode<'float', number>;
 }
 
 type Vec3 = Node<'vec3'>;
@@ -55,36 +66,62 @@ type Float = Node<'float'>;
 const arcDist = (a: Vec3, b: Vec3) => acos(clamp(dot(a, b), -1, 1));
 const unit = (x: number, y: number, z: number) => vec3(new Vector3(x, y, z).normalize());
 
-/** Sharp-crested swell: exp(sin) narrows the peaks and flattens the troughs, like wind waves. */
-const crest = (x: Float) => exp(sin(x).sub(1)).sub(0.466);
-
-// amplitude, direction, frequency, warp factor, speed
-const SWELLS: [number, [number, number, number], number, number, number][] = [
-  [0.02, [1, 0.25, 0.35], 6, 1, 1.05],
-  [0.015, [0.6, -0.3, 1], 8.5, -1, 1.3],
-  [0.011, [-0.4, 0.8, 0.5], 12, 0.5, 1.6],
-  [0.01, [0.9, 0.5, -0.6], 18, 0, 2],
-  [0.006, [-0.7, -0.2, 0.8], 27, 0, 2.5],
-  [0.0035, [0.2, -0.9, -0.4], 39, 0, 3.1],
-  [0.0025, [-0.5, 0.4, -0.8], 47, 1, 3.4],
-];
-
-function oceanAt(p: Vec3, u: DeformUniforms): Float {
-  const t = u.uTime;
-  const warp = sin(
-    dot(p, vec3(0.3, 0.9, 0.2))
-      .mul(3)
-      .add(t.mul(0.25)),
-  ).mul(0.5);
-  let d: Float = float(0);
-  for (const [amp, [x, y, z], freq, warpK, speed] of SWELLS) {
-    const phase = dot(p, unit(x, y, z))
-      .mul(freq)
-      .add(warp.mul(warpK))
-      .sub(t.mul(speed));
-    d = d.add(crest(phase).mul(amp));
+/** Smooth local weather on the sphere; dot products avoid a pole or longitude seam. */
+function oceanWeatherAt(p: Vec3, u: DeformUniforms): Float {
+  let weather: Float = float(0);
+  for (let i = 0; i < OCEAN_WEATHER_PATCHES; i++) {
+    const patch = u.uWeather.element(i);
+    const radius = u.uWeatherB.element(i).x;
+    const inside = smoothstep(cos(radius), cos(radius.mul(0.4)), dot(p, patch.xyz));
+    weather = max(weather, inside.mul(patch.w));
   }
-  return d.mul(u.uStorm);
+  return weather;
+}
+
+function oceanAt(
+  p: Vec3,
+  u: DeformUniforms,
+  weather: Float,
+): { height: Float; tangent: Vec3; breaking: Float } {
+  let height: Float = float(0);
+  let tangent: Vec3 = vec3(0);
+  let breaking: Float = float(0);
+  const warp = sin(
+    dot(p, vec3(0.34, 0.87, -0.21))
+      .mul(3.2)
+      .sub(u.uTime.mul(0.17).mul(u.uOceanWind)),
+  )
+    .mul(0.32)
+    .add(
+      sin(
+        dot(p, vec3(-0.62, 0.14, 0.77))
+          .mul(5.1)
+          .add(u.uTime.mul(0.11).mul(u.uOceanWind)),
+      ).mul(0.15),
+    );
+  for (const [amp, [x, y, z], freq, speed, chop, breakWeight] of OCEAN_SPECTRUM) {
+    const wind = unit(x, y, z);
+    const phase = dot(p, wind)
+      .mul(freq)
+      .mul(OCEAN_DEFAULTS.peakWavelength)
+      .div(u.uOceanWavelength)
+      .add(warp)
+      .sub(u.uTime.mul(speed).mul(u.uOceanWind));
+    const s = sin(phase);
+    const c = cos(phase);
+    const a = float(amp)
+      .mul(u.uOceanAmplitude)
+      .mul(float(1).add(weather.mul(freq < 27 ? 0.2 : 0.75)));
+    height = height.add(s.mul(a));
+    tangent = tangent.add(wind.sub(p.mul(dot(p, wind))).mul(c.mul(a).mul(chop).mul(u.uOceanChoppiness)));
+
+    const front = smoothstep(0.48, 0.86, s).mul(smoothstep(0.06, 0.72, c.negate()));
+    const trail = smoothstep(0.35, 0.88, s)
+      .mul(smoothstep(0.12, 0.85, c))
+      .mul(0.3);
+    breaking = max(breaking, front.add(trail).mul(breakWeight).mul(u.uOceanChoppiness));
+  }
+  return { height, tangent, breaking };
 }
 
 /** Expanding, decaying rings from each tap or drag step, plus the dip under a pressing finger. */
@@ -154,8 +191,6 @@ function dispAt(p: Vec3, mode: DeformMode, u: DeformUniforms): Float {
         .mul(0.006),
     );
     d.addAssign(sin(p.z.mul(7).add(p.x.mul(3)).add(t.mul(1.7))).mul(0.004));
-  } else {
-    d.addAssign(oceanAt(p, u));
   }
   ripplesAt(p, u, d);
   return d;
@@ -169,17 +204,28 @@ export function orbDeform(
   p: Vec3,
   mode: DeformMode,
   u: DeformUniforms,
-): { pos: Vec3; nrm: Vec3; height: Float } {
-  const height = dispAt(p, mode, u);
-  const pos = p.mul(baseR(p).add(height)).toVar();
+): { pos: Vec3; nrm: Vec3; height: Float; breaking: Float; weather: Float } {
+  const weather = mode === DeformMode.Ocean ? oceanWeatherAt(p, u).toVar() : float(0);
+  const at = (q: Vec3): { pos: Vec3; height: Float; breaking: Float } => {
+    if (mode === DeformMode.Ocean) {
+      const wave = oceanAt(q, u, weather);
+      const height = wave.height;
+      const direction = normalize(q.add(wave.tangent));
+      return { pos: direction.mul(baseR(direction).add(height)), height, breaking: wave.breaking };
+    }
+    const height = dispAt(q, mode, u);
+    return { pos: q.mul(baseR(q).add(height)), height, breaking: float(0) };
+  };
+  const surface = at(p);
+  const pos = surface.pos.toVar();
   const t1 = normalize(cross(p, select(abs(p.y).lessThan(0.99), vec3(0, 1, 0), vec3(1, 0, 0))));
   const t2 = cross(p, t1);
   const e = 0.004;
   const pa = normalize(p.add(t1.mul(e)));
   const pb = normalize(p.add(t2.mul(e)));
-  const A = pa.mul(baseR(pa).add(dispAt(pa, mode, u)));
-  const B = pb.mul(baseR(pb).add(dispAt(pb, mode, u)));
+  const A = at(pa).pos;
+  const B = at(pb).pos;
   const n = normalize(cross(A.sub(pos), B.sub(pos)));
   const nrm = select(dot(n, p).lessThan(0), n.negate(), n);
-  return { pos, nrm, height };
+  return { pos, nrm, height: surface.height, breaking: surface.breaking, weather };
 }

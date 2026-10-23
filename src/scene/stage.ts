@@ -1,8 +1,9 @@
-import { ACESFilmicToneMapping, Group, MathUtils, PerspectiveCamera, Scene } from 'three';
+import { ACESFilmicToneMapping, Group, MathUtils, PerspectiveCamera, Scene, type Texture } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PMREMGenerator, WebGPURenderer } from 'three/webgpu';
 import { FIT_RADIUS, SUPERSAMPLE_PIXELS } from '../config';
 import { Backdrop } from './backdrop';
+import { oceanSkyReflection } from './oceanSky';
 import type { SettingId } from './settings';
 
 type GpuNavigator = Navigator & { gpu?: { requestAdapter(): Promise<unknown> } };
@@ -14,6 +15,7 @@ export class Stage {
   readonly camera = new PerspectiveCamera(30, 1, 0.1, 120);
   readonly anchor = new Group();
   readonly backdrop: Backdrop;
+  readonly oceanEnvironment: Texture;
   private readonly supersample: boolean;
 
   /**
@@ -40,6 +42,7 @@ export class Stage {
 
     const pmrem = new PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.oceanEnvironment = oceanSkyReflection(pmrem);
     this.scene.environmentIntensity = 0.85;
     pmrem.dispose();
 

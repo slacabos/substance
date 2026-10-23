@@ -1,52 +1,84 @@
-import { Mesh, type BufferGeometry, type Vector3 } from 'three';
-import { approach } from '../core/spring';
+import { Color, IcosahedronGeometry, Mesh, Vector3, type BufferGeometry, type Texture } from 'three';
+import { MeshBasicNodeMaterial } from 'three/webgpu';
+import { Fn, normalize, positionGeometry } from 'three/tsl';
+import { OceanWeather, weatherRadius } from '../core/oceanWeather';
+import { OCEAN_LIMITS, type OceanTuning, type OceanTuningValue } from '../core/oceanTuning';
+import { baseR } from '../nodes/shape';
 import { createDeformMaterial, DeformMode, type DeformUniforms } from './deform';
-import { RippleField } from './ripples';
+import { OceanFoamFlecks } from './oceanFoamFlecks';
+import { OceanSim, type OceanForce } from './oceanSim';
+import { OceanSpray } from './oceanSpray';
 import type { FrameContext, Readout, Substance } from './types';
-
-const MAX_STORM = 2.4;
 
 /** Storm level (1 = calm) to a Beaufort number for the readout. */
 export function beaufortFor(storm: number): number {
   return Math.round(2 + (storm - 1) * 4);
 }
 
-/** Layered swells with foam on the crests. Stirring it builds a storm that calms down over time. */
+/** A water-covered miniature orb with coherent swells and local, touch-driven rough weather. */
 export class Ocean implements Substance {
   readonly id = 'ocean';
-  readonly accent = '#2fb8b0';
+  readonly accent = '#328eaf';
   readonly poolStrength = 0.14;
-  readonly hitPadding = 0;
+  readonly hitPadding = 0.1;
   readonly objects;
 
-  private readonly ripples;
+  private readonly sim: OceanSim;
+  private readonly spray: OceanSpray;
+  private readonly foamFlecks: OceanFoamFlecks;
+  private readonly weatherField = new OceanWeather();
   private readonly uniforms: DeformUniforms;
+  readonly tuning: OceanTuning;
+  private readonly lastDrag = new Vector3(0, 0, 1);
+  private readonly pendingForces: OceanForce[] = [];
   private storm = 1;
   private time = 0;
+  private lastSprayTime = -Infinity;
+  private lastWhitewaterTime = -Infinity;
 
-  constructor(geometry: BufferGeometry) {
+  constructor(geometry: BufferGeometry, coarse: boolean, skyReflection: Texture, tuning: OceanTuning) {
+    this.tuning = tuning;
+    this.sim = new OceanSim(geometry);
+    this.spray = new OceanSpray(coarse);
+    this.foamFlecks = new OceanFoamFlecks(coarse, tuning);
     const { material, uniforms } = createDeformMaterial(
       {
         color: 0xffffff,
         metalness: 0,
-        roughness: 0.09,
-        specularIntensity: 1,
-        ior: 1.34,
-        clearcoat: 0.4,
-        clearcoatRoughness: 0.12,
-        envMapIntensity: 1.25,
+        roughness: 0.2,
+        specularIntensity: 0.75,
+        ior: 1.333,
+        transmission: 0.22,
+        thickness: 0.7,
+        attenuationColor: new Color('#082f49'),
+        attenuationDistance: 0.5,
+        envMap: skyReflection,
+        envMapIntensity: 0.92,
       },
       DeformMode.Ocean,
     );
     const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
+    const interiorMaterial = new MeshBasicNodeMaterial({ color: '#031525' });
+    interiorMaterial.positionNode = Fn(() => {
+      const p = normalize(positionGeometry);
+      return p.mul(baseR(p).mul(0.72));
+    })();
+    const interior = new Mesh(new IcosahedronGeometry(1, 24), interiorMaterial);
+    interior.frustumCulled = false;
     this.uniforms = uniforms;
-    this.ripples = new RippleField(uniforms);
-    this.objects = [mesh] as const;
+    this.applyTuning();
+    this.objects = [mesh, interior, this.foamFlecks.mesh, this.spray.mesh, this.spray.mistMesh] as const;
+  }
+
+  setTuning(key: OceanTuningValue, value: number): void {
+    const [min, max] = OCEAN_LIMITS[key];
+    this.tuning[key] = Math.min(max, Math.max(min, value));
+    this.applyTuning();
   }
 
   hint(): string {
-    return 'Tap to drop a stone. Churn it to whip up a storm.';
+    return 'Tap for a splash. Drag to churn the living sea.';
   }
 
   readout(): Readout {
@@ -54,27 +86,78 @@ export class Ocean implements Substance {
   }
 
   down(dir: Vector3): void {
-    this.ripples.down(dir, this.time);
-    this.storm = Math.min(MAX_STORM, this.storm + 0.12);
+    this.weatherField.down(dir);
+    this.lastDrag.copy(dir);
+    this.addForce(dir, -0.75);
+    this.sim.depositFoam(dir, 0.2, 0.065);
+    this.foamFlecks.emit(dir, null, 0.8, 20);
+    this.spray.splash(dir, 0.5, 8);
   }
-  move(dir: Vector3): void {
-    const moved = this.ripples.move(dir, this.time);
-    this.storm = Math.min(MAX_STORM, this.storm + moved * 0.35);
+  move(dir: Vector3, dt: number): void {
+    this.weatherField.move(dir, dt);
+    const moved = this.lastDrag.angleTo(dir);
+    if (moved > 0.015) {
+      const strength = Math.min(0.5, (moved / Math.max(dt, 1 / 120)) * 0.14);
+      const motion = dir.clone().sub(this.lastDrag).normalize();
+      this.addForce(this.lastDrag, -strength, motion);
+      this.addForce(dir, strength * 1.2, motion);
+      if (moved > 0.04 && this.time - this.lastSprayTime > 0.12) {
+        this.spray.splash(dir, Math.min(0.6, strength * 1.4), 5);
+        this.lastSprayTime = this.time;
+      }
+      this.lastDrag.copy(dir);
+    }
   }
   up(): void {
-    this.ripples.up(this.time);
+    this.weatherField.up();
   }
   enter(front: Vector3): void {
-    this.ripples.spawn(front, 0.9, this.time);
-  }
-  onShapeChange(front: Vector3): void {
-    this.ripples.spawn(front, 0.7, this.time);
+    this.lastDrag.copy(front);
+    this.sim.reset();
+    this.spray.clear();
+    this.foamFlecks.clear();
+    this.weatherField.clear();
   }
 
   update(ctx: FrameContext): void {
     this.time = ctx.time;
-    this.ripples.update(ctx.time, ctx.dt);
-    this.storm += (1 - this.storm) * approach(0.18, ctx.dt);
-    this.uniforms.uStorm.value = this.storm;
+    this.uniforms.uTime.value = ctx.time;
+    if (this.objects[0].visible) {
+      this.weatherField.update(ctx.dt);
+      this.sim.update(ctx.dt, this.pendingForces);
+      if (ctx.time - this.lastWhitewaterTime > 0.075) {
+        for (const site of this.sim.whitewaterSites(8)) {
+          this.spray.emitCrest(site.dir, site.flow, site.strength, 2);
+          this.foamFlecks.emit(site.dir, site.flow, site.strength, 4);
+        }
+        this.lastWhitewaterTime = ctx.time;
+      }
+      this.spray.update(ctx.dt, this.sim);
+      this.foamFlecks.update(ctx.dt, ctx.time, this.sim, this.weatherField);
+    }
+    this.pendingForces.length = 0;
+    this.storm = 1 + this.weatherField.peak * 1.4;
+    for (let i = 0; i < this.weatherField.patches.length; i++) {
+      const patch = this.weatherField.patches[i]!;
+      this.uniforms.weather[i]!.set(patch.center.x, patch.center.y, patch.center.z, patch.strength);
+      this.uniforms.weatherB[i]!.x = weatherRadius(patch.age);
+    }
+  }
+
+  private addForce(dir: Vector3, strength: number, motion?: Vector3): void {
+    if (this.pendingForces.length === 4) this.pendingForces.shift();
+    this.pendingForces.push(
+      motion ? { dir: dir.clone(), strength, motion: motion.clone() } : { dir: dir.clone(), strength },
+    );
+  }
+
+  private applyTuning(): void {
+    this.uniforms.uOceanWind.value = this.tuning.windSpeed;
+    this.uniforms.uOceanWavelength.value = this.tuning.peakWavelength;
+    this.uniforms.uOceanAmplitude.value = this.tuning.amplitude;
+    this.uniforms.uOceanChoppiness.value = this.tuning.choppiness;
+    this.uniforms.uOceanFoam.value = this.tuning.foam;
+    this.foamFlecks.setIntensity(this.tuning.foam);
+    this.sim.setWindSpeed(this.tuning.windSpeed);
   }
 }
