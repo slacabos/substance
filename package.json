@@ -1,0 +1,31 @@
+{
+  "name": "substance",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A mobile-first Three.js toy: touch a 3D object made of water, ocean, slime or fur and watch it react.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "three": "^0.165.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@types/three": "^0.165.0",
+    "eslint": "^9.13.0",
+    "globals": "^15.11.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.12.2",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.4"
+  }
+}
