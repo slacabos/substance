@@ -20,6 +20,7 @@ import {
   select,
   sin,
   smoothstep,
+  sqrt,
   storage,
   uniform,
   vec3,
@@ -28,24 +29,26 @@ import {
 import { FUR } from '../config';
 import { baseN, baseR } from '../nodes/shape';
 
-/** Tuning for the strand simulation. Stiffness is how far a segment swings back to rest per substep. */
+/** Tuning for the strand simulation. */
 const SIM = {
-  substeps: 3,
-  gravity: 12,
-  damping: 0.985,
-  stiffnessRoot: 0.12,
-  stiffnessTip: 0.01,
-  /** How much each segment also lines up with the one before it. */
-  bend: 0.15,
-  /** Furthest the first segment leans from upright, and each joint bends, in radians. Stops curls and loops. */
-  maxRootAngle: 0.96,
-  maxJointAngle: 0.32,
-  /** Share of the body's own motion the hair is carried along with each frame; the rest shows as trailing. */
-  carry: 0.7,
-  /** Cap on how far a point moves per substep, in segment lengths, so violent flicks don't curl strands. */
-  maxStep: 0.9,
-  /** Share of the brush's velocity passed to the hair under it. */
-  brushPush: 0.8,
+  /** Fixed physics rate; each frame runs however many steps fit its time (at most maxSteps). */
+  rate: 240,
+  maxSteps: 8,
+  gravity: 7,
+  /**
+   * Each point is a damped spring toward the strand standing straight along its rest direction: stiff at the
+   * root, soft at the tip (per second squared). Tip sag under gravity is about gravity / springTip.
+   */
+  springRoot: 1200,
+  springTip: 80,
+  /** Damping ratio: below 1 the hair bounces a little before it settles. */
+  dampingRatio: 0.3,
+  /** Share of the body's own motion that turns into hair inertia; the rest carries the hair along. */
+  inertia: 0.5,
+  /** Cap on how far a point moves per step, in segment lengths, so violent flicks stay well behaved. */
+  maxStep: 0.5,
+  /** How quickly hair under a moving brush picks up the brush's velocity, per second. */
+  brushDrag: 25,
   /** How fast a combed parting relaxes, per second. */
   groomRelax: 0.12,
   /** How strongly a stroke lays the hair over (tangent lean per unit stroke strength). */
@@ -56,9 +59,9 @@ const SIM = {
 
 /**
  * Per-strand hair simulation on the GPU. Each strand is a chain of points from a root pinned to the
- * spinning body: Verlet integration with gravity and inertia, a stiffness pull toward a rest direction (the
- * surface normal, leaned over by combing and pressing), collision with the body, then follow-the-leader length
- * constraints, which keep it stable however hard the object is flicked. Points are in world space.
+ * spinning body, stepped at a fixed rate: Verlet integration with gravity and inertia, a damped spring pulling
+ * each point toward the strand's rest pose (standing along the surface normal, leaned over by combing and
+ * pressing), collision with the body, then follow-the-leader length constraints. Points are in world space.
  */
 export class FurSim {
   readonly count: number;
@@ -70,8 +73,10 @@ export class FurSim {
     /** Last frame's anchorInv, to carry the hair along with the body's motion. */
     anchorPrevInv: uniform(new Matrix4()),
     scale: uniform(1),
-    /** Frame time; the shader splits it into substeps. */
+    /** Frame time, and the fixed steps it's split into. */
     dt: uniform(1 / 60),
+    steps: uniform(4, 'int'),
+    step: uniform(1 / SIM.rate),
     time: uniform(0),
     len: uniform(FUR.length),
     /** Object-space unit direction of the brush contact. */
@@ -126,7 +131,10 @@ export class FurSim {
   update(anchor: Object3D, time: number, dt: number): void {
     this.setAnchor(anchor);
     this.uniforms.time.value = time;
+    const steps = Math.min(SIM.maxSteps, Math.max(1, Math.round(dt * SIM.rate)));
     this.uniforms.dt.value = dt;
+    this.uniforms.steps.value = steps;
+    this.uniforms.step.value = dt / steps;
     this.renderer.compute(this.stepNode);
   }
 
@@ -203,64 +211,50 @@ export class FurSim {
         sin(t.mul(1.3).add(p.y.mul(5))),
         sin(t.mul(1.1).add(p.z.mul(4))),
         sin(t.mul(1.7).add(p.x.mul(4.5))),
-      ).mul(0.06);
+      ).mul(0.04);
       const lean = groom.add(part).add(sway);
       const rest = normalize(this.toWorld(n.add(lean.sub(n.mul(dot(lean, n)))), 0));
-
-      // the brush drags the hair under it along with the stroke
-      const push = this.toWorld(u.brushVel, 0).mul(comb.mul(SIM.brushPush));
+      const brushVel = this.toWorld(u.brushVel, 0);
 
       const root = this.toWorld(q, 1);
       const base = instanceIndex.mul(this.points);
       this.pos.element(base).assign(root);
       this.prev.element(base).assign(root);
-      const parent = root.toVar();
-      const h = u.dt.div(SIM.substeps);
-      const gravity = vec3(0, -SIM.gravity, 0).mul(h).mul(h);
 
-      // Carry the hair most of the way along with the body's motion since last frame (velocities included),
-      // so only part of a spin turns into trailing; otherwise a hard flick would sweep it flat.
+      // Carry the hair part of the way along with the body's motion since last frame (velocities included),
+      // so only some of a spin turns into trailing; all of it would sweep the hair flat on a hard flick.
       const carry = (x: Node<'vec3'>) =>
-        mix(x, this.toWorld(u.anchorPrevInv.mul(vec4(x, 1)).xyz, 1), SIM.carry);
+        mix(x, this.toWorld(u.anchorPrevInv.mul(vec4(x, 1)).xyz, 1), 1 - SIM.inertia);
       Loop({ start: 1, end: this.points, type: 'uint' }, ({ i }) => {
         const at = base.add(i);
         this.pos.element(at).assign(carry(this.pos.element(at)));
         this.prev.element(at).assign(carry(this.prev.element(at)));
       });
 
-      // substeps run inside the one dispatch: separate dispatches per substep cost a frame on some GPUs
-      const parentDir = vec3(0).toVar();
-      Loop(SIM.substeps, () => {
+      const h = u.step;
+      const gravity = vec3(0, -SIM.gravity, 0);
+      const parent = root.toVar();
+      Loop({ start: 0, end: u.steps, type: 'int' }, () => {
         parent.assign(root);
-        parentDir.assign(rest);
         Loop({ start: 1, end: this.points, type: 'uint' }, ({ i }) => {
-          const x = this.pos.element(base.add(i)).toVar();
-          const old = this.prev.element(base.add(i));
+          const at = base.add(i);
+          const x = this.pos.element(at).toVar();
+          const velocity = x.sub(this.prev.element(at)).div(h);
           const along = float(i)
             .sub(1)
             .div(this.points - 2);
-          const stiffness = mix(SIM.stiffnessRoot, SIM.stiffnessTip, along);
+          const k = mix(SIM.springRoot, SIM.springTip, along);
+          const target = root.add(rest.mul(segment).mul(float(i)));
 
-          // inertia + gravity, then line up a little with the parent segment and swing part of the way back
-          // toward the rest direction
-          const velocity = x.sub(old).mul(SIM.damping);
-          const speed = length(velocity);
-          const capped = velocity.mul(min(speed, segment.mul(SIM.maxStep)).div(max(speed, 1e-6)));
-          const predicted = x
-            .add(capped)
-            .add(gravity)
-            .add(push.mul(h).mul(along.mul(0.6).add(0.4)));
-          const smoothed = mix(normalize(predicted.sub(parent)), parentDir, SIM.bend);
-          const swung = normalize(mix(normalize(smoothed), rest, stiffness));
-
-          // never fold more than a set angle from the segment before (from upright, for the first one)
-          const first = i.equal(1);
-          const cosMax = select(first, float(Math.cos(SIM.maxRootAngle)), float(Math.cos(SIM.maxJointAngle)));
-          const sinMax = select(first, float(Math.sin(SIM.maxRootAngle)), float(Math.sin(SIM.maxJointAngle)));
-          const c = dot(swung, parentDir);
-          const across = normalize(swung.sub(parentDir.mul(c)));
-          const limited = select(c.lessThan(cosMax), parentDir.mul(cosMax).add(across.mul(sinMax)), swung);
-          const next = parent.add(limited.mul(segment)).toVar();
+          // gravity, a damped spring toward the rest pose, and the drag of a brush moving through the hair
+          const accel = gravity
+            .add(target.sub(x).mul(k))
+            .sub(velocity.mul(sqrt(k).mul(2 * SIM.dampingRatio)))
+            .add(brushVel.sub(velocity).mul(comb.mul(SIM.brushDrag)));
+          const move = velocity.mul(h).add(accel.mul(h).mul(h));
+          const moved = length(move);
+          const capped = move.mul(min(moved, segment.mul(SIM.maxStep)).div(max(moved, 1e-6)));
+          const next = x.add(capped).toVar();
 
           // stay outside the body
           const local = u.anchorInv.mul(vec4(next, 1)).xyz;
@@ -273,9 +267,8 @@ export class FurSim {
 
           // follow the leader: exactly one segment from the parent
           next.assign(parent.add(normalize(next.sub(parent)).mul(segment)));
-          this.prev.element(base.add(i)).assign(x);
-          this.pos.element(base.add(i)).assign(next);
-          parentDir.assign(normalize(next.sub(parent)));
+          this.prev.element(at).assign(x);
+          this.pos.element(at).assign(next);
           parent.assign(next);
         });
       });
