@@ -1,0 +1,970 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Orb Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700&family=Figtree:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed WebGL stage; orb sits centered between a slim readout up top and a thumb-reach material dock at the bottom. Single dark studio look by choice. */
+:root {
+  --ink: #070a11;
+  --glass: rgba(20, 26, 40, 0.58);
+  --line: rgba(190, 205, 235, 0.14);
+  --text: #e9eef8;
+  --muted: #8f9ab2;
+  --accent: #8fd3ff;
+  --f-display: "Unbounded", ui-rounded, "Arial Rounded MT Bold", system-ui, sans-serif;
+  --f-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+body[data-mat="slime"] { --accent: #b4f56a; }
+body[data-mat="fur"] { --accent: #f2b77a; }
+
+html, body { height: 100%; }
+body {
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--f-body);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+#stage.grabbing { cursor: grabbing; }
+#stage.on-orb { cursor: pointer; }
+
+.top {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 16px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.brand {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+.brand span { color: var(--accent); transition: color .4s ease; }
+.readout {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.readout b { color: var(--text); font-weight: 500; }
+
+.dock {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.hint {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  text-align: center;
+  max-width: 34ch;
+  min-height: 2.7em;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  text-wrap: balance;
+}
+.picker {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  width: min(420px, 100%);
+  padding: 5px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  backdrop-filter: blur(18px) saturate(1.3);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+}
+.picker button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 600 13px/1 var(--f-body);
+  letter-spacing: 0.02em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 4px 10px;
+  border-radius: 19px;
+  cursor: pointer;
+  transition: background .25s ease, color .25s ease, box-shadow .25s ease;
+}
+.picker button:hover { color: var(--text); }
+.picker button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.picker button[aria-checked="true"] {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.sw {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+  transition: transform .3s cubic-bezier(.3, 1.6, .5, 1);
+}
+.picker button[aria-checked="true"] .sw { transform: scale(1.12); }
+.sw-water { background: radial-gradient(circle at 33% 28%, #ffffff 0 5%, #c8ecff 12%, #4a9bd6 52%, #0b2f52 100%); }
+.sw-slime { background: radial-gradient(circle at 33% 28%, #f7ffe4 0 5%, #c2ff73 16%, #54c72c 55%, #174d0c 100%); }
+.sw-fur {
+  background:
+    repeating-conic-gradient(rgba(70, 30, 10, 0.4) 0 4deg, transparent 4deg 11deg),
+    radial-gradient(circle at 35% 30%, #ffe0b8 0 8%, #e99c58 45%, #5e2a12 100%);
+  box-shadow: 0 0 0 2px rgba(242, 183, 122, 0.25), 0 4px 10px rgba(0, 0, 0, 0.45);
+}
+.sub {
+  margin: 0;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.8;
+}
+.fallback {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  text-align: center;
+  color: var(--muted);
+  font-size: 15px;
+}
+@media (min-width: 720px) {
+  .brand { font-size: 22px; }
+  .readout { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sw, .picker button, .brand span { transition: none; }
+}
+</style>
+<style>[hidden]{display:none!important} body{margin:0}</style>
+</head>
+<body>
+
+<canvas id="stage" aria-label="Interactive 3D orb. Drag on the orb to touch it, drag the background to spin it."></canvas>
+
+<header class="top" id="top">
+  <div class="brand">Orb <span>Lab</span></div>
+  <div class="readout" id="readout"><b>Water</b><br>n = 1.333<br>997 kg/m³</div>
+</header>
+
+<div class="dock" id="dock">
+  <p class="hint" id="hint" aria-live="polite">Tap for ripples. Drag to stir the surface.</p>
+  <nav class="picker" role="radiogroup" aria-label="Orb material">
+    <button type="button" id="mat-water" role="radio" aria-checked="true" data-mat="water"><span class="sw sw-water"></span>Water</button>
+    <button type="button" id="mat-slime" role="radio" aria-checked="false" data-mat="slime"><span class="sw sw-slime"></span>Slime</button>
+    <button type="button" id="mat-fur" role="radio" aria-checked="false" data-mat="fur"><span class="sw sw-fur"></span>Hairy</button>
+  </nav>
+  <p class="sub" id="sub">Drag the background to spin</p>
+</div>
+
+<div class="fallback" id="fallback" hidden>This orb needs WebGL 2. Try a recent version of Safari, Chrome or Firefox.</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const canvas = document.getElementById('stage');
+const coarse = matchMedia('(pointer: coarse)').matches;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+} catch (err) {
+  document.getElementById('fallback').hidden = false;
+  throw err;
+}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 120);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.85;
+
+// ---------- Studio backdrop (also what the water refracts) ----------
+const backdrop = new THREE.Mesh(
+  new THREE.SphereGeometry(40, 64, 32),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    vertexShader: /* glsl */`
+      varying vec3 vDir;
+      void main() { vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */`
+      varying vec3 vDir;
+      float strip(float az, float y, float c, float w, float y0, float y1) {
+        float a = 1.0 - smoothstep(w * 0.5, w * 0.5 + 0.025, abs(az - c));
+        float b = smoothstep(y0 - 0.06, y0 + 0.06, y) * (1.0 - smoothstep(y1 - 0.06, y1 + 0.06, y));
+        return a * b;
+      }
+      void main() {
+        vec3 d = normalize(vDir);
+        float az = atan(d.x, -d.z);
+        vec3 col = mix(vec3(0.006, 0.008, 0.016), vec3(0.040, 0.050, 0.085), smoothstep(-0.5, 0.8, d.y));
+        col += vec3(0.035, 0.050, 0.090) * exp(-pow(d.y + 0.08, 2.0) * 25.0);
+        col += vec3(1.5, 1.6, 1.8) * strip(az, d.y, -0.46, 0.08, -0.20, 0.60);
+        col += vec3(1.8, 1.3, 0.9) * strip(az, d.y, 0.52, 0.05, -0.05, 0.48);
+        col += vec3(0.7, 0.8, 1.0) * 0.7 * exp(-pow(az * 1.3, 2.0) - pow((d.y - 0.8) * 3.0, 2.0));
+        col += vec3(0.3, 0.5, 0.7) * 0.25 * exp(-pow((az - 3.14159) * 1.2, 2.0) - pow(d.y * 2.5, 2.0));
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`
+  })
+);
+backdrop.renderOrder = -1;
+scene.add(backdrop);
+
+// Soft light pool under the orb
+const pool = new THREE.Mesh(
+  new THREE.PlaneGeometry(3.2, 3.2),
+  new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: { uColor: { value: new THREE.Color('#8fd3ff') }, uA: { value: 0.35 } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform vec3 uColor; uniform float uA; varying vec2 vUv;
+      void main(){ float d = length(vUv - 0.5) * 2.0; float a = uA * pow(1.0 - smoothstep(0.0, 1.0, d), 3.0);
+        gl_FragColor = vec4(uColor * a, 1.0);
+        #include <colorspace_fragment>
+      }`
+  })
+);
+pool.rotation.x = -Math.PI / 2;
+pool.position.y = -1.55;
+scene.add(pool);
+
+// ---------- Deformable orb shader (water + slime) ----------
+const MAX_IMP = 16;
+const DEFORM_GLSL = /* glsl */`
+uniform float uTime;
+uniform vec4 uImp[${MAX_IMP}];
+uniform vec4 uImpB[${MAX_IMP}];
+uniform vec4 uPress;
+uniform vec4 uWob;
+#if MODE == 1
+vec3 mod289(vec3 x){ return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 mod289(vec4 x){ return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 permute(vec4 x){ return mod289(((x * 34.0) + 1.0) * x); }
+vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
+float snoise(vec3 v){
+  const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+  vec3 i = floor(v + dot(v, C.yyy));
+  vec3 x0 = v - i + dot(i, C.xxx);
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min(g.xyz, l.zxy);
+  vec3 i2 = max(g.xyz, l.zxy);
+  vec3 x1 = x0 - i1 + C.xxx;
+  vec3 x2 = x0 - i2 + C.yyy;
+  vec3 x3 = x0 - D.yyy;
+  i = mod289(i);
+  vec4 p = permute(permute(permute(i.z + vec4(0.0, i1.z, i2.z, 1.0)) + i.y + vec4(0.0, i1.y, i2.y, 1.0)) + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+  float n_ = 0.142857142857;
+  vec3 ns = n_ * D.wyz - D.xzx;
+  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_);
+  vec4 x = x_ * ns.x + ns.yyyy;
+  vec4 y = y_ * ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+  vec4 b0 = vec4(x.xy, y.xy);
+  vec4 b1 = vec4(x.zw, y.zw);
+  vec4 s0 = floor(b0) * 2.0 + 1.0;
+  vec4 s1 = floor(b1) * 2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+  vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+  vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+  vec3 p0 = vec3(a0.xy, h.x);
+  vec3 p1 = vec3(a0.zw, h.y);
+  vec3 p2 = vec3(a1.xy, h.z);
+  vec3 p3 = vec3(a1.zw, h.w);
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+  m = m * m;
+  return 42.0 * dot(m * m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+}
+#endif
+
+float arcDist(vec3 a, vec3 b) { return acos(clamp(dot(a, b), -1.0, 1.0)); }
+
+float dispAt(vec3 p) {
+  float d = 0.0;
+#if MODE == 0
+  // gentle swell so the water never looks frozen
+  d += 0.006 * sin(p.x * 5.0 + uTime * 1.3) * sin(p.y * 4.0 - uTime * 1.1);
+  d += 0.004 * sin(p.z * 7.0 + p.x * 3.0 + uTime * 1.7);
+  for (int i = 0; i < ${MAX_IMP}; i++) {
+    vec4 a = uImp[i];
+    float str = uImpB[i].x;
+    float age = uTime - a.w;
+    if (str <= 0.0 || age < 0.0 || age > 5.0) continue;
+    float s = arcDist(p, a.xyz);
+    float behind = age * 0.85 - s;           // distance behind the wavefront
+    float env = smoothstep(-0.06, 0.04, behind) * exp(-max(behind, 0.0) * 3.2) * exp(-age * 0.75) / (1.0 + 1.5 * s);
+    d += str * 0.045 * env * cos(17.0 * behind);
+    d -= str * 0.05 * exp(-s * s * 90.0) * exp(-age * 5.0);   // the initial splash dip
+  }
+  float ps = arcDist(p, uPress.xyz);
+  d -= uPress.w * 0.035 * exp(-ps * ps * 70.0);
+#else
+  d += 0.010 * snoise(p * 2.1 + vec3(0.0, uTime * 0.18, uTime * 0.07));
+  d += 0.003 * snoise(p * 5.3 - vec3(uTime * 0.12));
+  for (int i = 0; i < ${MAX_IMP}; i++) {
+    vec4 a = uImp[i];
+    if (abs(a.w) < 1e-4) continue;
+    float r = uImpB[i].x;
+    float s = arcDist(p, a.xyz);
+    float rim = (s - 1.7 * r) / (0.75 * r);
+    d += a.w * (exp(-s * s / (r * r)) - 0.32 * exp(-rim * rim));  // dent plus the goo it shoves aside
+  }
+  float c = dot(p, uWob.xyz);
+  d += uWob.w * (1.5 * c * c - 0.5);       // squash-and-stretch jiggle mode
+#endif
+  return d;
+}
+
+void orbDeform(vec3 p, out vec3 pos, out vec3 nrm) {
+  pos = p * (1.0 + dispAt(p));
+  vec3 t1 = normalize(cross(p, abs(p.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+  vec3 t2 = cross(p, t1);
+  const float e = 0.004;
+  vec3 pa = normalize(p + t1 * e);
+  vec3 pb = normalize(p + t2 * e);
+  vec3 A = pa * (1.0 + dispAt(pa));
+  vec3 B = pb * (1.0 + dispAt(pb));
+  nrm = normalize(cross(A - pos, B - pos));
+  if (dot(nrm, p) < 0.0) nrm = -nrm;
+}
+`;
+
+function makeDeformMaterial(params, mode) {
+  const mat = new THREE.MeshPhysicalMaterial(params);
+  const u = {
+    uTime: { value: 0 },
+    uImp: { value: Array.from({ length: MAX_IMP }, () => new THREE.Vector4(0, 1, 0, 0)) },
+    uImpB: { value: Array.from({ length: MAX_IMP }, () => new THREE.Vector4()) },
+    uPress: { value: new THREE.Vector4(0, 0, 1, 0) },
+    uWob: { value: new THREE.Vector4(0, 1, 0, 0) },
+  };
+  mat.defines = { ...mat.defines, MODE: mode };
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\n' + DEFORM_GLSL)
+      .replace('#include <beginnormal_vertex>', 'vec3 dPos; vec3 dNrm; orbDeform(normalize(position), dPos, dNrm);\nvec3 objectNormal = dNrm;')
+      .replace('#include <begin_vertex>', 'vec3 transformed = dPos;');
+  };
+  mat.customProgramCacheKey = () => 'orb-deform-' + mode;
+  mat.userData.u = u;
+  return mat;
+}
+
+let orbGeo = new THREE.IcosahedronGeometry(1, coarse ? 44 : 72);
+orbGeo.deleteAttribute('uv');
+orbGeo = mergeVertices(orbGeo);
+
+const waterMat = makeDeformMaterial({
+  color: 0xffffff, metalness: 0, roughness: 0.03,
+  transmission: 1, thickness: 1.7, ior: 1.333,
+  attenuationColor: new THREE.Color(0.6, 0.86, 1.0), attenuationDistance: 2.4,
+  specularIntensity: 1, envMapIntensity: 1.15,
+  dispersion: coarse ? 0 : 0.12,
+}, 0);
+
+const slimeMat = makeDeformMaterial({
+  color: new THREE.Color(0.55, 1.0, 0.2), metalness: 0, roughness: 0.15,
+  transmission: 0.88, thickness: 1.6, ior: 1.46,
+  attenuationColor: new THREE.Color(0.35, 0.95, 0.12), attenuationDistance: 1.1,
+  emissive: new THREE.Color(0.06, 0.2, 0.02),
+  clearcoat: 1, clearcoatRoughness: 0.05,
+  sheen: 0.35, sheenColor: new THREE.Color(0.75, 1.0, 0.55), sheenRoughness: 0.45,
+  envMapIntensity: 1.1,
+}, 1);
+
+const orb = new THREE.Group();
+scene.add(orb);
+const waterMesh = new THREE.Mesh(orbGeo, waterMat);
+const slimeMesh = new THREE.Mesh(orbGeo, slimeMat);
+waterMesh.frustumCulled = slimeMesh.frustumCulled = false;
+orb.add(waterMesh, slimeMesh);
+
+// ---------- Bubbles ----------
+const bubbleGeo = new THREE.SphereGeometry(1, 16, 12);
+const bubbleMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.06 });
+const dummy = new THREE.Object3D();
+
+// Water bubbles rise in world space, so they stay "up" while the orb spins.
+const waterBubbleRig = new THREE.Group();
+scene.add(waterBubbleRig);
+const WB = 16;
+const waterBubbles = new THREE.InstancedMesh(bubbleGeo, bubbleMat, WB);
+waterBubbles.frustumCulled = false;
+waterBubbleRig.add(waterBubbles);
+const wb = Array.from({ length: WB }, () => spawnBubble({}, true));
+function spawnBubble(b, anywhere) {
+  const ang = Math.random() * Math.PI * 2, rad = Math.sqrt(Math.random()) * 0.55;
+  b.x = Math.cos(ang) * rad; b.z = Math.sin(ang) * rad;
+  const floor = -Math.sqrt(Math.max(0, 0.64 - b.x * b.x - b.z * b.z));
+  b.y = anywhere ? floor + Math.random() * (-2 * floor) : floor;
+  b.r = 0.007 + Math.random() * Math.random() * 0.026;
+  b.v = 0.08 + b.r * 6 + Math.random() * 0.05;
+  b.ph = Math.random() * 6.28;
+  return b;
+}
+
+// Slime bubbles are trapped, so they ride along with the orb.
+const SB = 11;
+const slimeBubbles = new THREE.InstancedMesh(bubbleGeo, bubbleMat, SB);
+slimeBubbles.frustumCulled = false;
+orb.add(slimeBubbles);
+const sb = Array.from({ length: SB }, () => {
+  const v = new THREE.Vector3().randomDirection().multiplyScalar(0.15 + Math.random() * 0.45);
+  return { p: v, r: 0.015 + Math.random() * Math.random() * 0.05, ph: Math.random() * 6.28 };
+});
+
+// ---------- Fur (shell texturing) ----------
+const FUR_SHELLS = coarse ? 40 : 60;
+const FUR_LEN = 0.26;
+const FUR_DENSITY = 64;
+const MAX_BRUSH = 12;
+const furCore = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 64, 48),
+  new THREE.MeshStandardMaterial({ color: new THREE.Color('#1a0b05'), roughness: 1 })
+);
+const furBase = new THREE.SphereGeometry(1, coarse ? 96 : 128, coarse ? 64 : 96);
+const furGeo = new THREE.InstancedBufferGeometry().copy(furBase);
+furGeo.instanceCount = FUR_SHELLS;
+const furU = {
+  uShells: { value: FUR_SHELLS },
+  uLen: { value: FUR_LEN },
+  uDensity: { value: FUR_DENSITY },
+  uTime: { value: 0 },
+  uGrav: { value: new THREE.Vector3(0, -1, 0) },
+  uOmega: { value: new THREE.Vector3() },
+  uBrush: { value: Array.from({ length: MAX_BRUSH }, () => new THREE.Vector4(0, 1, 0, 0)) },
+  uBrushT: { value: Array.from({ length: MAX_BRUSH }, () => new THREE.Vector4()) },
+  uPress: { value: new THREE.Vector4(0, 0, 1, 0) },
+  uRoot: { value: new THREE.Color('#2a1107') },
+  uTip: { value: new THREE.Color('#f3b97f') },
+  uL1: { value: new THREE.Vector3(-0.55, 0.75, 0.5).normalize() },
+};
+const furMat = new THREE.ShaderMaterial({
+  uniforms: furU,
+  alphaToCoverage: true,
+  vertexShader: /* glsl */`
+    uniform float uShells, uLen, uTime;
+    uniform vec3 uGrav, uOmega;
+    uniform vec4 uBrush[${MAX_BRUSH}];
+    uniform vec4 uBrushT[${MAX_BRUSH}];
+    uniform vec4 uPress;
+    varying vec3 vP; varying float vH; varying vec3 vN; varying vec3 vT; varying vec3 vView;
+    void main() {
+      float h = (float(gl_InstanceID) + 1.0) / uShells;
+      vec3 p = normalize(position);
+      vec3 bend = uGrav * 0.32;
+      bend += cross(p, uOmega) * 0.2;                         // hair trails behind when the orb spins
+      bend += 0.045 * vec3(sin(uTime * 1.3 + p.y * 5.0), sin(uTime * 1.1 + p.z * 4.0), sin(uTime * 1.7 + p.x * 4.5));
+      for (int i = 0; i < ${MAX_BRUSH}; i++) {
+        vec4 b = uBrush[i];
+        if (abs(b.w) < 1e-3) continue;
+        float s = acos(clamp(dot(p, b.xyz), -1.0, 1.0));
+        bend += uBrushT[i].xyz * b.w * exp(-s * s / 0.05);
+      }
+      vec3 away = p - uPress.xyz * dot(p, uPress.xyz);
+      float al = length(away);
+      float ps = acos(clamp(dot(p, uPress.xyz), -1.0, 1.0));
+      if (al > 1e-4) bend += (away / al) * uPress.w * 1.3 * exp(-ps * ps / 0.035) * smoothstep(0.0, 0.08, ps);
+      bend -= p * dot(bend, p);
+      float bl = length(bend);
+      if (bl > 1.2) { bend *= 1.2 / bl; bl = 1.2; }
+      float up = uLen * (1.0 - 0.35 * bl);
+      vec3 pos = p * (1.0 + h * up) + bend * uLen * h * h;
+      vec3 dir = p * up + 2.0 * h * bend * uLen;
+      vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+      vP = p; vH = h;
+      vView = -mv.xyz;
+      vN = normalize(normalMatrix * p);
+      vT = normalize(normalMatrix * dir);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: /* glsl */`
+    uniform float uDensity;
+    uniform vec3 uRoot, uTip, uL1;
+    varying vec3 vP; varying float vH; varying vec3 vN; varying vec3 vT; varying vec3 vView;
+    vec3 hash33(vec3 p3) {
+      p3 = fract(p3 * vec3(0.1031, 0.1030, 0.0973));
+      p3 += dot(p3, p3.yxz + 33.33);
+      return fract((p3.xxy + p3.yxx) * p3.zyx);
+    }
+    void main() {
+      vec3 q = normalize(vP) * uDensity;
+      vec3 cell = floor(q);
+      vec3 rnd = hash33(cell);
+      vec3 ctr = cell + 0.15 + 0.7 * rnd;
+      float len = 0.55 + 0.45 * fract(rnd.x * 7.13 + rnd.z * 3.1);
+      float t = vH / len;
+      if (t > 1.0) discard;
+      float dist = length(q - ctr);
+      float r = 0.46 * pow(1.0 - t, 0.6) + 0.05;
+      float w = fwidth(dist) * 0.75;
+      float a = 1.0 - smoothstep(r - w, r + w, dist);
+      if (a < 0.02) discard;
+
+      vec3 N = normalize(vN), T = normalize(vT), V = normalize(vView), L = normalize(uL1);
+      vec3 base = mix(uRoot, uTip, smoothstep(0.0, 0.95, vH)) * (0.7 + 0.55 * rnd.y);
+      float ao = mix(0.15, 1.0, pow(vH, 0.85));
+      float wrap = clamp(dot(N, L) * 0.6 + 0.4, 0.0, 1.0);
+      float tl = dot(T, L);
+      float kk = sqrt(max(0.0, 1.0 - tl * tl));
+      vec3 H = normalize(L + V);
+      float th = dot(T, H);
+      float spec = pow(sqrt(max(0.0, 1.0 - th * th)), 80.0);
+      vec3 col = base * wrap * mix(1.0, kk, 0.5) * 1.7;
+      col += vec3(1.0, 0.93, 0.82) * spec * 0.3 * vH * wrap;
+      float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5);
+      col += uTip * rim * 0.8 * vH;
+      col += base * 0.22 * (0.55 + 0.45 * N.y);
+      col *= ao;
+      gl_FragColor = vec4(col, a);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`
+});
+const furShells = new THREE.Mesh(furGeo, furMat);
+furShells.frustumCulled = false;
+const furGroup = new THREE.Group();
+furGroup.add(furCore, furShells);
+orb.add(furGroup);
+
+// ---------- Interaction models ----------
+let clock = 0;
+const tmpV = new THREE.Vector3();
+
+const water = {
+  u: waterMat.userData.u, ring: 0,
+  press: 0, pressTarget: 0, pressDir: new THREE.Vector3(0, 0, 1),
+  lastDir: new THREE.Vector3(), lastSpawn: 0,
+  spawn(dir, str) {
+    const i = this.ring++ % MAX_IMP;
+    this.u.uImp.value[i].set(dir.x, dir.y, dir.z, clock);
+    this.u.uImpB.value[i].x = str;
+  },
+  down(dir) { this.spawn(dir, 1); this.pressTarget = 1; this.pressDir.copy(dir); this.lastDir.copy(dir); this.lastSpawn = clock; },
+  move(dir) {
+    this.pressDir.copy(dir);
+    const moved = dir.angleTo(this.lastDir);
+    if (moved > 0.12 || clock - this.lastSpawn > 0.35) {
+      this.spawn(dir, Math.min(1, 0.35 + moved * 2.5));
+      this.lastDir.copy(dir); this.lastSpawn = clock;
+    }
+  },
+  up() { this.pressTarget = 0; this.spawn(this.pressDir, 0.55); },
+  enter(front) { this.spawn(front, 0.9); },
+  update(dt) {
+    this.press += (this.pressTarget - this.press) * (1 - Math.exp(-dt * 10));
+    this.u.uPress.value.set(this.pressDir.x, this.pressDir.y, this.pressDir.z, this.press);
+    this.u.uTime.value = clock;
+  },
+};
+
+const slime = {
+  u: slimeMat.userData.u, ring: 0, cur: null, holdT: 0,
+  wob: 0, wobV: 0, wobAxis: new THREE.Vector3(0, 1, 0),
+  pokes: Array.from({ length: MAX_IMP }, () => ({ dir: new THREE.Vector3(0, 1, 0), amp: 0, vel: 0, target: 0, r: 0.35, live: false })),
+  newPoke(dir) {
+    const p = this.pokes[this.ring++ % MAX_IMP];
+    p.dir.copy(dir); p.amp = 0; p.vel = -0.6; p.target = -0.13;
+    p.r = 0.3 + Math.random() * 0.07; p.live = true;
+    return p;
+  },
+  release(p, s) { p.target = 0; this.wobAxis.copy(p.dir); this.wobV += p.amp * 5 * s; },
+  down(dir) { this.cur = this.newPoke(dir); this.holdT = 0; },
+  move(dir) {
+    if (!this.cur) return;
+    if (dir.angleTo(this.cur.dir) > 0.24) {
+      const prev = this.cur;
+      this.release(prev, 0.5);
+      this.cur = this.newPoke(dir);
+      this.cur.amp = prev.amp * 0.6;
+    } else {
+      this.cur.dir.lerp(dir, 0.35).normalize();
+    }
+  },
+  up() { if (this.cur) { this.release(this.cur, 1); this.cur = null; } },
+  enter() { this.wobAxis.set(0, 1, 0); this.wobV -= 1.4; },
+  kick(axis, amount) { this.wobAxis.copy(axis); this.wobV -= amount; },
+  update(dt) {
+    if (this.cur) { this.holdT += dt; this.cur.target = -0.13 - 0.14 * Math.min(1, this.holdT / 1.2); }
+    const steps = Math.ceil(dt / 0.006), h = dt / steps;
+    for (let s = 0; s < steps; s++) {
+      for (const p of this.pokes) {
+        if (!p.live) continue;
+        p.vel += (110 * (p.target - p.amp) - 7 * p.vel) * h;
+        p.amp += p.vel * h;
+      }
+      this.wobV += (-55 * this.wob - 3.2 * this.wobV) * h;
+      this.wob += this.wobV * h;
+    }
+    this.wob = THREE.MathUtils.clamp(this.wob, -0.22, 0.22);
+    this.pokes.forEach((p, i) => {
+      if (p.live && p !== this.cur && p.target === 0 && Math.abs(p.amp) < 2e-4 && Math.abs(p.vel) < 2e-3) { p.live = false; p.amp = 0; }
+      this.u.uImp.value[i].set(p.dir.x, p.dir.y, p.dir.z, p.live ? p.amp : 0);
+      this.u.uImpB.value[i].x = p.r;
+    });
+    this.u.uWob.value.set(this.wobAxis.x, this.wobAxis.y, this.wobAxis.z, this.wob);
+    this.u.uTime.value = clock;
+  },
+};
+
+const fur = {
+  ring: 0, last: null, hoverLast: null,
+  press: 0, pressTarget: 0, pressDir: new THREE.Vector3(0, 0, 1),
+  brushes: Array.from({ length: MAX_BRUSH }, () => ({ dir: new THREE.Vector3(0, 1, 0), t: new THREE.Vector3(), w: 0, v: 0, live: false })),
+  stroke(dir, last, dt, factor) {
+    const delta = tmpV.subVectors(dir, last);
+    delta.addScaledVector(dir, -delta.dot(dir));
+    const m = delta.length();
+    if (m < 0.004) return false;
+    const speed = m / Math.max(dt, 0.008);
+    const strength = Math.min(1.0, 0.35 + speed * 0.12) * factor;
+    delta.normalize();
+    let b = this.brushes[(this.ring + MAX_BRUSH - 1) % MAX_BRUSH];
+    if (!b.live || b.dir.angleTo(dir) > 0.12) {
+      b = this.brushes[this.ring++ % MAX_BRUSH];
+      b.t.copy(delta);
+      b.w = 0;
+    }
+    b.dir.copy(dir);
+    b.t.lerp(delta, 0.5).normalize();
+    b.w = Math.max(b.w, strength);
+    b.v = 0;
+    b.live = true;
+    return true;
+  },
+  down(dir) { this.last = dir.clone(); this.pressTarget = 1; this.pressDir.copy(dir); },
+  move(dir, dt) {
+    this.pressDir.copy(dir);
+    if (!this.last) { this.last = dir.clone(); return; }
+    if (this.stroke(dir, this.last, dt, 1)) { this.pressTarget = 0.35; this.last.copy(dir); }
+  },
+  up() { this.pressTarget = 0; this.last = null; },
+  hover(dir, dt) {
+    if (!this.hoverLast) { this.hoverLast = dir.clone(); return; }
+    if (this.stroke(dir, this.hoverLast, dt, 0.6)) this.hoverLast.copy(dir);
+  },
+  hoverEnd() { this.hoverLast = null; },
+  enter() { this.press = 0; },
+  update(dt) {
+    const steps = Math.ceil(dt / 0.008), h = dt / steps;
+    for (let s = 0; s < steps; s++) {
+      for (const b of this.brushes) {
+        if (!b.live) continue;
+        b.v += (-13 * b.w - 4.2 * b.v) * h;
+        b.w += b.v * h;
+      }
+    }
+    this.brushes.forEach((b, i) => {
+      if (b.live && Math.abs(b.w) < 1e-3 && Math.abs(b.v) < 1e-2) { b.live = false; b.w = 0; }
+      furU.uBrush.value[i].set(b.dir.x, b.dir.y, b.dir.z, b.live ? b.w : 0);
+      furU.uBrushT.value[i].set(b.t.x, b.t.y, b.t.z, 0);
+    });
+    this.press += (this.pressTarget - this.press) * (1 - Math.exp(-dt * 9));
+    furU.uPress.value.set(this.pressDir.x, this.pressDir.y, this.pressDir.z, this.press);
+    furU.uTime.value = clock;
+  },
+};
+
+const MATERIALS = {
+  water: {
+    model: water, hitR: 1.0, color: '#8fd3ff', pool: 0.2,
+    hint: 'Tap for ripples. Drag to stir the surface.',
+    readout: '<b>Water</b><br>n = 1.333<br>997 kg/m³',
+  },
+  slime: {
+    model: slime, hitR: 1.0, color: '#9cf55a', pool: 0.16,
+    hint: 'Press and hold to squish. Let go and it jiggles.',
+    readout: '<b>Slime</b><br>n ≈ 1.46<br>viscoelastic',
+  },
+  fur: {
+    model: fur, hitR: 1 + FUR_LEN * 0.6, color: '#f2b77a', pool: 0.07,
+    hint: coarse ? 'Stroke the fur to comb it. Spin the orb to fluff it.' : 'Brush the fur with your cursor. Spin the orb to fluff it.',
+    readout: `<b>Fur</b><br>${FUR_SHELLS} shells<br>≈ ${Math.round(4 * Math.PI * FUR_DENSITY * FUR_DENSITY * 0.7 / 1000)}k strands`,
+  },
+};
+
+// ---------- UI ----------
+const hintEl = document.getElementById('hint');
+const readoutEl = document.getElementById('readout');
+const buttons = [...document.querySelectorAll('.picker button')];
+if (!coarse) document.getElementById('sub').textContent = 'Drag the background to spin · keys 1 2 3';
+
+let current = 'water';
+let popS = 1, popV = 0;
+const invQ = new THREE.Quaternion();
+
+function frontDir() {
+  // the point on the orb facing the camera, in orb space
+  invQ.copy(orb.quaternion).invert();
+  return tmpV.copy(camera.position).sub(orb.position).normalize().applyQuaternion(invQ).clone();
+}
+
+function setMaterial(name, animate = true) {
+  current = name;
+  const m = MATERIALS[name];
+  waterMesh.visible = waterBubbleRig.visible = name === 'water';
+  slimeMesh.visible = slimeBubbles.visible = name === 'slime';
+  furGroup.visible = name === 'fur';
+  document.body.dataset.mat = name;
+  hintEl.textContent = m.hint;
+  readoutEl.innerHTML = m.readout;
+  pool.material.uniforms.uColor.value.set(m.color);
+  pool.material.uniforms.uA.value = m.pool;
+  buttons.forEach((b) => b.setAttribute('aria-checked', String(b.dataset.mat === name)));
+  if (animate) {
+    popS = reduceMotion ? 0.97 : 0.84; popV = 0;
+    m.model.enter(frontDir());
+  }
+}
+buttons.forEach((b) => b.addEventListener('click', () => setMaterial(b.dataset.mat)));
+buttons.forEach((b, i) => b.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const next = buttons[(i + (e.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length];
+  next.focus(); setMaterial(next.dataset.mat);
+}));
+window.addEventListener('keydown', (e) => {
+  const map = { '1': 'water', '2': 'slime', '3': 'fur' };
+  if (map[e.key]) setMaterial(map[e.key]);
+});
+
+// ---------- Camera fit ----------
+const topEl = document.getElementById('top');
+const dockEl = document.getElementById('dock');
+function resize() {
+  const W = window.innerWidth, H = window.innerHeight;
+  renderer.setSize(W, H, false);
+  camera.aspect = W / H;
+  const topH = topEl.getBoundingClientRect().bottom + 8;
+  const botH = H - dockEl.getBoundingClientRect().top + 8;
+  const availH = Math.max(H * 0.45, H - topH - botH);
+  const R = 1.4;
+  const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const frac = Math.min((W / H) * 0.92, availH / H);
+  const dist = R / (tanH * frac);
+  camera.position.set(0, dist * 0.12, dist);
+  camera.lookAt(0, 0, 0);
+  camera.setViewOffset(W, H, 0, (botH - topH) / 2, W, H);
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(dockEl);
+resize();
+
+// ---------- Pointer handling ----------
+const ndc = new THREE.Vector2();
+const raycaster = new THREE.Raycaster();
+const oc = new THREE.Vector3(), hitW = new THREE.Vector3();
+function hitOrb(cx, cy, clampToEdge) {
+  const rect = canvas.getBoundingClientRect();
+  ndc.set(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const { origin: o, direction: d } = raycaster.ray;
+  const radius = MATERIALS[current].hitR * orb.scale.x;
+  oc.subVectors(o, orb.position);
+  const b = oc.dot(d);
+  const disc = b * b - (oc.lengthSq() - radius * radius);
+  let t;
+  if (disc >= 0) t = -b - Math.sqrt(disc);
+  else if (clampToEdge) t = -b;          // nearest point on the silhouette
+  else return null;
+  hitW.copy(d).multiplyScalar(t).add(o).sub(orb.position);
+  invQ.copy(orb.quaternion).invert();
+  return hitW.applyQuaternion(invQ).normalize().clone();
+}
+
+const angVel = new THREE.Vector3(0, 0.2, 0);
+const autoSpin = new THREE.Vector3(0, reduceMotion ? 0.06 : 0.2, 0);
+const dq = new THREE.Quaternion(), axis = new THREE.Vector3();
+let active = null;
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (active) return;
+  canvas.setPointerCapture(e.pointerId);
+  const dir = hitOrb(e.clientX, e.clientY, false);
+  active = { id: e.pointerId, mode: dir ? 'touch' : 'spin', x: e.clientX, y: e.clientY, t: performance.now() };
+  if (dir) { fur.hoverEnd(); MATERIALS[current].model.down(dir); }
+  else { canvas.classList.add('grabbing'); angVel.set(0, 0, 0); }
+});
+canvas.addEventListener('pointermove', (e) => {
+  const now = performance.now();
+  if (!active) {
+    if (e.pointerType === 'mouse') {
+      const dir = hitOrb(e.clientX, e.clientY, false);
+      canvas.classList.toggle('on-orb', !!dir);
+      if (current === 'fur') { if (dir) fur.hover(dir, 1 / 60); else fur.hoverEnd(); }
+    }
+    return;
+  }
+  if (e.pointerId !== active.id) return;
+  const dt = Math.max(1, now - active.t) / 1000;
+  if (active.mode === 'spin') {
+    const dx = e.clientX - active.x, dy = e.clientY - active.y;
+    axis.set(dy, dx, 0);
+    const ang = axis.length() * 0.0065;
+    if (ang > 0) {
+      axis.normalize();
+      dq.setFromAxisAngle(axis, ang);
+      orb.quaternion.premultiply(dq);
+      angVel.lerp(axis.multiplyScalar(Math.min(ang / dt, 14)), 0.6);
+    }
+  } else {
+    MATERIALS[current].model.move(hitOrb(e.clientX, e.clientY, true), dt);
+  }
+  active.x = e.clientX; active.y = e.clientY; active.t = now;
+});
+function endPointer(e) {
+  if (!active || e.pointerId !== active.id) return;
+  if (active.mode === 'touch') MATERIALS[current].model.up();
+  else if (performance.now() - active.t > 90) angVel.set(0, 0, 0);
+  canvas.classList.remove('grabbing');
+  active = null;
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('pointerleave', () => fur.hoverEnd());
+
+// ---------- Loop ----------
+const omegaS = new THREE.Vector3(), omegaV = new THREE.Vector3(), prevAng = new THREE.Vector3(), dOmega = new THREE.Vector3();
+const down = new THREE.Vector3();
+let last = performance.now();
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  clock += dt;
+
+  const spinning = active && active.mode === 'spin';
+  if (!spinning) {
+    angVel.lerp(autoSpin, 1 - Math.exp(-dt * 1.1));
+    const ang = angVel.length() * dt;
+    if (ang > 1e-7) { dq.setFromAxisAngle(axis.copy(angVel).normalize(), ang); orb.quaternion.premultiply(dq); }
+  } else if (now - active.t > 60) {
+    angVel.multiplyScalar(Math.exp(-dt * 12));
+  }
+  invQ.copy(orb.quaternion).invert();
+
+  // springy lagged spin for the fur, and a jiggle kick for the slime on sudden spin changes
+  omegaV.addScaledVector(tmpV.subVectors(angVel, omegaS), 30 * dt).multiplyScalar(Math.exp(-dt * 5));
+  omegaS.addScaledVector(omegaV, dt);
+  if (omegaS.length() > 5) omegaS.setLength(5);
+  furU.uOmega.value.copy(omegaS).applyQuaternion(invQ);
+  furU.uGrav.value.copy(down.set(0, -1, 0)).applyQuaternion(invQ);
+  dOmega.subVectors(angVel, prevAng);
+  const jerk = dOmega.length();
+  if (current === 'slime' && jerk > 0.4) slime.kick(dOmega.normalize().applyQuaternion(invQ), Math.min(jerk, 6) * 0.06);
+  prevAng.copy(angVel);
+
+  orb.position.y = Math.sin(clock * 0.8) * (reduceMotion ? 0.01 : 0.04);
+  popV += (240 * (1 - popS) - 13 * popV) * dt;
+  popS += popV * dt;
+  orb.scale.setScalar(popS);
+
+  water.update(dt);
+  slime.update(dt);
+  fur.update(dt);
+
+  if (waterBubbleRig.visible) {
+    waterBubbleRig.position.copy(orb.position);
+    waterBubbleRig.scale.copy(orb.scale);
+    wb.forEach((b, i) => {
+      b.y += b.v * dt;
+      if (b.x * b.x + b.y * b.y + b.z * b.z > 0.62) spawnBubble(b, false);
+      dummy.position.set(b.x + Math.sin(clock * 3 + b.ph) * 0.01, b.y, b.z + Math.cos(clock * 2.6 + b.ph) * 0.01);
+      dummy.scale.setScalar(b.r);
+      dummy.updateMatrix();
+      waterBubbles.setMatrixAt(i, dummy.matrix);
+    });
+    waterBubbles.instanceMatrix.needsUpdate = true;
+  }
+  if (slimeBubbles.visible) {
+    const squish = 1 + slime.wob * 0.8;
+    sb.forEach((b, i) => {
+      dummy.position.copy(b.p).multiplyScalar(squish);
+      dummy.position.y += Math.sin(clock * 0.5 + b.ph) * 0.015;
+      dummy.scale.setScalar(b.r);
+      dummy.updateMatrix();
+      slimeBubbles.setMatrixAt(i, dummy.matrix);
+    });
+    slimeBubbles.instanceMatrix.needsUpdate = true;
+  }
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+setMaterial('water', false);
+water.spawn(new THREE.Vector3(0, 0, 1), 0.8);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
