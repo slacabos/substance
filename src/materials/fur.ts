@@ -129,8 +129,10 @@ export class Fur implements Substance {
     const speed = moved / Math.max(dt, 0.008);
     const strength = Math.min(1, 0.35 + speed * 0.12) * factor;
     const u = this.sim.uniforms;
+    delta.normalize();
     u.brushDir.value.copy(dir);
-    u.brushStroke.value.copy(delta.normalize()).multiplyScalar(strength);
+    u.brushStroke.value.copy(delta).multiplyScalar(strength);
+    u.brushVel.value.copy(delta).multiplyScalar(Math.min(speed, 6) * factor);
     u.brushAmount.value = 1;
     return true;
   }

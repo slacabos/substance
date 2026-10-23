@@ -30,17 +30,22 @@ import { baseN, baseR } from '../nodes/shape';
 
 /** Tuning for the strand simulation. Stiffness is how far a segment swings back to rest per substep. */
 const SIM = {
-  substeps: 2,
-  gravity: 22,
-  damping: 0.96,
-  stiffnessRoot: 0.16,
-  stiffnessTip: 0.008,
-  /** How much each segment also lines up with the one before it, which keeps strands from kinking. */
-  bend: 0.2,
+  substeps: 3,
+  gravity: 12,
+  damping: 0.985,
+  stiffnessRoot: 0.12,
+  stiffnessTip: 0.01,
+  /** How much each segment also lines up with the one before it. */
+  bend: 0.15,
+  /** Furthest the first segment leans from upright, and each joint bends, in radians. Stops curls and loops. */
+  maxRootAngle: 0.96,
+  maxJointAngle: 0.32,
   /** Share of the body's own motion the hair is carried along with each frame; the rest shows as trailing. */
-  carry: 0.9,
+  carry: 0.7,
   /** Cap on how far a point moves per substep, in segment lengths, so violent flicks don't curl strands. */
-  maxStep: 0.5,
+  maxStep: 0.9,
+  /** Share of the brush's velocity passed to the hair under it. */
+  brushPush: 0.8,
   /** How fast a combed parting relaxes, per second. */
   groomRelax: 0.12,
   /** How strongly a stroke lays the hair over (tangent lean per unit stroke strength). */
@@ -73,6 +78,8 @@ export class FurSim {
     brushDir: uniform(new Vector3(0, 0, 1)),
     /** Object-space tangent lean the brush combs toward. */
     brushStroke: uniform(new Vector3()),
+    /** Object-space velocity of the brush along the surface, units per second. */
+    brushVel: uniform(new Vector3()),
     /** 1 while a stroke is moving, decays to 0 when it stops. */
     brushAmount: uniform(0),
     /** Object-space press direction and how hard. */
@@ -200,6 +207,9 @@ export class FurSim {
       const lean = groom.add(part).add(sway);
       const rest = normalize(this.toWorld(n.add(lean.sub(n.mul(dot(lean, n)))), 0));
 
+      // the brush drags the hair under it along with the stroke
+      const push = this.toWorld(u.brushVel, 0).mul(comb.mul(SIM.brushPush));
+
       const root = this.toWorld(q, 1);
       const base = instanceIndex.mul(this.points);
       this.pos.element(base).assign(root);
@@ -236,10 +246,21 @@ export class FurSim {
           const velocity = x.sub(old).mul(SIM.damping);
           const speed = length(velocity);
           const capped = velocity.mul(min(speed, segment.mul(SIM.maxStep)).div(max(speed, 1e-6)));
-          const predicted = x.add(capped).add(gravity);
+          const predicted = x
+            .add(capped)
+            .add(gravity)
+            .add(push.mul(h).mul(along.mul(0.6).add(0.4)));
           const smoothed = mix(normalize(predicted.sub(parent)), parentDir, SIM.bend);
           const swung = normalize(mix(normalize(smoothed), rest, stiffness));
-          const next = parent.add(swung.mul(segment)).toVar();
+
+          // never fold more than a set angle from the segment before (from upright, for the first one)
+          const first = i.equal(1);
+          const cosMax = select(first, float(Math.cos(SIM.maxRootAngle)), float(Math.cos(SIM.maxJointAngle)));
+          const sinMax = select(first, float(Math.sin(SIM.maxRootAngle)), float(Math.sin(SIM.maxJointAngle)));
+          const c = dot(swung, parentDir);
+          const across = normalize(swung.sub(parentDir.mul(c)));
+          const limited = select(c.lessThan(cosMax), parentDir.mul(cosMax).add(across.mul(sinMax)), swung);
+          const next = parent.add(limited.mul(segment)).toVar();
 
           // stay outside the body
           const local = u.anchorInv.mul(vec4(next, 1)).xyz;
