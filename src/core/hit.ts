@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 
-/** Half-size of the cube shape's flat faces (matches baseR() in shape.glsl). */
+/** Half-size of the cube shape's flat faces (matches baseR() in nodes/shape.ts). */
 export const CUBE_HALF = 0.8;
 
 /**

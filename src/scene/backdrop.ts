@@ -6,14 +6,12 @@ import {
   OneFactor,
   OneMinusSrcAlphaFactor,
   PlaneGeometry,
-  ShaderMaterial,
   SphereGeometry,
 } from 'three';
+import { MeshBasicNodeMaterial } from 'three/webgpu';
+import { uniform } from 'three/tsl';
 import { approach } from '../core/spring';
-import backdropFrag from '../shaders/backdrop.frag.glsl?raw';
-import backdropVert from '../shaders/backdrop.vert.glsl?raw';
-import poolFrag from '../shaders/pool.frag.glsl?raw';
-import poolVert from '../shaders/pool.vert.glsl?raw';
+import { backdropColor, poolColor } from '../nodes/backdrop';
 import { SETTINGS, type SettingId, type SettingLook } from './settings';
 
 /** How quickly a new setting fades in (per second). */
@@ -28,45 +26,35 @@ export class Backdrop {
   readonly pool: Mesh;
 
   private readonly uniforms = {
-    uWall: { value: new Color() },
-    uFloor: { value: new Color() },
-    uHorizon: { value: new Color() },
-    uHalo: { value: new Color() },
+    wall: uniform(new Color()),
+    floor: uniform(new Color()),
+    horizon: uniform(new Color()),
+    halo: uniform(new Color()),
   };
   private readonly poolUniforms = {
-    uColor: { value: new Color() },
-    uA: { value: 0.2 },
-    uGlow: { value: 1 },
-    uShadow: { value: 0 },
+    color: uniform(new Color()),
+    strength: uniform(0.2),
+    glow: uniform(1),
+    shadow: uniform(0),
   };
   private target: SettingLook;
 
   constructor(setting: SettingId) {
-    this.sphere = new Mesh(
-      new SphereGeometry(40, 64, 32),
-      new ShaderMaterial({
-        side: BackSide,
-        depthWrite: false,
-        uniforms: this.uniforms,
-        vertexShader: backdropVert,
-        fragmentShader: backdropFrag,
-      }),
-    );
+    const sky = new MeshBasicNodeMaterial({ side: BackSide, depthWrite: false });
+    sky.colorNode = backdropColor(this.uniforms);
+    this.sphere = new Mesh(new SphereGeometry(40, 64, 32), sky);
     this.sphere.renderOrder = -1;
 
-    this.pool = new Mesh(
-      new PlaneGeometry(3.2, 3.2),
-      new ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        blending: CustomBlending,
-        blendSrc: OneFactor,
-        blendDst: OneMinusSrcAlphaFactor,
-        uniforms: this.poolUniforms,
-        vertexShader: poolVert,
-        fragmentShader: poolFrag,
-      }),
-    );
+    const pool = new MeshBasicNodeMaterial({
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+      blending: CustomBlending,
+      blendSrc: OneFactor,
+      blendDst: OneMinusSrcAlphaFactor,
+    });
+    pool.colorNode = poolColor(this.poolUniforms);
+    this.pool = new Mesh(new PlaneGeometry(3.2, 3.2), pool);
     this.pool.rotation.x = -Math.PI / 2;
     this.pool.position.y = -1.55;
 
@@ -81,20 +69,20 @@ export class Backdrop {
 
   /** The coloured glow each material casts on the floor. */
   setPool(color: string, strength: number): void {
-    this.poolUniforms.uColor.value.set(color);
-    this.poolUniforms.uA.value = strength;
+    this.poolUniforms.color.value.set(color);
+    this.poolUniforms.strength.value = strength;
   }
 
   update(dt: number, instant = false): void {
     const k = instant ? 1 : approach(FADE_RATE, dt);
     const u = this.uniforms;
     const t = this.target;
-    u.uWall.value.lerp(t.wall, k);
-    u.uFloor.value.lerp(t.floor, k);
-    u.uHorizon.value.lerp(t.horizon, k);
-    u.uHalo.value.lerp(t.halo, k);
+    u.wall.value.lerp(t.wall, k);
+    u.floor.value.lerp(t.floor, k);
+    u.horizon.value.lerp(t.horizon, k);
+    u.halo.value.lerp(t.halo, k);
     const p = this.poolUniforms;
-    p.uGlow.value += (t.glow - p.uGlow.value) * k;
-    p.uShadow.value += (t.shadow - p.uShadow.value) * k;
+    p.glow.value += (t.glow - p.glow.value) * k;
+    p.shadow.value += (t.shadow - p.shadow.value) * k;
   }
 }

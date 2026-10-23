@@ -15,6 +15,8 @@ import { ShapeMorph } from './scene/shape';
 import { Stage } from './scene/stage';
 import { Controls } from './ui/controls';
 
+const DEFAULT_SETTING: SettingId = 'night';
+
 export class App implements PointerTarget {
   private readonly stage: Stage;
   private readonly device: DeviceProfile;
@@ -26,7 +28,7 @@ export class App implements PointerTarget {
   /** Scale "pop" when switching material. */
   private readonly pop = new Spring(240, 13, 1, 1);
   private current: Substance;
-  private setting: SettingId = 'night';
+  private setting: SettingId = DEFAULT_SETTING;
   private autoSpin = true;
   private time = 0;
   private last = performance.now();
@@ -37,9 +39,15 @@ export class App implements PointerTarget {
   private readonly rayOrigin = new Vector3();
   private readonly rayDir = new Vector3();
 
-  constructor(canvas: HTMLCanvasElement, device: DeviceProfile) {
+  /** Starts the renderer (WebGPU only) and builds the app. */
+  static async create(canvas: HTMLCanvasElement, device: DeviceProfile): Promise<App> {
+    const stage = await Stage.create(canvas, DEFAULT_SETTING, !device.coarse);
+    return new App(canvas, device, stage);
+  }
+
+  private constructor(canvas: HTMLCanvasElement, device: DeviceProfile, stage: Stage) {
     this.device = device;
-    this.stage = new Stage(canvas, this.setting, !device.coarse);
+    this.stage = stage;
     const geometry = createDeformGeometry(device.coarse);
     this.materials = {
       water: new Water(geometry, device.coarse),
@@ -89,11 +97,8 @@ export class App implements PointerTarget {
   }
 
   start(): void {
-    const frame = (now: number) => {
-      this.tick(now);
-      requestAnimationFrame(frame);
-    };
-    requestAnimationFrame(frame);
+    this.last = performance.now();
+    void this.stage.renderer.setAnimationLoop((now) => this.tick(now));
   }
 
   setMaterial(id: MaterialId, animate = true): void {

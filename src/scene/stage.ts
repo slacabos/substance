@@ -1,29 +1,40 @@
-import {
-  ACESFilmicToneMapping,
-  Group,
-  MathUtils,
-  PerspectiveCamera,
-  PMREMGenerator,
-  Scene,
-  WebGLRenderer,
-} from 'three';
+import { ACESFilmicToneMapping, Group, MathUtils, PerspectiveCamera, Scene } from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { PMREMGenerator, WebGPURenderer } from 'three/webgpu';
 import { FIT_RADIUS, SUPERSAMPLE_PIXELS } from '../config';
 import { Backdrop } from './backdrop';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { SettingId } from './settings';
+
+type GpuNavigator = Navigator & { gpu?: { requestAdapter(): Promise<unknown> } };
 
 /** Renderer, camera, lighting environment and the spinning anchor the materials attach to. */
 export class Stage {
-  readonly renderer: WebGLRenderer;
+  readonly renderer: WebGPURenderer;
   readonly scene = new Scene();
   readonly camera = new PerspectiveCamera(30, 1, 0.1, 120);
   readonly anchor = new Group();
   readonly backdrop: Backdrop;
   private readonly supersample: boolean;
 
-  constructor(canvas: HTMLCanvasElement, setting: SettingId, supersample: boolean) {
+  /**
+   * Starts WebGPU and builds the stage. Throws without WebGPU: the renderer would quietly fall back to WebGL,
+   * which this app doesn't support.
+   */
+  static async create(canvas: HTMLCanvasElement, setting: SettingId, supersample: boolean): Promise<Stage> {
+    const gpu = (navigator as GpuNavigator).gpu;
+    if (!gpu || !(await gpu.requestAdapter())) throw new Error('WebGPU is not available');
+    const renderer = new WebGPURenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    await renderer.init();
+    if (!(renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend) {
+      renderer.dispose();
+      throw new Error('WebGPU failed to start');
+    }
+    return new Stage(renderer, setting, supersample);
+  }
+
+  private constructor(renderer: WebGPURenderer, setting: SettingId, supersample: boolean) {
     this.supersample = supersample;
-    this.renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    this.renderer = renderer;
     this.renderer.toneMapping = ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
 

@@ -5,7 +5,7 @@ export default defineConfig({
   base: './',
   build: {
     target: 'es2022',
-    chunkSizeWarningLimit: 900,
+    chunkSizeWarningLimit: 1000,
   },
   test: {
     environment: 'node',

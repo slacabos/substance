@@ -1,25 +1,15 @@
 import {
   BufferAttribute,
-  Color,
   InstancedBufferAttribute,
   InstancedBufferGeometry,
-  MathUtils,
   Mesh,
-  ShaderMaterial,
   SphereGeometry,
-  Vector2,
   Vector3,
-  Vector4,
-  type PerspectiveCamera,
 } from 'three';
+import { MeshBasicNodeMaterial } from 'three/webgpu';
 import { FUR, MAX_BRUSHES } from '../config';
 import { approach, Spring, stepSprings } from '../core/spring';
-import { morphUniform } from '../scene/shape';
-import skinFrag from '../shaders/fur-skin.frag.glsl?raw';
-import skinVert from '../shaders/fur-skin.vert.glsl?raw';
-import strandFrag from '../shaders/fur-strand.frag.glsl?raw';
-import strandVert from '../shaders/fur-strand.vert.glsl?raw';
-import shapeGlsl from '../shaders/shape.glsl?raw';
+import { createFurUniforms, createSkinNodes, createStrandNodes } from '../nodes/fur';
 import type { FrameContext, Readout, Substance } from './types';
 
 interface Brush {
@@ -99,7 +89,6 @@ export class Fur implements Substance {
   private pressTarget = 0;
   private readonly pressDir = new Vector3(0, 0, 1);
   private readonly delta = new Vector3();
-  private readonly bufferSize = new Vector2();
 
   constructor(coarse: boolean) {
     const count = strandCount(FUR.density);
@@ -109,55 +98,23 @@ export class Fur implements Substance {
     geometry.setAttribute('aRand', new InstancedBufferAttribute(rand, 3));
     geometry.instanceCount = count;
 
-    const light = {
-      uRoot: { value: new Color('#2a1107') },
-      uTip: { value: new Color('#f3b97f') },
-      uL1: { value: new Vector3(-0.55, 0.75, 0.5).normalize() },
-      uMorph: morphUniform,
-    };
-    this.uniforms = {
-      ...light,
-      uLen: { value: FUR.length },
-      uDensity: { value: FUR.density },
-      uTime: { value: 0 },
-      uGrav: { value: new Vector3(0, -1, 0) },
-      uOmega: { value: new Vector3() },
-      uBrush: { value: Array.from({ length: MAX_BRUSHES }, () => new Vector4(0, 1, 0, 0)) },
-      uBrushT: { value: Array.from({ length: MAX_BRUSHES }, () => new Vector4()) },
-      uPress: { value: new Vector4(0, 0, 1, 0) },
-      uCamera: { value: new Vector3() },
-      uPixel: { value: 0.001 },
-    };
+    this.uniforms = createFurUniforms();
 
-    const strands = new Mesh(
-      geometry,
-      new ShaderMaterial({
-        uniforms: this.uniforms,
-        defines: { MAX_BRUSHES },
-        vertexShader: `${shapeGlsl}\n${strandVert}`,
-        fragmentShader: strandFrag,
-        // with MSAA, faint coverage becomes a share of each pixel's samples, so strands need no sorting
-        alphaToCoverage: true,
-      }),
-    );
+    const strandNodes = createStrandNodes(this.uniforms);
+    // with MSAA, faint coverage becomes a share of each pixel's samples, so strands need no sorting
+    const strandMaterial = new MeshBasicNodeMaterial({ alphaToCoverage: true });
+    strandMaterial.positionNode = strandNodes.position;
+    strandMaterial.colorNode = strandNodes.color;
+    strandMaterial.opacityNode = strandNodes.opacity;
+    const strands = new Mesh(geometry, strandMaterial);
     strands.frustumCulled = false;
     strands.renderOrder = 1;
-    // Strands face the camera and never get thinner than a pixel, so they need its position and pixel size.
-    strands.onBeforeRender = (renderer, _scene, camera) => {
-      const { uCamera, uPixel } = this.uniforms;
-      strands.worldToLocal(uCamera.value.copy(camera.position));
-      const fov = MathUtils.degToRad((camera as PerspectiveCamera).fov);
-      uPixel.value = (2 * Math.tan(fov / 2)) / renderer.getDrawingBufferSize(this.bufferSize).y;
-    };
 
-    const skin = new Mesh(
-      new SphereGeometry(1, coarse ? 96 : 128, coarse ? 64 : 96),
-      new ShaderMaterial({
-        uniforms: light,
-        vertexShader: `${shapeGlsl}\n${skinVert}`,
-        fragmentShader: skinFrag,
-      }),
-    );
+    const skinNodes = createSkinNodes(this.uniforms);
+    const skinMaterial = new MeshBasicNodeMaterial();
+    skinMaterial.positionNode = skinNodes.position;
+    skinMaterial.colorNode = skinNodes.color;
+    const skin = new Mesh(new SphereGeometry(1, coarse ? 96 : 128, coarse ? 64 : 96), skinMaterial);
     skin.frustumCulled = false;
 
     this.objects = [skin, strands] as const;
@@ -248,14 +205,14 @@ export class Fur implements Substance {
         b.live = false;
         b.strength.value = 0;
       }
-      this.uniforms.uBrush.value[i]!.set(b.dir.x, b.dir.y, b.dir.z, b.live ? b.strength.value : 0);
-      this.uniforms.uBrushT.value[i]!.set(b.stroke.x, b.stroke.y, b.stroke.z, 0);
+      this.uniforms.brushes[i]!.set(b.dir.x, b.dir.y, b.dir.z, b.live ? b.strength.value : 0);
+      this.uniforms.strokes[i]!.set(b.stroke.x, b.stroke.y, b.stroke.z, 0);
     });
     this.press += (this.pressTarget - this.press) * approach(9, ctx.dt);
     const p = this.pressDir;
-    this.uniforms.uPress.value.set(p.x, p.y, p.z, this.press);
-    this.uniforms.uTime.value = ctx.time;
-    this.uniforms.uOmega.value.copy(ctx.omegaLocal);
-    this.uniforms.uGrav.value.copy(ctx.gravityLocal);
+    this.uniforms.press.value.set(p.x, p.y, p.z, this.press);
+    this.uniforms.time.value = ctx.time;
+    this.uniforms.omega.value.copy(ctx.omegaLocal);
+    this.uniforms.grav.value.copy(ctx.gravityLocal);
   }
 }

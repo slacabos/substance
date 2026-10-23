@@ -142,8 +142,8 @@ export class Slime implements Substance {
         p.live = false;
         p.depth.value = 0;
       }
-      this.uniforms.uImp.value[i]!.set(p.dir.x, p.dir.y, p.dir.z, p.live ? p.depth.value : 0);
-      this.uniforms.uImpB.value[i]!.x = p.radius;
+      this.uniforms.imp[i]!.set(p.dir.x, p.dir.y, p.dir.z, p.live ? p.depth.value : 0);
+      this.uniforms.impB[i]!.x = p.radius;
     });
     const a = this.wobbleAxis;
     this.uniforms.uWob.value.set(a.x, a.y, a.z, this.wobble.value);

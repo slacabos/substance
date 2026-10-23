@@ -22,8 +22,8 @@ export class RippleField {
 
   spawn(dir: Vector3, strength: number, time: number): void {
     const i = this.ring++ % MAX_IMPULSES;
-    this.uniforms.uImp.value[i]!.set(dir.x, dir.y, dir.z, time);
-    this.uniforms.uImpB.value[i]!.x = strength;
+    this.uniforms.imp[i]!.set(dir.x, dir.y, dir.z, time);
+    this.uniforms.impB[i]!.x = strength;
   }
 
   down(dir: Vector3, time: number): void {

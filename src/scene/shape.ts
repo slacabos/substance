@@ -1,9 +1,9 @@
-import type { IUniform } from 'three';
+import { uniform } from 'three/tsl';
 import { Spring, stepSprings } from '../core/spring';
 import type { ShapeId } from '../materials/types';
 
 /** Shared by every material: 0 = sphere, 1 = rounded cube. A little overshoot is allowed for bounce. */
-export const morphUniform: IUniform<number> = { value: 0 };
+export const morphUniform = uniform(0);
 
 /** Springs the morph uniform toward the chosen shape. */
 export class ShapeMorph {

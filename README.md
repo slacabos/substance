@@ -1,6 +1,6 @@
 # Substance
 
-A mobile-first Three.js toy: a touchable 3D object you can switch between materials and shapes, then poke with a finger or mouse to see how each one reacts.
+A mobile-first Three.js toy: a touchable 3D object you can switch between materials and shapes, then poke with a finger or mouse to see how each one reacts. It renders with WebGPU, so it needs a browser that supports it (recent Chrome, Edge or Safari); others get a short message instead.
 
 ## Materials
 
@@ -35,13 +35,14 @@ src/
   scene/                 renderer + camera fit, backdrop settings, orb↔cube morph
   interaction/           pointer handling (touch vs spin) and spin inertia
   materials/             one class per material behind the `Substance` interface
-  shaders/               GLSL, imported as raw strings
+  nodes/                 shaders, written in TSL (three.js node language)
   ui/                    material picker, shape and setting toggles, readout, keyboard
 ```
 
-- **Water, Ocean, Slime** share one `MeshPhysicalMaterial` with vertex displacement injected through `onBeforeCompile` (`shaders/deform.vert.glsl`). Interaction writes ripple sources or spring-driven dents into uniform ring buffers; normals are rebuilt by finite differences so any displacement lights correctly.
+- Rendering is three.js `WebGPURenderer`. Every custom effect is a TSL node graph plugged into a node material, so there's no hand-written GLSL or WGSL.
+- **Water, Ocean, Slime** share one `MeshPhysicalNodeMaterial` whose `positionNode` displaces the surface (`nodes/deform.ts`). Interaction writes ripple sources or spring-driven dents into uniform ring buffers; normals are rebuilt by finite differences so any displacement lights correctly.
 - **Ocean** adds sharp-crested layered swells and a fragment pass for depth colour, subsurface tint and foam.
 - **Fur** is about 36k real strands: one instanced draw of camera-facing ribbons over a dark skin, never thinner than a pixel (thinner ones are drawn fainter) and antialiased with alpha-to-coverage. Strands widen where the cube stretches the surface, so the coat stays even.
-- **Cube** is a superellipsoid. Every shader maps a unit direction through `baseR()` in `shaders/shape.glsl`, and a spring drives the morph uniform.
+- **Cube** is a superellipsoid. Every shader maps a unit direction through `baseR()` in `nodes/shape.ts`, and a spring drives the morph uniform.
 
 To add a material, implement `Substance` (`src/materials/types.ts`), register it in `App`, and add a button to the picker in `index.html`.
