@@ -10,6 +10,7 @@ import type { FrameContext, MaterialId, ShapeId, Substance } from './materials/t
 import { Water } from './materials/water';
 import { PointerInput, type PointerTarget } from './interaction/pointer';
 import { SpinController } from './interaction/spin';
+import { SETTING_ORDER, type SettingId } from './scene/settings';
 import { ShapeMorph } from './scene/shape';
 import { Stage } from './scene/stage';
 import { Controls } from './ui/controls';
@@ -25,6 +26,8 @@ export class App implements PointerTarget {
   /** Scale "pop" when switching material. */
   private readonly pop = new Spring(240, 13, 1, 1);
   private current: Substance;
+  private setting: SettingId = 'night';
+  private autoSpin = true;
   private time = 0;
   private last = performance.now();
 
@@ -36,7 +39,7 @@ export class App implements PointerTarget {
 
   constructor(canvas: HTMLCanvasElement, device: DeviceProfile) {
     this.device = device;
-    this.stage = new Stage(canvas);
+    this.stage = new Stage(canvas, this.setting, !device.coarse);
     const geometry = createDeformGeometry(device.coarse);
     this.materials = {
       water: new Water(geometry, device.coarse),
@@ -59,10 +62,14 @@ export class App implements PointerTarget {
       gravityLocal: new Vector3(0, -1, 0),
     };
 
-    this.controls = new Controls(
-      { onMaterial: (id) => this.setMaterial(id), onShape: (id) => this.setShape(id) },
-      device.coarse,
-    );
+    this.controls = new Controls({
+      onMaterial: (id) => this.setMaterial(id),
+      onShape: (id) => this.setShape(id),
+      onSetting: (id) => this.setSetting(id),
+      onToggleSpin: () => this.setAutoSpin(!this.autoSpin),
+      onNextSetting: () =>
+        this.setSetting(SETTING_ORDER[(SETTING_ORDER.indexOf(this.setting) + 1) % SETTING_ORDER.length]!),
+    });
     this.pointer = new PointerInput(canvas, this);
 
     const resize = () => {
@@ -75,6 +82,8 @@ export class App implements PointerTarget {
     resize();
 
     this.controls.showShape('orb');
+    this.controls.showSetting(this.setting);
+    this.controls.showAutoSpin(this.autoSpin);
     this.setMaterial('water', false);
     this.materials.water.enter(new Vector3(0, 0, 1));
   }
@@ -95,7 +104,7 @@ export class App implements PointerTarget {
       for (const o of m.objects) o.visible = visible;
       for (const o of m.worldObjects ?? []) o.visible = visible;
     }
-    this.stage.pool.set(this.current.accent, this.current.poolStrength);
+    this.stage.backdrop.setPool(this.current.accent, this.current.poolStrength);
     this.controls.showMaterial(id, this.current.hint(this.device.coarse));
     this.controls.showReadout(this.current.readout());
     if (animate) {
@@ -110,6 +119,18 @@ export class App implements PointerTarget {
     this.morph.set(id, this.device.reduceMotion);
     this.controls.showShape(id);
     this.current.onShapeChange?.(this.frontDirection());
+  }
+
+  setSetting(id: SettingId): void {
+    this.setting = id;
+    this.stage.backdrop.setSetting(id, this.device.reduceMotion);
+    this.controls.showSetting(id);
+  }
+
+  setAutoSpin(on: boolean): void {
+    this.autoSpin = on;
+    this.spin.setIdle(on);
+    this.controls.showAutoSpin(on);
   }
 
   // ---- PointerTarget ----
@@ -190,6 +211,7 @@ export class App implements PointerTarget {
     for (const m of Object.values(this.materials)) m.update(this.ctx);
 
     this.controls.showReadout(this.current.readout());
-    this.stage.render();
+    this.controls.countFrame(now);
+    this.stage.render(dt);
   }
 }

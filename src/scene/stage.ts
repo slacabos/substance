@@ -7,9 +7,10 @@ import {
   Scene,
   WebGLRenderer,
 } from 'three';
+import { FIT_RADIUS, SUPERSAMPLE_PIXELS } from '../config';
+import { Backdrop } from './backdrop';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { FIT_RADIUS } from '../config';
-import { createBackdrop, createLightPool } from './backdrop';
+import type { SettingId } from './settings';
 
 /** Renderer, camera, lighting environment and the spinning anchor the materials attach to. */
 export class Stage {
@@ -17,11 +18,12 @@ export class Stage {
   readonly scene = new Scene();
   readonly camera = new PerspectiveCamera(30, 1, 0.1, 120);
   readonly anchor = new Group();
-  readonly pool = createLightPool();
+  readonly backdrop: Backdrop;
+  private readonly supersample: boolean;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, setting: SettingId, supersample: boolean) {
+    this.supersample = supersample;
     this.renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.toneMapping = ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
 
@@ -30,7 +32,8 @@ export class Stage {
     this.scene.environmentIntensity = 0.85;
     pmrem.dispose();
 
-    this.scene.add(createBackdrop(), this.pool.mesh, this.anchor);
+    this.backdrop = new Backdrop(setting);
+    this.scene.add(this.backdrop.sphere, this.backdrop.pool, this.anchor);
   }
 
   /**
@@ -38,6 +41,9 @@ export class Stage {
    * the top bar (`topInset` px) and the bottom dock (`bottomInset` px).
    */
   fit(width: number, height: number, topInset: number, bottomInset: number): void {
+    const dpr = window.devicePixelRatio || 1;
+    const budget = Math.sqrt(SUPERSAMPLE_PIXELS / (width * height));
+    this.renderer.setPixelRatio(Math.min(2, this.supersample ? Math.max(dpr, budget) : dpr));
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     const available = Math.max(height * 0.45, height - topInset - bottomInset);
@@ -51,7 +57,8 @@ export class Stage {
     this.camera.updateProjectionMatrix();
   }
 
-  render(): void {
+  render(dt: number): void {
+    this.backdrop.update(dt);
     this.renderer.render(this.scene, this.camera);
   }
 }

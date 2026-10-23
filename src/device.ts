@@ -1,5 +1,5 @@
 export interface DeviceProfile {
-  /** Touch-first device: lighter geometry and fewer fur shells. */
+  /** Touch-first device: lighter geometry and simpler fur strands. */
   coarse: boolean;
   reduceMotion: boolean;
 }

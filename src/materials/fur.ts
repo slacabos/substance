@@ -1,20 +1,24 @@
 import {
+  BufferAttribute,
   Color,
-  Euler,
+  InstancedBufferAttribute,
   InstancedBufferGeometry,
-  Matrix3,
-  Matrix4,
+  MathUtils,
   Mesh,
   ShaderMaterial,
   SphereGeometry,
+  Vector2,
   Vector3,
   Vector4,
+  type PerspectiveCamera,
 } from 'three';
 import { FUR, MAX_BRUSHES } from '../config';
 import { approach, Spring, stepSprings } from '../core/spring';
 import { morphUniform } from '../scene/shape';
-import furFrag from '../shaders/fur.frag.glsl?raw';
-import furVert from '../shaders/fur.vert.glsl?raw';
+import skinFrag from '../shaders/fur-skin.frag.glsl?raw';
+import skinVert from '../shaders/fur-skin.vert.glsl?raw';
+import strandFrag from '../shaders/fur-strand.frag.glsl?raw';
+import strandVert from '../shaders/fur-strand.vert.glsl?raw';
 import shapeGlsl from '../shaders/shape.glsl?raw';
 import type { FrameContext, Readout, Substance } from './types';
 
@@ -25,14 +29,54 @@ interface Brush {
   live: boolean;
 }
 
-/** Rough count of visible strands, for the readout. */
+/** How many strands cover the skin at a given density (strands per unit length). */
+export function strandCount(density: number): number {
+  return Math.round(4 * Math.PI * density * density * 0.7);
+}
+
+/** Strand count in thousands, for the readout. */
 export function strandEstimate(density: number): number {
-  return Math.round((4 * Math.PI * density * density * 0.7) / 1000);
+  return Math.round(strandCount(density) / 1000);
+}
+
+/** A ribbon from root (y = 0) to tip (y = 1), with x = -1 / 1 on its two sides. */
+function createStrandTemplate(segments: number): InstancedBufferGeometry {
+  const geometry = new InstancedBufferGeometry();
+  const position = new Float32Array((segments + 1) * 2 * 3);
+  const index: number[] = [];
+  for (let i = 0; i <= segments; i++) {
+    position.set([-1, i / segments, 0, 1, i / segments, 0], i * 6);
+    if (i < segments) index.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+  }
+  geometry.setAttribute('position', new BufferAttribute(position, 3));
+  geometry.setIndex(index);
+  return geometry;
+}
+
+/** Evenly spread, slightly jittered root directions on the unit sphere (a jittered Fibonacci spiral). */
+function createRoots(count: number): { roots: Float32Array; rand: Float32Array } {
+  const roots = new Float32Array(count * 3);
+  const rand = new Float32Array(count * 3);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const jitter = 1.2 / Math.sqrt(count);
+  const v = new Vector3();
+  for (let i = 0; i < count; i++) {
+    const y = 1 - (2 * (i + 0.5)) / count;
+    const r = Math.sqrt(1 - y * y);
+    const phi = i * golden;
+    v.set(Math.cos(phi) * r, y, Math.sin(phi) * r);
+    v.x += (Math.random() - 0.5) * jitter;
+    v.y += (Math.random() - 0.5) * jitter;
+    v.z += (Math.random() - 0.5) * jitter;
+    v.normalize().toArray(roots, i * 3);
+    rand.set([Math.random(), Math.random(), Math.random()], i * 3);
+  }
+  return { roots, rand };
 }
 
 /**
- * Shell-textured fur. Strokes leave springy "brushes" that bend nearby hair along the stroke;
- * pressing parts the fur; spinning makes it trail behind.
+ * Fur made of individual strands over a dark skin. Strokes leave springy "brushes" that bend nearby hair
+ * along the stroke; pressing parts the fur; spinning makes it trail behind.
  */
 export class Fur implements Substance {
   readonly id = 'fur';
@@ -41,7 +85,6 @@ export class Fur implements Substance {
   readonly hitPadding = FUR.length * 0.6;
   readonly objects;
 
-  private readonly shells: number;
   private readonly uniforms;
   private readonly brushes: Brush[] = Array.from({ length: MAX_BRUSHES }, () => ({
     dir: new Vector3(0, 1, 0),
@@ -56,17 +99,24 @@ export class Fur implements Substance {
   private pressTarget = 0;
   private readonly pressDir = new Vector3(0, 0, 1);
   private readonly delta = new Vector3();
+  private readonly bufferSize = new Vector2();
 
   constructor(coarse: boolean) {
-    this.shells = FUR.shells(coarse);
-    const base = new SphereGeometry(1, coarse ? 96 : 128, coarse ? 64 : 96);
-    const geometry = new InstancedBufferGeometry();
-    geometry.setIndex(base.index);
-    geometry.setAttribute('position', base.getAttribute('position'));
-    geometry.instanceCount = this.shells + 1; // instance 0 is the skin under the hair
+    const count = strandCount(FUR.density);
+    const geometry = createStrandTemplate(FUR.segments(coarse));
+    const { roots, rand } = createRoots(count);
+    geometry.setAttribute('aRoot', new InstancedBufferAttribute(roots, 3));
+    geometry.setAttribute('aRand', new InstancedBufferAttribute(rand, 3));
+    geometry.instanceCount = count;
 
+    const light = {
+      uRoot: { value: new Color('#2a1107') },
+      uTip: { value: new Color('#f3b97f') },
+      uL1: { value: new Vector3(-0.55, 0.75, 0.5).normalize() },
+      uMorph: morphUniform,
+    };
     this.uniforms = {
-      uShells: { value: this.shells },
+      ...light,
       uLen: { value: FUR.length },
       uDensity: { value: FUR.density },
       uTime: { value: 0 },
@@ -75,24 +125,42 @@ export class Fur implements Substance {
       uBrush: { value: Array.from({ length: MAX_BRUSHES }, () => new Vector4(0, 1, 0, 0)) },
       uBrushT: { value: Array.from({ length: MAX_BRUSHES }, () => new Vector4()) },
       uPress: { value: new Vector4(0, 0, 1, 0) },
-      uRoot: { value: new Color('#2a1107') },
-      uTip: { value: new Color('#f3b97f') },
-      uL1: { value: new Vector3(-0.55, 0.75, 0.5).normalize() },
-      uLattice: {
-        value: new Matrix3().setFromMatrix4(new Matrix4().makeRotationFromEuler(new Euler(0.61, 0.37, 0.83))),
-      },
-      uMorph: morphUniform,
+      uCamera: { value: new Vector3() },
+      uPixel: { value: 0.001 },
     };
-    const material = new ShaderMaterial({
-      uniforms: this.uniforms,
-      defines: { MAX_BRUSHES },
-      vertexShader: `${shapeGlsl}\n${furVert}`,
-      fragmentShader: furFrag,
-      alphaToCoverage: true,
-    });
-    const mesh = new Mesh(geometry, material);
-    mesh.frustumCulled = false;
-    this.objects = [mesh] as const;
+
+    const strands = new Mesh(
+      geometry,
+      new ShaderMaterial({
+        uniforms: this.uniforms,
+        defines: { MAX_BRUSHES },
+        vertexShader: `${shapeGlsl}\n${strandVert}`,
+        fragmentShader: strandFrag,
+        // with MSAA, faint coverage becomes a share of each pixel's samples, so strands need no sorting
+        alphaToCoverage: true,
+      }),
+    );
+    strands.frustumCulled = false;
+    strands.renderOrder = 1;
+    // Strands face the camera and never get thinner than a pixel, so they need its position and pixel size.
+    strands.onBeforeRender = (renderer, _scene, camera) => {
+      const { uCamera, uPixel } = this.uniforms;
+      strands.worldToLocal(uCamera.value.copy(camera.position));
+      const fov = MathUtils.degToRad((camera as PerspectiveCamera).fov);
+      uPixel.value = (2 * Math.tan(fov / 2)) / renderer.getDrawingBufferSize(this.bufferSize).y;
+    };
+
+    const skin = new Mesh(
+      new SphereGeometry(1, coarse ? 96 : 128, coarse ? 64 : 96),
+      new ShaderMaterial({
+        uniforms: light,
+        vertexShader: `${shapeGlsl}\n${skinVert}`,
+        fragmentShader: skinFrag,
+      }),
+    );
+    skin.frustumCulled = false;
+
+    this.objects = [skin, strands] as const;
   }
 
   hint(coarse: boolean): string {
@@ -102,7 +170,7 @@ export class Fur implements Substance {
   }
 
   readout(): Readout {
-    return ['Fur', `${this.shells} shells`, `≈ ${strandEstimate(FUR.density)}k strands`];
+    return ['Fur', `≈ ${strandEstimate(FUR.density)}k strands`, 'keratin n ≈ 1.55'];
   }
 
   /** Records a stroke from `last` to `dir`. Returns false when the contact barely moved. */

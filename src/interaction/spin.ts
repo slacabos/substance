@@ -5,13 +5,15 @@ const DRAG_RADIANS_PER_PX = 0.0065;
 const MAX_FLICK = 14;
 
 /**
- * Spins a quaternion: drag to rotate, flick for inertia, then it eases back to a slow idle spin.
+ * Spins a quaternion: drag to rotate, flick for inertia, then it eases back to a slow idle spin (or to rest,
+ * with the idle spin off).
  * Also keeps a lagged copy of the angular velocity for things that trail behind (fur).
  */
 export class SpinController {
   readonly angularVelocity = new Vector3();
   readonly laggedVelocity = new Vector3();
   private readonly idle: Vector3;
+  private readonly idleSpeed: number;
   private readonly lagVelocity = new Vector3();
   private readonly previous = new Vector3();
   private readonly dq = new Quaternion();
@@ -21,8 +23,13 @@ export class SpinController {
 
   constructor(quaternion: Quaternion, idleSpeed: number) {
     this.quaternion = quaternion;
+    this.idleSpeed = idleSpeed;
     this.idle = new Vector3(0, idleSpeed, 0);
     this.angularVelocity.copy(this.idle);
+  }
+
+  setIdle(on: boolean): void {
+    this.idle.set(0, on ? this.idleSpeed : 0, 0);
   }
 
   grab(): void {

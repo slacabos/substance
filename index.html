@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#070a11" />
+    <meta name="theme-color" content="#1b202b" />
     <meta
       name="description"
       content="Touch a 3D object made of water, ocean, slime or fur and watch it react."
@@ -22,38 +22,86 @@
       aria-label="Interactive 3D object. Drag on it to touch it, drag the background to spin it."
     ></canvas>
 
-    <header class="top" id="top">
+    <header class="top card" id="top">
       <div class="top-left">
         <div class="brand"><span class="mark" aria-hidden="true"></span>Substance</div>
-        <div class="readout" id="readout"><b>Water</b><br />n = 1.333<br />997 kg/m³</div>
+        <div class="fps" id="fps" aria-hidden="true">– fps</div>
       </div>
-      <nav class="shapes" role="radiogroup" aria-label="Shape">
-        <button type="button" id="shape-orb" role="radio" aria-checked="true" data-shape="orb">
-          <span class="glyph glyph-orb"></span>Orb
-        </button>
-        <button type="button" id="shape-cube" role="radio" aria-checked="false" data-shape="cube">
-          <span class="glyph glyph-cube"></span>Cube
-        </button>
-      </nav>
+      <div class="readout" id="readout"><b>Water</b><br />n = 1.333 · 997 kg/m³</div>
     </header>
 
     <div class="dock" id="dock">
-      <p class="hint" id="hint" aria-live="polite">Tap for ripples. Drag to stir the surface.</p>
-      <nav class="picker" role="radiogroup" aria-label="Orb material">
-        <button type="button" id="mat-water" role="radio" aria-checked="true" data-mat="water">
-          <span class="sw sw-water"></span>Water
-        </button>
-        <button type="button" id="mat-ocean" role="radio" aria-checked="false" data-mat="ocean">
-          <span class="sw sw-ocean"></span>Ocean
-        </button>
-        <button type="button" id="mat-slime" role="radio" aria-checked="false" data-mat="slime">
-          <span class="sw sw-slime"></span>Slime
-        </button>
-        <button type="button" id="mat-fur" role="radio" aria-checked="false" data-mat="fur">
-          <span class="sw sw-fur"></span>Hairy
-        </button>
-      </nav>
-      <p class="sub" id="sub">Drag the background to spin</p>
+      <div class="card panel">
+        <p class="hint" id="hint" aria-live="polite">Tap for ripples. Drag to stir the surface.</p>
+        <nav class="picker" role="radiogroup" aria-label="Material">
+          <button type="button" id="mat-water" role="radio" aria-checked="true" data-mat="water">
+            <span class="sw sw-water"></span>Water
+          </button>
+          <button type="button" id="mat-ocean" role="radio" aria-checked="false" data-mat="ocean">
+            <span class="sw sw-ocean"></span>Ocean
+          </button>
+          <button type="button" id="mat-slime" role="radio" aria-checked="false" data-mat="slime">
+            <span class="sw sw-slime"></span>Slime
+          </button>
+          <button type="button" id="mat-fur" role="radio" aria-checked="false" data-mat="fur">
+            <span class="sw sw-fur"></span>Fur
+          </button>
+        </nav>
+        <div class="row">
+          <nav class="shapes" role="radiogroup" aria-label="Shape">
+            <button type="button" id="shape-orb" role="radio" aria-checked="true" data-shape="orb">
+              <span class="glyph glyph-orb"></span>Orb
+            </button>
+            <button type="button" id="shape-cube" role="radio" aria-checked="false" data-shape="cube">
+              <span class="glyph glyph-cube"></span>Cube
+            </button>
+          </nav>
+          <button type="button" class="spin" id="spin" aria-pressed="true" aria-label="Spin">
+            <svg class="icon-pause" viewBox="0 0 16 16" aria-hidden="true">
+              <rect x="4" y="3" width="2.6" height="10" rx="1" />
+              <rect x="9.4" y="3" width="2.6" height="10" rx="1" />
+            </svg>
+            <svg class="icon-play" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5 3.2v9.6a.8.8 0 0 0 1.2.7l7.4-4.8a.8.8 0 0 0 0-1.4L6.2 2.5A.8.8 0 0 0 5 3.2z" />
+            </svg>
+          </button>
+          <nav class="settings" role="radiogroup" aria-label="Setting">
+            <button
+              type="button"
+              id="set-studio"
+              role="radio"
+              aria-checked="false"
+              aria-label="Studio"
+              title="Studio"
+              data-setting="studio"
+            >
+              <span class="dot dot-studio"></span>
+            </button>
+            <button
+              type="button"
+              id="set-dusk"
+              role="radio"
+              aria-checked="false"
+              aria-label="Dusk"
+              title="Dusk"
+              data-setting="dusk"
+            >
+              <span class="dot dot-dusk"></span>
+            </button>
+            <button
+              type="button"
+              id="set-night"
+              role="radio"
+              aria-checked="true"
+              aria-label="Night"
+              title="Night"
+              data-setting="night"
+            >
+              <span class="dot dot-night"></span>
+            </button>
+          </nav>
+        </div>
+      </div>
     </div>
 
     <div class="fallback" id="fallback" hidden>
