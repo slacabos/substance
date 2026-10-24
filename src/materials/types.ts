@@ -30,6 +30,8 @@ export interface Substance {
   readonly worldObjects?: readonly Object3D[];
   /** Blown by the ocean wind, so the readout opens the wind control. */
   readonly hasWind?: boolean;
+  /** Throws splash water, which the stage's fluid pass draws (scene/fluidPass.ts). */
+  readonly splashes?: boolean;
 
   hint(coarse: boolean): string;
   readout(): Readout;

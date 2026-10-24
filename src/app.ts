@@ -122,6 +122,7 @@ export class App implements PointerTarget {
     this.controls.showShape(scene.shape);
     this.controls.showSetting(this.setting);
     for (const m of Object.values(this.materials)) m.onSettingChange?.(SETTINGS[this.setting]);
+    this.stage.fluid.setSun(SETTINGS[this.setting].sun.direction, SETTINGS[this.setting].sun.color);
     this.controls.showAutoSpin(this.autoSpin);
     this.setMaterial(scene.material, false);
     this.current.enter(new Vector3(0, 0, 1));
@@ -143,6 +144,7 @@ export class App implements PointerTarget {
     this.stage.backdrop.setPool(this.current.accent, this.current.poolStrength);
     this.controls.showMaterial(id, this.current.hint(this.device.coarse));
     this.controls.showWind(this.current.hasWind ? this.windLevel() : null);
+    this.stage.useFluid(this.current.splashes === true);
     this.controls.showReadout(this.current.readout());
     this.syncUrl();
     if (animate) {
@@ -164,6 +166,7 @@ export class App implements PointerTarget {
     this.setting = id;
     this.stage.backdrop.setSetting(id, this.device.reduceMotion);
     for (const m of Object.values(this.materials)) m.onSettingChange?.(SETTINGS[id]);
+    this.stage.fluid.setSun(SETTINGS[id].sun.direction, SETTINGS[id].sun.color);
     this.controls.showSetting(id);
     this.syncUrl();
   }

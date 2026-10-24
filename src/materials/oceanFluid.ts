@@ -1,7 +1,6 @@
-import { SphereGeometry, InstancedBufferGeometry, Mesh, Vector3, Vector4 } from 'three';
+import { DoubleSide, InstancedBufferGeometry, Mesh, PlaneGeometry, Vector3, Vector4 } from 'three';
 import {
   MeshBasicNodeMaterial,
-  MeshPhysicalNodeMaterial,
   type ComputeNode,
   type Node,
   type StorageBufferNode,
@@ -12,8 +11,10 @@ import {
   atomicAdd,
   atomicLoad,
   atomicStore,
+  cameraProjectionMatrix,
   clamp,
   cross,
+  Discard,
   dot,
   exp,
   float,
@@ -27,15 +28,20 @@ import {
   length,
   Loop,
   max,
+  mix,
+  modelViewMatrix,
   normalize,
   positionGeometry,
   Return,
   round,
   select,
+  smoothstep,
   storage,
   uint,
   uniform,
   uniformArray,
+  varyingProperty,
+  vec2,
   vec3,
   vec4,
 } from 'three/tsl';
@@ -48,6 +54,7 @@ import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { cubeCell, type SurfaceBuffers } from '../nodes/oceanSurface';
 import { oceanWaveVertex, type OceanWaveFields } from '../nodes/oceanWaves';
 import { baseR } from '../nodes/shape';
+import { FLUID_LAYER } from '../scene/fluidPass';
 
 type Vec4Buffer = StorageBufferNode<'vec4'>;
 type Vec3 = Node<'vec3'>;
@@ -73,6 +80,15 @@ const EMISSION = 30000;
 const SURF_SPRAY = 3;
 /** A splash is a third droplets, the rest mist (as the old spray). */
 const DROPLET_SHARE = 0.35;
+/** A particle's crowd (see `crowd`) above which it's dense spray, drawn as one surface. */
+const DENSE = 1;
+/** Radius of a dense droplet's sphere in the fluid layer: about the spacing particles start at. */
+const IMPOSTOR_RADIUS = 0.012;
+/** Seconds of motion a streak shows. */
+const STREAK_TIME = 0.04;
+/** How solid a droplet's and a speck of mist's streak are at full life. */
+const DROPLET_OPACITY = 0.7;
+const MIST_OPACITY = 0.28;
 /** Foam a landing leaves on its vertex. */
 const LANDING_FOAM = { droplet: 0.02, mist: 0.004 };
 
@@ -84,8 +100,10 @@ const LANDING_FOAM = { droplet: 0.02, mist: 0.004 };
  * water they give it back with some foam, so landings leave small rings. All in the anchor's frame.
  */
 export class OceanFluid {
-  readonly mesh: Mesh;
-  readonly mistMesh: Mesh;
+  /** Isolated droplets and mist, as streaks, in the main pass. */
+  readonly streaks: Mesh;
+  /** Dense spray as sphere impostors, on the fluid layer (scene/fluidPass.ts). */
+  readonly water: Mesh;
   private readonly renderer: WebGPURenderer;
   private readonly dt = uniform(FLUID.maxStep);
   private readonly frameDt = uniform(0);
@@ -116,13 +134,20 @@ export class OceanFluid {
     // mass and momentum per cell, summed atomically in fixed point; then the cell's velocity and mass
     const gridSum = instancedArray(cells * 4, 'int').toAtomic() as StorageBufferNode<'int'>;
     const gridVel = instancedArray(cells, 'vec4') as Vec4Buffer;
-    // how high the land stands at each vertex, so spray comes down on the islands rather than through them
+    // how much water is around each particle (its own share counts about 0.3): dense spray is drawn as one
+    // surface, isolated droplets as streaks
+    const crowd = instancedArray(n, 'float') as StorageBufferNode<'float'>;
+    // each vertex's direction and how high the land stands there, so spray comes down on the islands rather
+    // than through them (one buffer: the landing pass is at WebGPU's eight)
+    const dir = new Vector3();
     const terrain = instancedArray(
-      Float32Array.from({ length: sea.field.count }, (_, i) =>
-        sea.coastal ? Math.max(0, shoreGroundHeight(new Vector3().fromArray(sea.field.positions, i * 3))) : 0,
-      ),
-      'float',
-    ) as StorageBufferNode<'float'>;
+      Float32Array.from({ length: sea.field.count * 4 }, (_, k) => {
+        const i = Math.floor(k / 4);
+        if (k % 4 < 3) return sea.field.positions[i * 3 + (k % 4)]!;
+        return sea.coastal ? Math.max(0, shoreGroundHeight(dir.fromArray(sea.field.positions, i * 3))) : 0;
+      }),
+      'vec4',
+    ) as Vec4Buffer;
     const splashes = uniformArray(this.splashes, 'vec4') as UniformArrayNode<'vec4'>;
     const splashMotion = uniformArray(this.splashMotion, 'vec4') as UniformArrayNode<'vec4'>;
 
@@ -159,10 +184,11 @@ export class OceanFluid {
       const up = select(mist, float(0.32), float(0.48)).mul(strength).add(random(seed, 4).mul(0.2));
       const outward = random(seed, 5).mul(0.16).add(0.12).mul(strength);
       const v = d.mul(up).add(travel).add(ring.mul(outward));
+      // mostly tiny: a droplet a few millimetres across is metres on a sea this size
       const size = select(
         mist,
-        random(seed, 6).mul(0.004).add(0.002),
-        random(seed, 6).pow(3).mul(0.007).add(0.003),
+        random(seed, 6).mul(0.0015).add(0.001),
+        random(seed, 6).pow(4).mul(0.004).add(0.0012),
       );
       const life = select(mist, random(seed, 7).mul(0.55).add(0.28), float(6));
       pos.element(slot).assign(vec4(p, 1));
@@ -333,6 +359,7 @@ export class OceanFluid {
       const pv = vel.element(i);
       const x = p.xyz.toVar();
       If(isMist(i), () => {
+        crowd.element(i).assign(0);
         const v = pv.xyz
           .sub(radial(x).mul(this.dt.mul(FLUID.gravity)))
           .mul(exp(this.dt.mul(-FLUID.mistDrag)));
@@ -342,13 +369,17 @@ export class OceanFluid {
       });
       const v = vec3(0).toVar();
       const rows = [0, 1, 2].map(() => vec3(0).toVar());
+      const around = float(0).toVar();
       neighbours(x, (cell, w, dpos) => {
-        const g = gridVel.element(cell).xyz;
+        const node = gridVel.element(cell);
+        const g = node.xyz;
+        around.addAssign(node.w.mul(w));
         v.addAssign(g.mul(w));
         (['x', 'y', 'z'] as const).forEach((axis, r) =>
           rows[r]!.addAssign(dpos.mul(g[axis].mul(w).mul(4 * invDx * invDx))),
         );
       });
+      crowd.element(i).assign(around);
       const trace = rows[0]!.x.add(rows[1]!.y).add(rows[2]!.z);
       const J = clamp(p.w.mul(trace.mul(this.dt).add(1)), FLUID.minJ, FLUID.maxJ);
       const moved = v.mul(exp(this.dt.mul(-FLUID.drag)));
@@ -376,7 +407,19 @@ export class OceanFluid {
       const d = normalize(x);
       const vertex = buffers.lookup.element(cubeCell(d, LOOKUP_SIZE));
       const water = seaRadius(d, buffers.surface.element(vertex).x);
-      const ground = baseR(d).add(terrain.element(vertex));
+      // the land's height blended over the vertex and its neighbours, as sampleSurface blends the water: the
+      // terrain is steep, and one vertex's height would leave spray standing on air or inside the rock
+      const terrainHeight = float(0).toVar();
+      const weights = float(0).toVar();
+      Loop({ start: 0, end: 7, type: 'uint' }, ({ i: k }) => {
+        const j = select(k.equal(0), vertex, buffers.neighbor.element(vertex.mul(6).add(k.sub(1))));
+        const ground = terrain.element(j);
+        const offset = ground.xyz.sub(d);
+        const w = float(1).div(dot(offset, offset).add(0.0002));
+        terrainHeight.addAssign(ground.w.mul(w));
+        weights.addAssign(w);
+      });
+      const ground = baseR(d).add(terrainHeight.div(weights));
       const age = aff.element(i.mul(3).add(2));
       age.w.addAssign(this.frameDt);
       // under the surface while coming down; or, once clear of its launch, resting on the water (droplets that
@@ -412,52 +455,89 @@ export class OceanFluid {
       vel.element(instanceIndex).assign(vec4(0));
     })().compute(n);
 
-    // Drawn straight from storage: droplets as small glassy spheres, mist as faint specks, fading out at the
-    // end of their lives.
+    // Drawn straight from storage, as camera-facing quads. Spray dense enough to read as water goes to the fluid
+    // layer as sphere impostors, which scene/fluidPass.ts smooths into one surface; isolated droplets and mist are
+    // streaks along their motion (the blur any eye or camera sees in fast spray), clear and bright at the head.
     const posView = storage(pos.value, 'vec4', n).toReadOnly() as Vec4Buffer;
     const velView = storage(vel.value, 'vec4', n).toReadOnly() as Vec4Buffer;
     const affView = storage(aff.value, 'vec4', n * 3).toReadOnly() as Vec4Buffer;
-    const place = (mist: boolean) =>
-      Fn(() => {
-        const i = instanceIndex;
-        const life = velView.element(i).w;
-        const kind = affView.element(i.mul(3)).w;
-        const size = affView.element(i.mul(3).add(1)).w;
-        const mine = mist ? kind.greaterThan(0.5) : kind.lessThan(0.5);
-        const fade = clamp(life.div(mist ? 0.22 : 0.15), 0, 1);
-        const scale = select(mine.and(life.greaterThan(0)), size.mul(fade), float(0));
-        return posView.element(i).xyz.add(positionGeometry.mul(scale));
-      })();
-    const droplet = new MeshPhysicalNodeMaterial({
-      color: '#c7eaf2',
-      metalness: 0,
-      roughness: 0.18,
-      transparent: true,
-      opacity: 0.83,
-      depthWrite: false,
-      envMapIntensity: 0.6,
-    });
-    droplet.positionNode = place(false);
-    const mist = new MeshBasicNodeMaterial({
-      color: '#d8f2f3',
-      transparent: true,
-      opacity: 0.38,
-      depthWrite: false,
-    });
-    mist.positionNode = place(true);
-    const instanced = (detail: [number, number]) => {
-      const sphere = new SphereGeometry(1, ...detail);
+    const crowdView = storage(crowd.value, 'float', n).toReadOnly() as StorageBufferNode<'float'>;
+    const quad = () => {
+      const plane = new PlaneGeometry(2, 2);
       const geometry = new InstancedBufferGeometry();
-      geometry.setIndex(sphere.getIndex());
-      geometry.setAttribute('position', sphere.getAttribute('position'));
-      geometry.setAttribute('normal', sphere.getAttribute('normal'));
+      geometry.setIndex(plane.getIndex());
+      geometry.setAttribute('position', plane.getAttribute('position'));
       geometry.instanceCount = n;
       return geometry;
     };
-    this.mesh = new Mesh(instanced([5, 4]), droplet);
-    this.mistMesh = new Mesh(instanced([3, 2]), mist);
-    this.mesh.frustumCulled = false;
-    this.mistMesh.frustumCulled = false;
+    const corner = varyingProperty('vec2', 'vCorner');
+    const weight = varyingProperty('float', 'vWeight');
+    const centre = varyingProperty('vec3', 'vCentre');
+    const radius = varyingProperty('float', 'vRadius');
+    /** 0 for an isolated droplet, 1 for one in dense spray. */
+    const dense = (i: Node<'uint'>) => smoothstep(DENSE * 0.6, DENSE * 1.2, crowdView.element(i));
+    const alive = (i: Node<'uint'>) => velView.element(i).w.greaterThan(0);
+    const mistAt = (i: Node<'uint'>) => affView.element(i.mul(3)).w.greaterThan(0.5);
+
+    const streak = new MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: DoubleSide });
+    streak.vertexNode = Fn(() => {
+      const i = instanceIndex;
+      const life = velView.element(i).w;
+      const mist = mistAt(i);
+      const size = affView.element(i.mul(3).add(1)).w;
+      const at = modelViewMatrix.mul(vec4(posView.element(i).xyz, 1));
+      const motion = modelViewMatrix.mul(vec4(velView.element(i).xyz, 0)).xy;
+      const speed = length(motion);
+      const along = select(speed.greaterThan(1e-5), motion.div(speed), vec2(1, 0));
+      const across = vec2(along.y.negate(), along.x);
+      const reach = size.add(speed.mul(STREAK_TIME));
+      const fade = clamp(life.div(select(mist, float(0.22), float(0.15))), 0, 1);
+      const shown = select(alive(i), float(1), float(0)).mul(select(mist, float(1), float(1).sub(dense(i))));
+      weight.assign(fade.mul(shown).mul(select(mist, float(MIST_OPACITY), float(DROPLET_OPACITY))));
+      corner.assign(positionGeometry.xy);
+      const offset = along
+        .mul(positionGeometry.x.mul(reach))
+        .add(across.mul(positionGeometry.y.mul(size)))
+        .mul(select(shown.greaterThan(0), float(1), float(0)));
+      return cameraProjectionMatrix.mul(at.add(vec4(offset, 0, 0)));
+    })();
+    streak.colorNode = Fn(() => {
+      // soft across, fading from a bright head to a faint tail
+      const side = float(1).sub(corner.y.mul(corner.y));
+      const head = corner.x.add(1).mul(0.5);
+      const alpha = side
+        .mul(mix(float(0.25), float(1), head))
+        .mul(float(1).sub(smoothstep(0.7, 1, corner.x.abs())));
+      return vec4(0.86, 0.95, 1, alpha.mul(weight));
+    })();
+    this.streaks = new Mesh(quad(), streak);
+    this.streaks.frustumCulled = false;
+
+    const impostor = new MeshBasicNodeMaterial();
+    impostor.vertexNode = Fn(() => {
+      const i = instanceIndex;
+      const take = alive(i).and(mistAt(i).not());
+      const r = select(take, dense(i).mul(IMPOSTOR_RADIUS), float(0));
+      const at = modelViewMatrix.mul(vec4(posView.element(i).xyz, 1));
+      centre.assign(at.xyz);
+      radius.assign(r);
+      corner.assign(positionGeometry.xy);
+      return cameraProjectionMatrix.mul(at.add(vec4(positionGeometry.xy.mul(r), 0, 0)));
+    })();
+    // the sphere's surface toward the camera: its view distance, and its depth so the nearest wins
+    const surfacePoint = Fn(() => {
+      const r2 = dot(corner, corner);
+      Discard(r2.greaterThan(1).or(radius.lessThanEqual(0)));
+      return centre.add(vec3(corner.mul(radius), float(1).sub(r2).sqrt().mul(radius)));
+    });
+    impostor.colorNode = Fn(() => vec4(surfacePoint().z.negate(), 1, 0, 1))();
+    impostor.depthNode = Fn(() => {
+      const clip = cameraProjectionMatrix.mul(vec4(surfacePoint(), 1));
+      return clip.z.div(clip.w);
+    })();
+    this.water = new Mesh(quad(), impostor);
+    this.water.frustumCulled = false;
+    this.water.layers.set(FLUID_LAYER);
   }
 
   /** A drag throwing water at dir, the way the hand is moving. */

@@ -21,6 +21,7 @@ export class Ocean implements Substance {
   readonly id: MaterialId;
   readonly accent = '#328eaf';
   readonly hasWind = true;
+  readonly splashes = true;
   readonly poolStrength = 0.14;
   readonly hitPadding = 0.1;
   readonly objects;
@@ -113,8 +114,8 @@ export class Ocean implements Substance {
       mesh,
       interior,
       this.foamFlecks.mesh,
-      this.fluid.mesh,
-      this.fluid.mistMesh,
+      this.fluid.streaks,
+      this.fluid.water,
       ...(this.shores ? [this.shores.mesh] : []),
     ];
   }

@@ -1,4 +1,4 @@
-import { IcosahedronGeometry, Vector3 } from 'three';
+import { IcosahedronGeometry, Layers, Vector3 } from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { WebGPURenderer } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
@@ -17,6 +17,7 @@ import { createDeformUniforms } from '../src/materials/deform';
 import { OceanFFT } from '../src/materials/oceanFFT';
 import { OceanFluid } from '../src/materials/oceanFluid';
 import { OceanSim } from '../src/materials/oceanSim';
+import { FLUID_LAYER } from '../src/scene/fluidPass';
 
 /** A ball of particles two to a cell side, centred at c. */
 function blob(c: [number, number, number], radius: number, spacing: number) {
@@ -109,6 +110,14 @@ describe('ocean fluid (MLS-MPM)', () => {
       uniforms: createDeformUniforms(),
       coastal: false,
     });
+    // dense spray only in the fluid layer's depth pass, streaks only in the main pass
+    const main = new Layers();
+    const layer = new Layers();
+    layer.set(FLUID_LAYER);
+    expect(fluid.water.layers.test(layer)).toBe(true);
+    expect(fluid.water.layers.test(main)).toBe(false);
+    expect(fluid.streaks.layers.test(main)).toBe(true);
+    expect(fluid.streaks.layers.test(layer)).toBe(false);
     fluid.splash(new Vector3(0, 0, 1), 0.5, new Vector3(1, 0, 0));
     fluid.update(1 / 60);
     // emission and drag splashes, four substeps of four passes (clear, to grid, grid, to particles), landings

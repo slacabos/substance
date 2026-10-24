@@ -1,8 +1,10 @@
 import { ACESFilmicToneMapping, Group, MathUtils, PerspectiveCamera, Scene, type Texture } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { PMREMGenerator, WebGPURenderer } from 'three/webgpu';
+import { PMREMGenerator, RenderPipeline, WebGPURenderer } from 'three/webgpu';
+import { pass } from 'three/tsl';
 import { FIT_RADIUS, SUPERSAMPLE_PIXELS } from '../config';
 import { Backdrop } from './backdrop';
+import { FluidPass } from './fluidPass';
 import { oceanSkyReflection } from './oceanSky';
 import type { SettingId } from './settings';
 
@@ -16,6 +18,10 @@ export class Stage {
   readonly anchor = new Group();
   readonly backdrop: Backdrop;
   readonly oceanEnvironment: Texture;
+  /** Splash water drawn as one surface (scene/fluidPass.ts); only run while a material with splashes shows. */
+  readonly fluid = new FluidPass();
+  private readonly pipeline: RenderPipeline;
+  private fluidOn = false;
   private readonly supersample: boolean;
 
   /**
@@ -48,6 +54,17 @@ export class Stage {
 
     this.backdrop = new Backdrop(setting);
     this.scene.add(this.backdrop.sphere, this.backdrop.pool, this.anchor);
+
+    const scenePass = pass(this.scene, this.camera);
+    this.pipeline = new RenderPipeline(
+      this.renderer,
+      this.fluid.composite(scenePass.getTextureNode(), scenePass.getViewZNode(), this.oceanEnvironment),
+    );
+  }
+
+  /** Whether the splash fluid's passes run: only while the ocean or the coast is showing. */
+  useFluid(on: boolean): void {
+    this.fluidOn = on;
   }
 
   /**
@@ -73,6 +90,11 @@ export class Stage {
 
   render(dt: number): void {
     this.backdrop.update(dt);
-    this.renderer.render(this.scene, this.camera);
+    if (!this.fluidOn) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    this.fluid.render(this.renderer, this.scene, this.camera);
+    this.pipeline.render();
   }
 }
