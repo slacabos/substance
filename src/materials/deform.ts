@@ -1,6 +1,10 @@
 import { Color, IcosahedronGeometry, Vector3, Vector4, type BufferGeometry } from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { MeshPhysicalNodeMaterial, type MeshPhysicalNodeMaterialParameters } from 'three/webgpu';
+import {
+  MeshPhysicalNodeMaterial,
+  type MeshPhysicalNodeMaterialParameters,
+  type StorageBufferNode,
+} from 'three/webgpu';
 import {
   attribute,
   Fn,
@@ -17,6 +21,7 @@ import {
   uniform,
   uniformArray,
   varyingProperty,
+  vertexIndex,
 } from 'three/tsl';
 import { MAX_IMPULSES } from '../config';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
@@ -28,9 +33,15 @@ import { baseN, baseR } from '../nodes/shape';
 
 export { DeformMode, type DeformUniforms };
 
-/** What the ocean material needs beyond the shared uniforms: its FFT waves and the mesh's vertex spacing. */
+/** What the ocean material needs beyond the shared uniforms: its FFT waves, the simulated surface, the spacing. */
 export interface OceanSurfaceOptions {
   waves: OceanWaveFields;
+  /** Per-vertex storage from OceanSim.renderBuffers. */
+  sim: {
+    surface: StorageBufferNode<'vec4'>;
+    slope: StorageBufferNode<'vec4'>;
+    drift: StorageBufferNode<'vec4'>;
+  };
   spacing: number;
   coastal: boolean;
 }
@@ -84,7 +95,7 @@ export function createDeformMaterial(
     return { material, uniforms };
   }
 
-  const { waves, spacing, coastal } = ocean;
+  const { waves, sim, spacing, coastal } = ocean;
   const wave = varyingProperty('float', 'vWave');
   const weatherAmount = varyingProperty('float', 'vWeather');
   const damping = varyingProperty('float', 'vDamping');
@@ -97,16 +108,17 @@ export function createDeformMaterial(
   material.positionNode = Fn(() => {
     const p = normalize(positionGeometry);
     const surface = oceanDeform(p, uniforms, waves, spacing, coastal);
-    const simHeight = attribute('oceanHeight', 'float');
-    simGradient.assign(attribute('oceanGradient', 'vec3'));
+    const simulated = sim.surface.element(vertexIndex);
+    const simHeight = simulated.x;
+    simGradient.assign(sim.slope.element(vertexIndex).xyz);
     normalLocal.assign(normalize(surface.nrm.sub(simGradient)));
     wave.assign(surface.height.add(simHeight));
     weatherAmount.assign(surface.weather);
     damping.assign(surface.damping);
     direction.assign(p);
-    simulatedFoam.assign(attribute('oceanFoam', 'float'));
-    turbulence.assign(attribute('oceanTurbulence', 'float'));
-    obj.assign(p.sub(attribute('oceanDrift', 'vec3')));
+    simulatedFoam.assign(simulated.y);
+    turbulence.assign(simulated.z);
+    obj.assign(p.sub(sim.drift.element(vertexIndex).xyz));
     shore?.assign(attribute('oceanShoreData', 'vec4').w);
     return surface.pos.add(normalize(surface.pos).mul(simHeight));
   })();

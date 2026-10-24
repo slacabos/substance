@@ -1,14 +1,34 @@
-import { IcosahedronGeometry, Matrix4, MeshBasicMaterial, Vector3 } from 'three';
+import { IcosahedronGeometry, Vector3 } from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import type { MeshBasicNodeMaterial, WebGPURenderer } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
-import { OceanWeather } from '../src/core/oceanWeather';
+import { OCEAN_DEFAULTS } from '../src/core/oceanTuning';
+import { createDeformMaterial, DeformMode } from '../src/materials/deform';
+import { OceanFFT } from '../src/materials/oceanFFT';
 import { OceanFoamFlecks } from '../src/materials/oceanFoamFlecks';
 import { OceanSim } from '../src/materials/oceanSim';
 
+function flecks() {
+  const calls: unknown[] = [];
+  const renderer = { compute: (n: unknown) => calls.push(n) } as unknown as WebGPURenderer;
+  const source = new IcosahedronGeometry(1, 6);
+  source.deleteAttribute('uv');
+  const sim = new OceanSim(renderer, mergeVertices(source));
+  const waves = new OceanFFT(renderer, true, OCEAN_DEFAULTS);
+  const { uniforms } = createDeformMaterial({}, DeformMode.Ocean);
+  const foam = new OceanFoamFlecks(renderer, true, {
+    buffers: sim.renderBuffers(),
+    waves,
+    uniforms,
+    spacing: sim.spacing,
+  });
+  return { foam, calls };
+}
+
 describe('ocean foam flecks', () => {
   it('responds to the live foam strength', () => {
-    const foam = new OceanFoamFlecks(true);
-    const material = foam.mesh.material as MeshBasicMaterial;
+    const { foam } = flecks();
+    const material = foam.mesh.material as MeshBasicNodeMaterial;
     foam.setIntensity(0);
     expect(material.opacity).toBe(0);
     foam.setIntensity(1.4);
@@ -17,24 +37,16 @@ describe('ocean foam flecks', () => {
     expect(material.opacity).toBeGreaterThan(0.66);
   });
 
-  it('rides the spherical surface and disappears after its lifetime', () => {
-    const source = new IcosahedronGeometry(1, 5);
-    source.deleteAttribute('uv');
-    const sim = new OceanSim(mergeVertices(source));
-    const weather = new OceanWeather();
-    const touch = new Vector3(0, 0, 1);
-    weather.down(touch);
-    const foam = new OceanFoamFlecks(true);
-    foam.emit(touch, new Vector3(0, 1, 0), 1, 1);
-    sim.update(1 / 60, [{ dir: touch, strength: -0.7 }]);
-    foam.update(0.1, sim, weather);
-    const transform = new Matrix4();
-    foam.mesh.getMatrixAt(0, transform);
-    const position = new Vector3().setFromMatrixPosition(transform);
-    expect(position.length()).toBeGreaterThan(0.9);
-    expect(position.length()).toBeLessThan(1.1);
-    for (let i = 0; i < 180; i++) foam.update(1 / 60, sim, weather);
-    foam.mesh.getMatrixAt(0, transform);
-    expect(transform.determinant()).toBe(0);
+  it('starts flecks on the GPU in the frame they are emitted, then forgets them', () => {
+    const { foam, calls } = flecks();
+    const spawns = (foam as unknown as { spawns: { w: number }[] }).spawns;
+    foam.emit(new Vector3(0, 0, 1), new Vector3(0, 1, 0), 1, 4);
+    expect(spawns.filter((s) => s.w > 0)).toHaveLength(4);
+    // never more than one frame's worth
+    foam.emit(new Vector3(1, 0, 0), null, 1, 100);
+    expect(spawns.filter((s) => s.w > 0)).toHaveLength(spawns.length);
+    foam.update(1 / 60);
+    expect(calls).toHaveLength(1);
+    expect(spawns.every((s) => s.w === 0)).toBe(true);
   });
 });

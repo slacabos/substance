@@ -1,74 +1,93 @@
 import { IcosahedronGeometry, Vector3 } from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import type { WebGPURenderer } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
-import { OceanSim, oceanReleaseImpulse } from '../src/materials/oceanSim';
+import { OCEAN_DEPTH } from '../src/core/oceanFFT';
+import { createOceanField } from '../src/core/oceanField';
+import { shoreDistance } from '../src/core/oceanShores';
+import { OceanSim, oceanPressLoad, oceanReleaseImpulse } from '../src/materials/oceanSim';
+
+/** Records compute dispatches instead of running them; no GPU in tests. */
+function stubRenderer() {
+  const calls: unknown[][] = [];
+  const renderer = {
+    compute: (nodes: unknown) => calls.push(Array.isArray(nodes) ? nodes : [nodes]),
+    getArrayBufferAsync: async () => new Float32Array(6 * 64 * 8).buffer,
+  } as unknown as WebGPURenderer;
+  return { renderer, calls };
+}
+
+const sphere = (detail: number) => {
+  const source = new IcosahedronGeometry(1, detail);
+  source.deleteAttribute('uv');
+  return mergeVertices(source);
+};
 
 describe('ocean surface simulation', () => {
-  it('turns a tap into a spreading height wave without immediate foam, then clears on reset', () => {
-    const geometry = new IcosahedronGeometry(1, 5);
-    geometry.deleteAttribute('uv');
-    const indexed = mergeVertices(geometry);
-    const sim = new OceanSim(indexed);
-    const p = indexed.getAttribute('position');
-    const dir = new Vector3(p.getX(0), p.getY(0), p.getZ(0)).normalize();
-    sim.update(1 / 60, [{ dir, strength: -1.15 }]);
-    const heights = indexed.getAttribute('oceanHeight');
-    const foam = indexed.getAttribute('oceanFoam');
-    expect(Math.abs(heights.getX(0))).toBeGreaterThan(0.001);
-    expect(foam.getX(0)).toBe(0);
-    expect(sim.whitewaterSites(8)).toHaveLength(0);
-    expect(Math.abs(sim.sampleAt(dir).height)).toBeGreaterThan(0.001);
-    sim.depositFoam(dir, 0.4);
-    expect(sim.sampleAt(dir).foam).toBeGreaterThan(0.05);
-    const affected = () => {
-      let count = 0;
-      for (let i = 0; i < heights.count; i++) if (Math.abs(heights.getX(i)) > 1e-5) count++;
-      return count;
-    };
-    const initialAffected = affected();
-    for (let i = 0; i < 30; i++) sim.update(1 / 60, []);
-    expect(affected()).toBeGreaterThan(initialAffected);
-    expect(Math.abs(heights.getX(0))).toBeGreaterThan(0);
+  it('steps at a fixed 60 Hz, more steps for a longer frame, and finishes once per frame', () => {
+    const { renderer, calls } = stubRenderer();
+    const sim = new OceanSim(renderer, sphere(8));
+    sim.update(1 / 60, []);
+    // one step (momentum, height), then the volume correction (clear, sum, correct), surface, slope and the
+    // whitewater gather
+    expect(calls.at(-1)).toHaveLength(2 + 6);
+    sim.update(1 / 20, [{ dir: new Vector3(0, 0, 1), strength: -0.55 }]);
+    expect(calls.at(-1)).toHaveLength(3 * 2 + 6);
+    sim.update(0.5, []);
+    expect(calls.at(-1)).toHaveLength(4 * 2 + 6);
+    sim.update(0, []);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('takes presses, deposits and resets without readback, and has no spray sites before any', () => {
+    const { renderer, calls } = stubRenderer();
+    const sim = new OceanSim(renderer, sphere(8));
+    const dir = new Vector3(0, 1, 0);
+    sim.setPressure(dir, 0.4);
+    for (let i = 0; i < 20; i++) sim.depositFoam(dir, 0.1);
+    sim.update(1 / 60, []);
+    sim.setPressure(null, 0);
     sim.reset();
-    expect(heights.getX(0)).toBe(0);
-    expect(foam.getX(0)).toBe(0);
+    expect(calls.length).toBe(2);
+    expect(sim.whitewaterSites(8)).toHaveLength(0);
+    expect(sim.groundHeight(dir)).toBe(0);
   });
 
-  it('advects deposited foam and lets it fade after contact ends', () => {
-    const source = new IcosahedronGeometry(1, 5);
-    source.deleteAttribute('uv');
-    const sim = new OceanSim(mergeVertices(source));
-    const dir = new Vector3(0, 0, 1);
-    sim.depositFoam(dir, 0.8, 0.1);
-    const initial = sim.sampleAt(dir).foam;
-    for (let i = 0; i < 180; i++) sim.update(1 / 60, []);
-    expect(sim.sampleAt(dir).foam).toBeLessThan(initial * 0.5);
+  it('loads harder the longer a press is held, and releases a bigger wave', () => {
+    expect(oceanPressLoad(0)).toBe(0);
+    expect(oceanPressLoad(0.8)).toBeGreaterThan(oceanPressLoad(0.1));
+    expect(oceanReleaseImpulse(0.8)).toBeGreaterThan(oceanReleaseImpulse(0.08) * 1.5);
   });
+});
 
-  it('stores more wave energy during a long press than a short tap', () => {
-    const run = (holdSeconds: number) => {
-      const source = new IcosahedronGeometry(1, 28);
-      source.deleteAttribute('uv');
-      const geometry = mergeVertices(source);
-      const sim = new OceanSim(geometry);
-      const p = geometry.getAttribute('position');
-      const dir = new Vector3(p.getX(0), p.getY(0), p.getZ(0)).normalize();
-      sim.update(1 / 60, [{ dir, strength: -0.55 }]);
-      for (let t = 1 / 60; t <= holdSeconds; t += 1 / 60) {
-        sim.setPressure(dir, t);
-        sim.update(1 / 60, []);
+describe('coastal ocean field', () => {
+  it('walls off land, shoals the sea toward the bank and drops dry triangles', () => {
+    const geometry = sphere(18);
+    const fullIndexCount = geometry.getIndex()!.count;
+    const field = createOceanField(geometry, true);
+    expect(geometry.getIndex()!.count).toBeLessThan(fullIndexCount);
+    expect(geometry.getIndex()!.count).toBeGreaterThan(fullIndexCount * 0.75);
+    const dir = new Vector3();
+    let dry = 0;
+    let shallow = 0;
+    for (let i = 0; i < field.count; i++) {
+      const distance = shoreDistance(dir.fromArray(field.positions, i * 3));
+      expect(field.wet[i]).toBe(distance > 0 ? 1 : 0);
+      if (!field.wet[i]) dry++;
+      if (field.wet[i] && distance < 0.01) {
+        shallow++;
+        expect(field.depth[i]).toBeLessThan(OCEAN_DEPTH);
       }
-      const heldDepth = Math.abs(sim.sampleAt(dir).height);
-      sim.setPressure(null, 0);
-      sim.update(1 / 60, [{ dir, strength: oceanReleaseImpulse(holdSeconds) }]);
-      const heights = geometry.getAttribute('oceanHeight');
-      let energy = 0;
-      for (let i = 0; i < heights.count; i++) energy += heights.getX(i) ** 2;
-      return { energy, heldDepth };
-    };
-    const short = run(0.08);
-    const long = run(0.8);
-    expect(long.heldDepth).toBeGreaterThan(short.heldDepth);
-    expect(long.energy).toBeGreaterThan(short.energy * 1.5);
+      if (distance > 0.1) expect(field.depth[i]).toBeCloseTo(OCEAN_DEPTH, 6);
+    }
+    expect(dry).toBeGreaterThan(0);
+    expect(shallow).toBeGreaterThan(0);
+  });
+
+  it('keeps the coast within WebGPU`s eight vertex buffers', () => {
+    const geometry = sphere(12);
+    new OceanSim(stubRenderer().renderer, geometry, true);
+    expect(Object.keys(geometry.attributes).length).toBeLessThanOrEqual(8);
+    expect(geometry.getAttribute('oceanShoreData').itemSize).toBe(4);
   });
 });

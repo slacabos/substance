@@ -10,7 +10,7 @@ import {
   Vector3,
 } from 'three';
 import { morphUniform } from '../scene/shape';
-import type { OceanSim } from './oceanSim';
+import type { SprayGround } from './oceanSim';
 
 const UP = new Vector3(0, 1, 0);
 const SIDE = new Vector3(1, 0, 0);
@@ -101,7 +101,7 @@ export class OceanSpray {
     this.update(0);
   }
 
-  update(dt: number, sim?: OceanSim): void {
+  update(dt: number, sim?: SprayGround): void {
     this.updatePool(this.drops, this.mesh, dt, sim, false);
     this.updatePool(this.mist, this.mistMesh, dt, sim, true);
   }
@@ -135,7 +135,7 @@ export class OceanSpray {
     pool: Drop[],
     mesh: InstancedMesh,
     dt: number,
-    sim: OceanSim | undefined,
+    sim: SprayGround | undefined,
     mist: boolean,
   ): void {
     for (let i = 0; i < pool.length; i++) {

@@ -1,0 +1,74 @@
+import type { Node, StorageBufferNode } from 'three/webgpu';
+import { abs, clamp, dot, float, floor, If, Loop, max, select, uint, vec3 } from 'three/tsl';
+import { LOOKUP_SIZE } from '../core/oceanLookup';
+
+// Shared GPU helpers for reading the interactive ocean surface (materials/oceanSim.ts) at a direction.
+
+type Vec3 = Node<'vec3'>;
+type UInt = Node<'uint'>;
+
+/**
+ * The cube-map cell of a direction, matching core/oceanLookup.ts: faces +x, -x, +y, -y, +z, -z, each split
+ * into size x size cells along its two other axes.
+ */
+export function cubeCell(d: Vec3, size: number): UInt {
+  const a = abs(d);
+  const onX = a.x.greaterThanEqual(a.y).and(a.x.greaterThanEqual(a.z));
+  const onY = a.y.greaterThanEqual(a.z);
+  const axis = select(onX, uint(0), select(onY, uint(1), uint(2)));
+  const major = select(onX, d.x, select(onY, d.y, d.z));
+  const face = axis.mul(2).add(select(major.greaterThanEqual(0), uint(0), uint(1)));
+  // the face's own axes: x faces run along (y, z), y faces along (x, z), z faces along (x, y)
+  const uv = select(onX, vec3(d.y, d.z, 0), select(onY, vec3(d.x, d.z, 0), vec3(d.x, d.y, 0))).div(
+    max(abs(major), 1e-6),
+  );
+  const cell = (v: Node<'float'>) => uint(clamp(floor(v.add(1).mul(0.5 * size)), float(0), float(size - 1)));
+  return face
+    .mul(size * size)
+    .add(cell(uv.y).mul(size))
+    .add(cell(uv.x));
+}
+
+export interface SurfaceBuffers {
+  surface: StorageBufferNode<'vec4'>;
+  flow: StorageBufferNode<'vec4'>;
+  ground: StorageBufferNode<'vec4'>;
+  vertex: StorageBufferNode<'vec4'>;
+  neighbor: StorageBufferNode<'uint'>;
+  lookup: StorageBufferNode<'uint'>;
+}
+
+/**
+ * The surface at unit direction d: the nearest vertex from the lookup, blended with its six neighbours by
+ * inverse squared distance. Returns height (with surf), foam, the current, and distance to the shore.
+ */
+export function sampleSurface(
+  d: Vec3,
+  buffers: SurfaceBuffers,
+): { height: Node<'float'>; foam: Node<'float'>; flow: Vec3; shore: Node<'float'> } {
+  const centre = buffers.lookup.element(cubeCell(d, LOOKUP_SIZE));
+  const height = float(0).toVar();
+  const foam = float(0).toVar();
+  const flow = vec3(0).toVar();
+  const weight = float(0).toVar();
+  const add = (i: UInt) => {
+    const offset = buffers.vertex.element(i).xyz.sub(d);
+    const w = float(1).div(dot(offset, offset).add(0.0002));
+    const s = buffers.surface.element(i);
+    height.addAssign(s.x.mul(w));
+    foam.addAssign(s.y.mul(w));
+    flow.addAssign(buffers.flow.element(i).xyz.mul(w));
+    weight.addAssign(w);
+  };
+  add(centre);
+  Loop({ start: 0, end: 6, type: 'uint' }, ({ i: k }) => {
+    const j = buffers.neighbor.element(centre.mul(6).add(k));
+    If(j.notEqual(centre), () => add(j));
+  });
+  return {
+    height: height.div(weight),
+    foam: foam.div(weight),
+    flow: flow.div(weight),
+    shore: buffers.ground.element(centre).y,
+  };
+}

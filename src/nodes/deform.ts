@@ -69,7 +69,7 @@ type Float = Node<'float'>;
 const arcDist = (a: Vec3, b: Vec3) => acos(clamp(dot(a, b), -1, 1));
 
 /** Smooth local weather on the sphere; dot products avoid a pole or longitude seam. */
-function oceanWeatherAt(p: Vec3, u: DeformUniforms): Float {
+export function oceanWeatherAt(p: Vec3, u: DeformUniforms): Float {
   let weather: Float = float(0);
   for (let i = 0; i < OCEAN_WEATHER_PATCHES; i++) {
     const patch = u.uWeather.element(i);

@@ -62,6 +62,7 @@ export class App implements PointerTarget {
       stage.oceanEnvironment,
       oceanTuning,
       waves,
+      stage.renderer,
     );
     const coast = new Ocean(
       createDeformGeometry(true, oceanDetail(device.coarse)),
@@ -69,6 +70,7 @@ export class App implements PointerTarget {
       stage.oceanEnvironment,
       oceanTuning,
       waves,
+      stage.renderer,
       true,
     );
     this.materials = {

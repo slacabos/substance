@@ -1,6 +1,7 @@
 import { Color, IcosahedronGeometry, Mesh, Vector3, type BufferGeometry, type Texture } from 'three';
-import { MeshBasicNodeMaterial } from 'three/webgpu';
+import { MeshBasicNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import { Fn, normalize, positionGeometry } from 'three/tsl';
+import { TapRhythm } from '../core/oceanRhythm';
 import { OceanWeather, weatherRadius } from '../core/oceanWeather';
 import type { OceanTuning } from '../core/oceanTuning';
 import { baseR } from '../nodes/shape';
@@ -33,6 +34,9 @@ export class Ocean implements Substance {
   private readonly spray: OceanSpray;
   private readonly foamFlecks: OceanFoamFlecks;
   private readonly weatherField = new OceanWeather();
+  private readonly rhythm = new TapRhythm();
+  /** How much harder the current press pushes, for keeping the beat. */
+  private boost = 1;
   private readonly uniforms: DeformUniforms;
   readonly tuning: OceanTuning;
   private readonly lastDrag = new Vector3(0, 0, 1);
@@ -52,13 +56,15 @@ export class Ocean implements Substance {
     skyReflection: Texture,
     tuning: OceanTuning,
     waves: OceanFFT,
+    renderer: WebGPURenderer,
     coastal = false,
   ) {
     this.id = coastal ? 'coast' : 'ocean';
     this.tuning = tuning;
     this.waves = waves;
     this.shores = coastal ? new OceanShores(coarse) : null;
-    this.sim = new OceanSim(geometry, coastal, tuning);
+    this.sim = new OceanSim(renderer, geometry, coastal, tuning);
+    const simBuffers = this.sim.renderBuffers();
     this.spray = new OceanSpray(coarse);
     const { material, uniforms } = createDeformMaterial(
       {
@@ -75,9 +81,14 @@ export class Ocean implements Substance {
         envMapIntensity: 0.92,
       },
       DeformMode.Ocean,
-      { waves, spacing: this.sim.spacing, coastal },
+      { waves, sim: simBuffers, spacing: this.sim.spacing, coastal },
     );
-    this.foamFlecks = new OceanFoamFlecks(coarse, { waves, uniforms, spacing: this.sim.spacing });
+    this.foamFlecks = new OceanFoamFlecks(renderer, coarse, {
+      buffers: simBuffers,
+      waves,
+      uniforms,
+      spacing: this.sim.spacing,
+    });
     const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
     const interiorMaterial = new MeshBasicNodeMaterial({ color: '#031525' });
@@ -116,8 +127,9 @@ export class Ocean implements Substance {
     this.pressing = true;
     this.heldSeconds = 0;
     this.pressStartedAt = performance.now();
+    this.boost = this.rhythm.tap(this.pressStartedAt / 1000);
     this.sim.setPressure(dir, 0);
-    this.addForce(dir, -0.55);
+    this.addForce(dir, -0.55 * this.boost);
   }
   move(dir: Vector3, dt: number): void {
     this.weatherField.move(dir, dt);
@@ -140,7 +152,7 @@ export class Ocean implements Substance {
     this.weatherField.up();
     if (this.pressing) {
       this.heldSeconds = Math.min(2, (performance.now() - this.pressStartedAt) / 1000);
-      this.addForce(this.pressDir, oceanReleaseImpulse(this.heldSeconds));
+      this.addForce(this.pressDir, oceanReleaseImpulse(this.heldSeconds) * this.boost);
     }
     this.pressing = false;
     this.sim.setPressure(null, 0);
@@ -150,6 +162,7 @@ export class Ocean implements Substance {
     this.pressing = false;
     this.heldSeconds = 0;
     this.sim.reset();
+    this.rhythm.reset();
     this.spray.clear();
     this.foamFlecks.clear();
     this.weatherField.clear();
@@ -181,7 +194,7 @@ export class Ocean implements Substance {
         this.lastWhitewaterTime = ctx.time;
       }
       this.spray.update(ctx.dt, this.sim);
-      this.foamFlecks.update(ctx.dt, this.sim, this.weatherField);
+      this.foamFlecks.update(ctx.dt);
     }
     this.pendingForces.length = 0;
     this.storm = 1 + this.weatherField.peak * 1.4;
