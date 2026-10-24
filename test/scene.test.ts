@@ -34,4 +34,9 @@ describe('scene query strings', () => {
   it('keeps the coastal variant in shareable scene URLs', () => {
     expect(parseScene(sceneQuery({ ...DEFAULT_SCENE, material: 'coast' })).material).toBe('coast');
   });
+
+  it.each(['fur', 'fluff'] as const)('keeps %s independently selectable in shared URLs', (material) => {
+    const scene = { material, shape: 'cube', setting: 'studio', spin: false } as const;
+    expect(parseScene(sceneQuery(scene))).toEqual(scene);
+  });
 });

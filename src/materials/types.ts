@@ -1,7 +1,7 @@
 import type { Object3D, Vector3 } from 'three';
 import type { SettingLook } from '../scene/settings';
 
-export type MaterialId = 'water' | 'ocean' | 'coast' | 'slime' | 'fur';
+export type MaterialId = 'water' | 'ocean' | 'coast' | 'slime' | 'fur' | 'fluff';
 export type ShapeId = 'orb' | 'cube';
 
 export interface FrameContext {

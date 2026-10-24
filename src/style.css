@@ -39,6 +39,9 @@ body[data-mat='slime'] {
 body[data-mat='fur'] {
   --accent: #e9a25e;
 }
+body[data-mat='fluff'] {
+  --accent: #b991f2;
+}
 
 html,
 body {
@@ -250,10 +253,16 @@ body[data-shape='cube'] .mark {
   text-wrap: balance;
 }
 
+.material-picker {
+  min-width: 0;
+}
 .picker {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 6px;
+}
+.picker-scroll {
+  display: none;
 }
 .picker button {
   display: flex;
@@ -299,6 +308,10 @@ body[data-shape='cube'] .mark {
 .sw-fur {
   background: repeating-conic-gradient(rgba(70, 30, 10, 0.4) 0 4deg, transparent 4deg 11deg),
     radial-gradient(circle at 35% 30%, #ffe0b8 0 8%, #e99c58 45%, #5e2a12 100%);
+}
+.sw-fluff {
+  background: repeating-conic-gradient(rgba(47, 17, 78, 0.4) 0 4deg, transparent 4deg 11deg),
+    radial-gradient(circle at 35% 30%, #eee0ff 0 8%, #b991f2 45%, #452369 100%);
 }
 
 /* equal side columns keep play/pause centred; when the row is tight they fall back to their content widths */
@@ -404,6 +417,44 @@ body[data-shape='cube'] .mark {
   text-align: center;
   color: var(--muted);
   font-size: 15px;
+}
+/* Keep four whole material buttons in one swipeable row on compact screens. */
+@media (max-width: 600px) {
+  .picker {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: calc((100% - 18px) / 4);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px;
+    scroll-padding-inline: 6px;
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    scrollbar-width: none;
+  }
+  .picker::-webkit-scrollbar {
+    display: none;
+  }
+  .picker button {
+    min-width: 0;
+    scroll-snap-align: start;
+  }
+  .picker-scroll:not([hidden]) {
+    display: block;
+    position: relative;
+    height: 3px;
+    margin: 4px 6px 0;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--muted) 18%, transparent);
+  }
+  .picker-scroll-thumb {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--accent) 65%, transparent);
+  }
 }
 /* phones: the readout's two figures stack, so the wind button fits beside them */
 @media (max-width: 440px) {

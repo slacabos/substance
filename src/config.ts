@@ -1,14 +1,5 @@
 /** Ripple / dent ring-buffer size; it's also the shader's uniform array length. */
 export const MAX_IMPULSES = 16;
-export const FUR = {
-  length: 0.26,
-  density: 96,
-  /** Ribbon segments per strand; more makes bent hair curve more smoothly. */
-  segments: (coarse: boolean) => (coarse ? 6 : 12),
-  /** Simulated points per strand, root included; the ribbon curves smoothly through them. */
-  points: (coarse: boolean) => (coarse ? 5 : 12),
-} as const;
-
 export const OCEAN_FFT = {
   /** Texels per side of each wave tile. */
   size: (coarse: boolean) => (coarse ? 128 : 256),

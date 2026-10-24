@@ -8,6 +8,7 @@ const MATERIAL_KEYS: Record<string, MaterialId> = {
   '3': 'slime',
   '4': 'fur',
   '5': 'coast',
+  '7': 'fluff',
 };
 const SHAPE_KEYS: Record<string, ShapeId> = { o: 'orb', c: 'cube' };
 
@@ -40,6 +41,9 @@ export class Controls {
   private windLevel: number | null = null;
   private readonly fpsEl = byId('fps');
   private readonly spinButton = byId<HTMLButtonElement>('spin');
+  private readonly materialPicker = byId('material-picker');
+  private readonly pickerScroll = byId('picker-scroll');
+  private readonly pickerScrollThumb = byId('picker-scroll-thumb');
   private readonly materialButtons = [...document.querySelectorAll<HTMLButtonElement>('.picker button')];
   private readonly shapeButtons = [...document.querySelectorAll<HTMLButtonElement>('.shapes button')];
   private readonly settingButtons = [...document.querySelectorAll<HTMLButtonElement>('.settings button')];
@@ -52,6 +56,7 @@ export class Controls {
     radioGroup(this.materialButtons, (b) => handlers.onMaterial(b.dataset['mat'] as MaterialId));
     radioGroup(this.shapeButtons, (b) => handlers.onShape(b.dataset['shape'] as ShapeId));
     radioGroup(this.settingButtons, (b) => handlers.onSetting(b.dataset['setting'] as SettingId));
+    this.wireMaterialPicker();
     this.spinButton.addEventListener('click', () => handlers.onToggleSpin());
     this.wireWind(handlers);
     window.addEventListener('keydown', (e) => {
@@ -70,6 +75,54 @@ export class Controls {
     document.body.dataset['mat'] = id;
     this.hint.textContent = hint;
     for (const b of this.materialButtons) b.setAttribute('aria-checked', String(b.dataset['mat'] === id));
+    const selected = this.materialButtons.find((b) => b.dataset['mat'] === id);
+    if (selected) {
+      if (this.materialPicker.contains(document.activeElement)) selected.focus({ preventScroll: true });
+      this.revealMaterial(selected);
+    }
+  }
+
+  /** Browsing the strip never selects a material; only selection, focus and resizing reveal a button. */
+  private wireMaterialPicker(): void {
+    this.materialPicker.addEventListener('scroll', () => this.updatePickerScroll(), { passive: true });
+    this.materialPicker.addEventListener('focusin', (event) => {
+      const button = this.materialButtons.find((b) => b === event.target);
+      if (button) this.revealMaterial(button);
+    });
+    const resize = new ResizeObserver(() => {
+      const button =
+        this.materialButtons.find((b) => b === document.activeElement) ??
+        this.materialButtons.find((b) => b.getAttribute('aria-checked') === 'true');
+      if (button) this.revealMaterial(button);
+      else this.updatePickerScroll();
+    });
+    resize.observe(this.materialPicker);
+  }
+
+  private revealMaterial(button: HTMLButtonElement): void {
+    const picker = this.materialPicker;
+    if (picker.scrollWidth > picker.clientWidth + 1) {
+      const view = picker.getBoundingClientRect();
+      const rect = button.getBoundingClientRect();
+      const style = getComputedStyle(picker);
+      const left = view.left + (parseFloat(style.scrollPaddingLeft) || 0);
+      const right = view.left + picker.clientWidth - (parseFloat(style.scrollPaddingRight) || 0);
+      let offset = 0;
+      if (rect.left < left - 0.5) offset = rect.left - left;
+      else if (rect.right > right + 0.5) offset = rect.right - right;
+      if (offset) picker.scrollTo({ left: picker.scrollLeft + offset, behavior: 'instant' });
+    }
+    this.updatePickerScroll();
+  }
+
+  private updatePickerScroll(): void {
+    const picker = this.materialPicker;
+    const max = picker.scrollWidth - picker.clientWidth;
+    this.pickerScroll.hidden = max <= 1;
+    if (max <= 1) return;
+    const offset = Math.min(max, Math.max(0, picker.scrollLeft));
+    this.pickerScrollThumb.style.width = `${(picker.clientWidth / picker.scrollWidth) * 100}%`;
+    this.pickerScrollThumb.style.left = `${(offset / picker.scrollWidth) * 100}%`;
   }
 
   showShape(id: ShapeId): void {
@@ -160,7 +213,7 @@ function radioGroup(buttons: HTMLButtonElement[], select: (b: HTMLButtonElement)
       e.preventDefault();
       const step = e.key === 'ArrowRight' ? 1 : buttons.length - 1;
       const next = buttons[(i + step) % buttons.length]!;
-      next.focus();
+      next.focus({ preventScroll: true });
       select(next);
     });
   });

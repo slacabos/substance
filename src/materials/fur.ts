@@ -7,7 +7,7 @@ import {
   type Object3D,
 } from 'three';
 import { MeshBasicNodeMaterial, type WebGPURenderer } from 'three/webgpu';
-import { FUR } from '../config';
+import { createFurCoat, FUR } from '../core/fur';
 import { approach } from '../core/spring';
 import { createFurUniforms, createSkinNodes, createStrandNodes } from '../nodes/fur';
 import { FurSim } from './furSim';
@@ -37,30 +37,9 @@ function createStrandTemplate(segments: number): InstancedBufferGeometry {
   return geometry;
 }
 
-/** Evenly spread, slightly jittered root directions on the unit sphere (a jittered Fibonacci spiral). */
-function createRoots(count: number): { roots: Float32Array; rand: Float32Array } {
-  const roots = new Float32Array(count * 3);
-  const rand = new Float32Array(count * 3);
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  const jitter = 1.2 / Math.sqrt(count);
-  const v = new Vector3();
-  for (let i = 0; i < count; i++) {
-    const y = 1 - (2 * (i + 0.5)) / count;
-    const r = Math.sqrt(1 - y * y);
-    const phi = i * golden;
-    v.set(Math.cos(phi) * r, y, Math.sin(phi) * r);
-    v.x += (Math.random() - 0.5) * jitter;
-    v.y += (Math.random() - 0.5) * jitter;
-    v.z += (Math.random() - 0.5) * jitter;
-    v.normalize().toArray(roots, i * 3);
-    rand.set([Math.random(), Math.random(), Math.random()], i * 3);
-  }
-  return { roots, rand };
-}
-
 /**
- * Fur made of individual strands over a dark skin, simulated on the GPU (see FurSim): hair has weight and
- * momentum, trails behind a spin, stays combed where it's stroked and parts where it's pressed.
+ * A dense undercoat with longer guard hairs. Nearby fibres share simulated guides, so brushing and inertia
+ * move soft tufts while each hair keeps its own root, length and pigment.
  */
 export class Fur implements Substance {
   readonly id = 'fur';
@@ -71,8 +50,9 @@ export class Fur implements Substance {
   readonly worldObjects;
 
   private readonly sim: FurSim;
-  private readonly strands: Mesh;
+  private readonly strands: Mesh<InstancedBufferGeometry>;
   private readonly anchor: Object3D;
+  private readonly density: number;
   private last: Vector3 | null = null;
   private hoverLast: Vector3 | null = null;
   private press = 0;
@@ -81,13 +61,14 @@ export class Fur implements Substance {
 
   constructor(coarse: boolean, renderer: WebGPURenderer, anchor: Object3D) {
     this.anchor = anchor;
-    const { roots, rand } = createRoots(strandCount(FUR.density));
-    this.sim = new FurSim(renderer, roots, rand, FUR.points(coarse));
-    const uniforms = createFurUniforms();
+    this.density = coarse ? FUR.touchDensity : FUR.density;
+    const coat = createFurCoat(strandCount(this.density), FUR.guides(coarse));
+    this.sim = new FurSim(renderer, coat.guideRoots, FUR.points(coarse));
+    const uniforms = createFurUniforms(this.density);
 
     const geometry = createStrandTemplate(FUR.segments(coarse));
-    geometry.instanceCount = this.sim.count;
-    const strandNodes = createStrandNodes(uniforms, this.sim);
+    geometry.instanceCount = coat.count;
+    const strandNodes = createStrandNodes(uniforms, this.sim, coat);
     // with MSAA, faint coverage becomes a share of each pixel's samples, so strands need no sorting
     const strandMaterial = new MeshBasicNodeMaterial({ alphaToCoverage: true });
     strandMaterial.positionNode = strandNodes.position;
@@ -117,7 +98,7 @@ export class Fur implements Substance {
   }
 
   readout(): Readout {
-    return ['Fur', `≈ ${strandEstimate(FUR.density)}k strands`, 'keratin n ≈ 1.55'];
+    return ['Fur', `≈ ${strandEstimate(this.density)}k strands`, 'keratin n ≈ 1.55'];
   }
 
   /** Combs along a stroke from `last` to `dir`. Returns false when the contact barely moved. */
@@ -174,6 +155,9 @@ export class Fur implements Substance {
 
   enter(): void {
     this.press = 0;
+    this.pressTarget = 0;
+    this.last = null;
+    this.hoverLast = null;
     // the simulation pauses while the fur is hidden, so start it fresh rather than from stale positions
     this.sim.reset(this.anchor);
   }
@@ -183,6 +167,6 @@ export class Fur implements Substance {
     u.brushAmount.value *= 1 - approach(12, ctx.dt); // a stroke only combs while it keeps moving
     this.press += (this.pressTarget - this.press) * approach(9, ctx.dt);
     u.press.value = this.press;
-    if (this.strands.visible) this.sim.update(this.anchor, ctx.time, ctx.dt);
+    if (this.strands.visible) this.sim.update(this.anchor, ctx.dt);
   }
 }

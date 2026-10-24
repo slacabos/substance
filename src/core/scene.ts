@@ -11,7 +11,7 @@ export interface SceneState {
 
 export const DEFAULT_SCENE: SceneState = { material: 'water', shape: 'orb', setting: 'night', spin: true };
 
-const MATERIALS: readonly MaterialId[] = ['water', 'ocean', 'coast', 'slime', 'fur'];
+const MATERIALS: readonly MaterialId[] = ['water', 'ocean', 'coast', 'slime', 'fur', 'fluff'];
 const SHAPES: readonly ShapeId[] = ['orb', 'cube'];
 
 /** Reads a scene from a query string such as `?material=fur&shape=cube`. Missing or unknown values keep their default. */

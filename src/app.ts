@@ -8,6 +8,7 @@ import type { DeviceProfile } from './device';
 import { createDeformGeometry } from './materials/deform';
 import { OceanFFT } from './materials/oceanFFT';
 import { Fur } from './materials/fur';
+import { Fluff } from './materials/fluff';
 import { Ocean } from './materials/ocean';
 import { Slime } from './materials/slime';
 import type { FrameContext, MaterialId, ShapeId, Substance } from './materials/types';
@@ -83,6 +84,7 @@ export class App implements PointerTarget {
       coast,
       slime: new Slime(geometry),
       fur: new Fur(device.coarse, stage.renderer, stage.anchor),
+      fluff: new Fluff(device.coarse, stage.renderer, stage.anchor),
     };
     for (const m of Object.values(this.materials)) {
       this.stage.anchor.add(...m.objects);

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#1b202b" />
     <meta
       name="description"
-      content="Touch a 3D object made of water, ocean, slime or fur and watch it react."
+      content="Touch a 3D object made of water, ocean, slime, fur or fluff and watch it react."
     />
     <title>Substance</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -49,23 +49,31 @@
     <div class="dock" id="dock">
       <div class="card panel">
         <p class="hint" id="hint" aria-live="polite">Tap for ripples. Drag to stir the surface.</p>
-        <nav class="picker" role="radiogroup" aria-label="Material">
-          <button type="button" id="mat-water" role="radio" aria-checked="true" data-mat="water">
-            <span class="sw sw-water"></span>Water
-          </button>
-          <button type="button" id="mat-ocean" role="radio" aria-checked="false" data-mat="ocean">
-            <span class="sw sw-ocean"></span>Ocean
-          </button>
-          <button type="button" id="mat-coast" role="radio" aria-checked="false" data-mat="coast">
-            <span class="sw sw-coast"></span>Coast
-          </button>
-          <button type="button" id="mat-slime" role="radio" aria-checked="false" data-mat="slime">
-            <span class="sw sw-slime"></span>Slime
-          </button>
-          <button type="button" id="mat-fur" role="radio" aria-checked="false" data-mat="fur">
-            <span class="sw sw-fur"></span>Fur
-          </button>
-        </nav>
+        <div class="material-picker">
+          <nav class="picker" id="material-picker" role="radiogroup" aria-label="Material">
+            <button type="button" id="mat-water" role="radio" aria-checked="true" data-mat="water">
+              <span class="sw sw-water"></span>Water
+            </button>
+            <button type="button" id="mat-ocean" role="radio" aria-checked="false" data-mat="ocean">
+              <span class="sw sw-ocean"></span>Ocean
+            </button>
+            <button type="button" id="mat-coast" role="radio" aria-checked="false" data-mat="coast">
+              <span class="sw sw-coast"></span>Coast
+            </button>
+            <button type="button" id="mat-slime" role="radio" aria-checked="false" data-mat="slime">
+              <span class="sw sw-slime"></span>Slime
+            </button>
+            <button type="button" id="mat-fur" role="radio" aria-checked="false" data-mat="fur">
+              <span class="sw sw-fur"></span>Fur
+            </button>
+            <button type="button" id="mat-fluff" role="radio" aria-checked="false" data-mat="fluff">
+              <span class="sw sw-fluff"></span>Fluff
+            </button>
+          </nav>
+          <div class="picker-scroll" id="picker-scroll" aria-hidden="true" hidden>
+            <span class="picker-scroll-thumb" id="picker-scroll-thumb"></span>
+          </div>
+        </div>
         <div class="row">
           <nav class="shapes" role="radiogroup" aria-label="Shape">
             <button type="button" id="shape-orb" role="radio" aria-checked="true" data-shape="orb">
