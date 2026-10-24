@@ -31,9 +31,9 @@ import { surfWave, type SurfInputs } from './surf';
 type Float = Node<'float'>;
 type Vec3 = Node<'vec3'>;
 
-// Close-up detail for the islands (materials/oceanShores.ts), which their vertices are far too coarse to carry:
-// each surface gets its own procedural texture and bump, weighted by the per-vertex `terrain` attribute (rock,
-// sand, grass, and how wet the sand is at the waterline).
+// Close-up detail for the coast's sand (materials/oceanShores.ts), which its vertices are far too coarse to carry:
+// grain, wind ripples and a bump, darker and glossy where the per-vertex `terrain` attribute says the sand is wet,
+// with the swash running over it.
 
 /** How far the bump raises and lowers the surface, orb radii. */
 const BUMP = 0.0012;
@@ -154,40 +154,22 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs, sea: Float) {
 
 /** The shores' surface: colour, roughness, and a bumped view-space normal, with the swash on them. */
 export function shoreSurface(surf: SurfInputs, sea: Float): { color: Vec3; roughness: Float; normal: Vec3 } {
-  const terrain = attribute('terrain', 'vec4');
-  const [rock, sand, grass, wet] = [terrain.x, terrain.y, terrain.z, terrain.w];
+  const wet = attribute('terrain', 'float');
   const p = normalize(positionGeometry);
-
-  // rock: broad blotches, layered streaks and dark crevices
-  const broad = octave(p, 40).mul(0.5).add(octave(p, 130).mul(0.3)).add(octave(p, 380).mul(0.2));
-  const strata = bands(p, vec3(0.2, 0.95, 0.24), 900, octave(p, 30).mul(5));
-  const crevice = smoothstep(-0.55, -0.15, broad);
-  const rockTone = broad.mul(0.22).add(0.86).add(strata.mul(0.08)).mul(crevice.mul(0.45).add(0.55));
-  const rockHeight = broad.add(strata.mul(0.25));
 
   // sand: fine grain, and faint ripples the wind combed across it
   const grain = octave(p, 900);
   const ripple = bands(p, vec3(0.8, 0.1, -0.59), 1400, octave(p, 60).mul(4));
-  const sandTone = grain.mul(0.06).add(0.97).sub(ripple.mul(0.04));
-  const sandHeight = grain.mul(0.25).add(ripple.mul(0.35));
-
-  // grass: patchy, with tufts
-  const patches = octave(p, 35);
-  const tufts = octave(p, 260).mul(0.6).add(octave(p, 700).mul(0.4));
-  const grassTone = patches.mul(0.18).add(0.9).add(tufts.mul(0.12));
-
-  const total = clamp(rock.add(sand).add(grass), 0.001, 3);
-  const tone = rockTone.mul(rock).add(sandTone.mul(sand)).add(grassTone.mul(grass)).div(total);
-  const height = rockHeight
-    .mul(rock)
-    .add(sandHeight.mul(sand).mul(float(1).sub(wet.mul(0.7))))
-    .add(tufts.mul(grass).mul(0.5))
-    .div(total)
+  const tone = grain.mul(0.06).add(0.97).sub(ripple.mul(0.04));
+  const height = grain
+    .mul(0.25)
+    .add(ripple.mul(0.35))
+    .mul(float(1).sub(wet.mul(0.7)))
     .mul(BUMP);
   // height above the still sea, as the land mesh was built (it follows the cube morph like the water)
   const above = length(positionGeometry).sub(baseR(p)).sub(SHORE_WATERLINE);
   const sw = swashAt(p, above, surf, sea);
-  const soaked = max(wet, sw.soaked.mul(sand));
+  const soaked = max(wet, sw.soaked);
   // wet sand is darker and glossy; under the swash, clear water over it, and white foam on top
   const ground = attribute('color', 'vec3')
     .mul(tone)
@@ -201,11 +183,7 @@ export function shoreSurface(surf: SurfInputs, sea: Float): { color: Vec3; rough
   const covered = mix(ground, water, sw.cover);
   return {
     color: mix(covered, vec3(0.92, 0.96, 0.97), sw.foam),
-    roughness: mix(
-      mix(mix(float(0.95), float(0.85), sand), float(0.35), soaked),
-      float(0.08),
-      sw.cover.mul(float(1).sub(sw.foam)),
-    ),
+    roughness: mix(mix(float(0.88), float(0.35), soaked), float(0.08), sw.cover.mul(float(1).sub(sw.foam))),
     normal: bumped(height.mul(float(1).sub(sw.cover.mul(0.8)))),
   };
 }

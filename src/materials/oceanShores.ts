@@ -1,23 +1,16 @@
 import { BufferGeometry, Color, Float32BufferAttribute, Mesh, Vector3 } from 'three';
 import { MeshStandardNodeMaterial } from 'three/webgpu';
-import {
-  beachWidth,
-  SHORE_SITES,
-  shoreElevation,
-  shoreNoise,
-  shoreRadius,
-  shoreSiteDistance,
-} from '../core/oceanShores';
+import { SHORE_SITES, shoreElevation, shoreNoise, shoreRadius, shoreSiteDistance } from '../core/oceanShores';
 import { shoreSurface } from '../nodes/shore';
 import type { SurfInputs } from '../nodes/surf';
 import { seaHeightAt } from '../nodes/oceanSurface';
 import { attribute, Fn, normalize, positionGeometry, positionLocal, varyingProperty } from 'three/tsl';
 import type { StorageBufferNode } from 'three/webgpu';
 
-const SAND = new Color('#c9b48a');
+const SAND = new Color('#c4ab80');
 const WET_SAND = new Color('#8f7d5b');
-const STONE = new Color('#535a58');
-const GRASS = new Color('#3d5e40');
+const WARM_SAND = new Color('#c99d6a');
+const PALE_SAND = new Color('#ddd0b0');
 const SHELF = new Color('#c9bf96');
 const DEEP = new Color('#2c4a52');
 const color = new Color();
@@ -119,46 +112,32 @@ export class OceanShores {
     this.directions = new Float32Array(directions);
     this.elevations = new Float32Array(elevations);
     const colors = new Float32Array(positions.length);
-    // how much of each surface a vertex is (rock, sand, grass) and how wet its sand is, for the close-up
-    // detail in nodes/shore.ts
-    const terrain = new Float32Array(elevations.length * 4);
-    const normals = geometry.getAttribute('normal');
+    // how wet each vertex's sand is, for the close-up detail in nodes/shore.ts
+    const terrain = new Float32Array(elevations.length);
     for (let i = 0; i < elevations.length; i++) {
       dir.fromArray(this.directions, i * 3);
-      const site = SHORE_SITES[siteOf[i]!]!;
-      const slope = 1 - (normals.getX(i) * dir.x + normals.getY(i) * dir.y + normals.getZ(i) * dir.z);
       const height = elevations[i]!;
-      const ashore = -shoreSiteDistance(site, dir);
       const grain = shoreNoise(dir.x * 173, dir.y * 173, dir.z * 173);
-      // The beach and low flat ground are sand. Inland it's sandy too, with patches of grass where the ground
-      // has risen a little, giving way to bare rock on the highest ground and steep slopes.
-      const beach = Math.max(
-        1 - smooth(beachWidth(site, dir) * 0.75, beachWidth(site, dir) * 1.15 + 0.006, ashore),
-        (1 - smooth(0.02, 0.035, height)) * (1 - smooth(0.12, 0.45, slope)),
-      );
-      const above = (height - 0.016) / site.height;
-      const patch =
-        shoreNoise(dir.x * 9 + site.seed, dir.y * 9, dir.z * 9) +
-        0.35 * shoreNoise(dir.x * 23, dir.y * 23 + site.seed, dir.z * 23);
-      const grassy = smooth(-0.3, 0.45, patch) * smooth(0.05, 0.3, above) * (1 - smooth(0.08, 0.3, slope));
-      const bare = smooth(0.55, 0.85, above) + smooth(0.15, 0.4, slope);
-      const grass = (1 - beach) * grassy * (1 - smooth(0.75, 0.95, above));
-      const sand = beach + (1 - beach) * (1 - grassy) * Math.max(0, 1 - bare);
-      const wet = sand * (1 - smooth(0.0045, 0.009, height));
-      terrain.set([Math.max(0, 1 - sand - grass), sand, grass, wet], i * 4);
+      const wet = 1 - smooth(0.0045, 0.009, height);
+      terrain[i] = wet;
+      // broad drifts of warmer and paler sand, and dune troughs a little darker than their crests
+      const drift = shoreNoise(dir.x * 6, dir.y * 6 + 3.1, dir.z * 6);
+      const trough =
+        1 - Math.abs(shoreNoise(dir.x * 26 + SHORE_SITES[siteOf[i]!]!.seed, dir.y * 26, dir.z * 26));
       color
-        .copy(STONE)
-        .lerp(GRASS, grass / Math.max(1e-3, 1 - sand))
-        .lerp(SAND, sand)
+        .copy(SAND)
+        .lerp(WARM_SAND, Math.max(0, drift) * 0.7)
+        .lerp(PALE_SAND, Math.max(0, -drift) * 0.6)
+        .multiplyScalar(0.86 + 0.14 * trough)
         .lerp(WET_SAND, wet)
         // below the waterline the shelf is pale sand, darkening with depth, which is what makes clear shallow
         // water turquoise
         .lerp(SHELF, 1 - smooth(0.001, 0.004, height))
         .lerp(DEEP, 1 - smooth(-0.06, -0.01, height))
-        .multiplyScalar(0.9 + grain * 0.08);
+        .multiplyScalar(0.92 + grain * 0.06);
       colors.set([color.r, color.g, color.b], i * 3);
     }
-    geometry.setAttribute('terrain', new Float32BufferAttribute(terrain, 4));
+    geometry.setAttribute('terrain', new Float32BufferAttribute(terrain, 1));
     // for the swash: the way out to sea and how far the shoreline is (as one offset), and the site
     const swash = new Float32Array(elevations.length * 4);
     const t1 = new Vector3();

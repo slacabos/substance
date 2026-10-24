@@ -28,12 +28,11 @@ const makeSite = (
 };
 
 /**
- * The land: a continent covering about half the orb, its coast in view from the start, with deep bays and
- * headlands, wide beaches and dunes, low grassy hills and a few rocky tops; and two small sandy islands out in
- * the open half.
+ * The land, all sand: a continent covering about half the orb, its coast in view from the start, with deep bays
+ * and headlands, wide beaches and dunes; and two small sandy islands out in the open half.
  */
 export const SHORE_SITES: readonly ShoreSite[] = [
-  makeSite(0.9, 0.35, -0.25, 1.42, 0.07, 0.6, 0.16),
+  makeSite(0.9, 0.35, -0.25, 1.42, 0.04, 0.6, 0.16),
   makeSite(-0.35, -0.3, 0.88, 0.1, 0.02, 3.4, 0.05),
   makeSite(-0.7, 0.55, 0.3, 0.07, 0.016, 5.1, 0.05),
 ];
@@ -120,17 +119,13 @@ export function shoreElevation(site: ShoreSite, dir: Vector3): number {
   const sand = WATERLINE + BEACH_RISE * smooth(-distance / beach);
   const angle = Math.acos(Math.min(1, Math.max(-1, site.center.dot(dir))));
   const inland = smooth((site.radius * 1.04 - angle) / (site.radius * 0.85));
-  // past the beach the land rises: steeply on a small island, over a long slope inland on the continent
+  // past the beach the land rises: quickly on a small island, over a long slope inland on the continent
   const bank = smooth((-distance - beach * 0.8) / Math.max(0.035, site.radius * 0.1));
-  const u = site.east.dot(dir) / site.radius;
-  const v = site.north.dot(dir) / site.radius;
-  const ridge = 1 - Math.abs(shoreNoise(u * 3.2 + site.seed, v * 3.2, site.seed * 3));
-  const detail = shoreNoise(u * 7, v * 7 + site.seed, site.seed * 2);
-  const relief = 0.36 + ridge * 0.56 + detail * 0.18;
-  const grain = shoreNoise(dir.x * 83, dir.y * 83, dir.z * 83);
-  // dunes: low sandy ridges behind the beach
-  const dunes = (1 - Math.abs(shoreNoise(dir.x * 31 + site.seed, dir.y * 31, dir.z * 31))) * 0.006 * bank;
-  return sand + dunes + site.height * bank * (0.3 + 0.7 * inland * relief) + grain * 0.006 * inland * bank;
+  // all sand: broad rolling hills, crossed by dune ridges with soft crests
+  const hills = 0.55 + 0.45 * shoreNoise(dir.x * 4 + site.seed, dir.y * 4, dir.z * 4);
+  const ridge = 1 - Math.abs(shoreNoise(dir.x * 26 + site.seed, dir.y * 26, dir.z * 26 - site.seed));
+  const dunes = ridge * ridge * (0.006 + 0.008 * inland);
+  return sand + bank * (dunes + site.height * (0.25 + 0.75 * inland * hills));
 }
 
 /** Ground height used by spray collision; distant seabed sits well below the surface. */
