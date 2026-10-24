@@ -79,6 +79,31 @@ export interface SurfaceBuffers {
 }
 
 /**
+ * The sea's own height at unit direction d (the hand's waves, without the scripted surf: OceanSim's slope.w),
+ * blended over the nearest vertex and its neighbours like sampleSurface. Four storage buffers.
+ */
+export function seaHeightAt(
+  d: Vec3,
+  buffers: Pick<SurfaceBuffers, 'lookup' | 'vertex' | 'neighbor'> & { slope: StorageBufferNode<'vec4'> },
+): Node<'float'> {
+  const centre = buffers.lookup.element(cubeCell(d, LOOKUP_SIZE));
+  const height = float(0).toVar();
+  const weight = float(0).toVar();
+  const add = (i: UInt) => {
+    const offset = buffers.vertex.element(i).xyz.sub(d);
+    const w = float(1).div(dot(offset, offset).add(0.0002));
+    height.addAssign(buffers.slope.element(i).w.mul(w));
+    weight.addAssign(w);
+  };
+  add(centre);
+  Loop({ start: 0, end: 6, type: 'uint' }, ({ i: k }) => {
+    const j = buffers.neighbor.element(centre.mul(6).add(k));
+    If(j.notEqual(centre), () => add(j));
+  });
+  return height.div(weight);
+}
+
+/**
  * The surface at unit direction d: the nearest vertex from the lookup, blended with its six neighbours by
  * inverse squared distance. Returns height (with surf), foam, the current, and distance to the shore.
  */

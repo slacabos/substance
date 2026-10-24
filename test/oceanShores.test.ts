@@ -1,4 +1,6 @@
-import { Vector3 } from 'three';
+import { IcosahedronGeometry, Vector3 } from 'three';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import type { WebGPURenderer } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 import {
   sampleShoreSurf,
@@ -15,6 +17,13 @@ import {
 import { OCEAN_DEFAULTS } from '../src/core/oceanTuning';
 import { uniform } from 'three/tsl';
 import { OceanShores } from '../src/materials/oceanShores';
+import { OceanSim } from '../src/materials/oceanSim';
+
+const sphere = (detail: number) => {
+  const source = new IcosahedronGeometry(1, detail);
+  source.deleteAttribute('uv');
+  return mergeVertices(source);
+};
 
 describe('coastal ocean', () => {
   it('covers about half the orb with land above the largest swells, its sand shelving into the sea', () => {
@@ -52,7 +61,9 @@ describe('coastal ocean', () => {
       energy: uniform(1),
       ...shoreSwell(OCEAN_DEFAULTS.peakWavelength),
     };
-    const shores = new OceanShores(true, surf);
+    // the sim's buffers the land reads the sea from; no GPU in tests
+    const sim = new OceanSim({ compute: () => {} } as unknown as WebGPURenderer, sphere(6));
+    const shores = new OceanShores(true, surf, sim.renderBuffers());
     const position = shores.mesh.geometry.getAttribute('position');
     const before = position.getX(0);
     shores.updateMorph(1);

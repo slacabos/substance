@@ -109,6 +109,8 @@ export class OceanFluid {
   private readonly frameDt = uniform(0);
   /** Frame number (wrapping), so each frame draws new random numbers. */
   private readonly frame = uniform(0);
+  /** 0 in a breeze to 1 in a gale: how readily the wind tears spray off whitecaps. */
+  private readonly storm = uniform(0);
   private readonly splashes = Array.from({ length: SPLASHES }, () => new Vector4(0, 0, 1, 0));
   private readonly splashMotion = Array.from({ length: SPLASHES }, () => new Vector4());
   private splashCount = 0;
@@ -212,7 +214,11 @@ export class OceanFluid {
       const here = buffers.surface.element(i);
       const vertex = buffers.vertex.element(i);
       const aerated = here.y.greaterThanEqual(0.18).and(here.z.greaterThanEqual(0.1));
-      const open = select(aerated, here.y.mul(0.82).add(here.z.mul(0.3)), float(0));
+      // In a storm the wind tears spray off whitecaps too, churning or not; in a breeze they stay quiet, or a
+      // calm sea would spout from every patch of old foam.
+      // (whitecaps hold up to 0.45 foam, WHITECAP in OceanSim; at full storm their crests score like breaking water)
+      const whitecap = smoothstep(0.12, 0.4, here.y).mul(this.storm);
+      const open = max(select(aerated, here.y.mul(0.82).add(here.z.mul(0.3)), float(0)), whitecap);
       const score = max(here.w, open);
       // Surf throws its spray as a wave hits: while the breaking rises (the flow's w), not for as long as it
       // stays broken, which would pour from the same spot like a tap. Far more than an open-sea whitecap.
@@ -540,6 +546,11 @@ export class OceanFluid {
     this.water = new Mesh(quad(), impostor);
     this.water.frustumCulled = false;
     this.water.layers.set(FLUID_LAYER);
+  }
+
+  /** How stormy it is, from the Beaufort level: whitecaps throw spray from 4 up, fully by 6. */
+  setBeaufort(level: number): void {
+    this.storm.value = Math.min(1, Math.max(0, (level - 4) / 2));
   }
 
   /** A drag throwing water at dir, the way the hand is moving. */

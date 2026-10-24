@@ -20,6 +20,7 @@ import {
   max,
   min,
   mix,
+  pow,
   Return,
   round,
   select,
@@ -108,6 +109,13 @@ const WHITECAP = {
   to: 0.7,
   /** The foam a vertex keeps while its water is breaking. */
   foam: 0.45,
+  /**
+   * The patch of sea, radians across, whose folding a vertex's whitecap averages, whatever the mesh: from/to were
+   * tuned at this spacing, and a finer mesh reading sharper folding would whiten half a stormy sea.
+   */
+  spacing: 0.0246,
+  /** Power of the sea's wind gain (seaGain) the folding memory is divided by. */
+  windDamping: 0.5,
 } as const;
 
 /** The FFT waves, for whitecap foam; the ocean material's uniforms carry their tuning and weather. */
@@ -550,10 +558,14 @@ export class OceanSim {
             waves.fields,
             waves.uniforms,
             oceanWeatherAt(q, waves.uniforms),
-            field.spacing,
+            WHITECAP.spacing,
           );
           const offshore = coastal ? smoothstep(0, 0.1, g4.y) : float(1);
-          const whitecap = smoothstep(WHITECAP.from, WHITECAP.to, memory).mul(offshore);
+          // Folding grows faster than the slopes as the wind rises, and every fold left foam: a gale whitened half
+          // the sea. Taken back by the wind's gain, whitecaps cover about what Monahan measured (a few percent in a
+          // strong breeze).
+          const calibrated = memory.div(pow(max(waves.fields.windGain, 1), WHITECAP.windDamping));
+          const whitecap = smoothstep(WHITECAP.from, WHITECAP.to, calibrated).mul(offshore);
           foam.assign(max(foam, whitecap.mul(WHITECAP.foam)));
         }
         if (coastal) {
@@ -615,7 +627,8 @@ export class OceanSim {
             );
           });
         });
-        this.slope.element(i).assign(vec4(gradient, 0));
+        // w: the sea's own height here (the hand's waves, without the scripted surf), for the swash
+        this.slope.element(i).assign(vec4(gradient, heights[final]!.element(i).x));
 
         void final;
       })().compute(n);
@@ -690,7 +703,8 @@ export class OceanSim {
   }
 
   /**
-   * Read-only views for shaders: surface (height with surf, foam, turbulence, surf breaking), slope, foam drift,
+   * Read-only views for shaders: surface (height with surf, foam, turbulence, surf breaking), slope (and the sea's
+   * own height), foam drift,
    * the current, ground (depth, 0 on land; shore distance; exposure; foam grain), and what's needed to look up a
    * direction.
    */

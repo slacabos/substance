@@ -11,6 +11,7 @@ import {
   fwidth,
   length,
   max,
+  min,
   mix,
   normalize,
   normalView,
@@ -71,6 +72,9 @@ function bumped(h: Float): Vec3 {
 
 /** Height the swash runs up a shore facing the swell, per unit of the sea's state, orb radii. */
 const SWASH_RUNUP = 0.009;
+/** How far up the beach the hand's waves run, per unit of the sea's height at the shoreline, and at most. */
+const TAP_RUNUP = 1.5;
+const MAX_RUNUP = 0.03;
 /** Share of a wave's cycle the swash spends running up; the rest it drains back. */
 const UPRUSH = 0.3;
 
@@ -80,7 +84,7 @@ const UPRUSH = 0.3;
  * Returns how much of a point the sheet covers, its depth there, the foam on it (a bubbly line at its front,
  * lace left behind as it drains), and how wet the run-up has left the sand.
  */
-function swashAt(p: Vec3, height: Float, surf: SurfInputs) {
+function swashAt(p: Vec3, height: Float, surf: SurfInputs, sea: Float) {
   const swash = attribute('swash', 'vec4');
   const foot = normalize(p.add(swash.xyz));
   const seaward = normalize(swash.xyz.add(p.cross(vec3(0, 0, 1)).mul(1e-5)));
@@ -103,7 +107,11 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs) {
     .add(snoise(foot.mul(130)).mul(0.12))
     .add(1);
   const runup = float(SWASH_RUNUP).mul(surf.energy).mul(wave.set).mul(wave.exposure).mul(ragged);
-  const level = runup.mul(reach);
+  // a wave the hand sent runs up the beach too, as high as the sea at the shoreline lifts it (it drains as
+  // that sea falls back); the swell's swash otherwise
+  // a wave the hand sent: the same ragged front, sheeting further up some stretches than others
+  const handLevel = min(max(sea, 0).mul(TAP_RUNUP), MAX_RUNUP).mul(ragged);
+  const level = max(runup.mul(reach), handLevel);
   const depth = max(level.sub(height), 0);
   const cover = float(1)
     .sub(smoothstep(level.sub(0.0004), level, height))
@@ -117,8 +125,10 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs) {
       .mul(0.6)
       .add(snoise(drift.mul(1100)).mul(0.4)),
   );
+  // the foam line is wider for a bigger wave, so a hand's surge brings a broad white front
+  const band = max(level.mul(0.15), 0.0011);
   const front = float(1)
-    .sub(smoothstep(0, 0.0011, abs(height.sub(level))))
+    .sub(smoothstep(0, band, abs(height.sub(level))))
     .mul(smoothstep(0.0002, 0.0008, level));
   // as it drains it leaves lace: patches of foam over the thin water behind the front
   const lace = smoothstep(
@@ -143,7 +153,7 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs) {
 }
 
 /** The shores' surface: colour, roughness, and a bumped view-space normal, with the swash on them. */
-export function shoreSurface(surf: SurfInputs): { color: Vec3; roughness: Float; normal: Vec3 } {
+export function shoreSurface(surf: SurfInputs, sea: Float): { color: Vec3; roughness: Float; normal: Vec3 } {
   const terrain = attribute('terrain', 'vec4');
   const [rock, sand, grass, wet] = [terrain.x, terrain.y, terrain.z, terrain.w];
   const p = normalize(positionGeometry);
@@ -176,7 +186,7 @@ export function shoreSurface(surf: SurfInputs): { color: Vec3; roughness: Float;
     .mul(BUMP);
   // height above the still sea, as the land mesh was built (it follows the cube morph like the water)
   const above = length(positionGeometry).sub(baseR(p)).sub(SHORE_WATERLINE);
-  const sw = swashAt(p, above, surf);
+  const sw = swashAt(p, above, surf, sea);
   const soaked = max(wet, sw.soaked.mul(sand));
   // wet sand is darker and glossy; under the swash, clear water over it, and white foam on top
   const ground = attribute('color', 'vec3')

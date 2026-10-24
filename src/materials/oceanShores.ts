@@ -10,6 +10,9 @@ import {
 } from '../core/oceanShores';
 import { shoreSurface } from '../nodes/shore';
 import type { SurfInputs } from '../nodes/surf';
+import { seaHeightAt } from '../nodes/oceanSurface';
+import { attribute, Fn, normalize, positionGeometry, positionLocal, varyingProperty } from 'three/tsl';
+import type { StorageBufferNode } from 'three/webgpu';
 
 const SAND = new Color('#c9b48a');
 const WET_SAND = new Color('#8f7d5b');
@@ -18,6 +21,8 @@ const GRASS = new Color('#3d5e40');
 const SHELF = new Color('#c9bf96');
 const DEEP = new Color('#2c4a52');
 const color = new Color();
+/** The sim's buffers the land reads the sea from (OceanSim.renderBuffers). */
+type SeaBuffers = Parameters<typeof seaHeightAt>[1] & { slope: StorageBufferNode<'vec4'> };
 const UP = new Vector3(0, 1, 0);
 const SIDE = new Vector3(1, 0, 0);
 
@@ -33,7 +38,7 @@ export class OceanShores {
   private readonly elevations: Float32Array;
   private morph = Number.NaN;
 
-  constructor(coarse: boolean, surf: SurfInputs) {
+  constructor(coarse: boolean, surf: SurfInputs, sea: SeaBuffers) {
     const skirtRings = 8;
     const detail = coarse ? 0.5 : 1;
     const positions: number[] = [];
@@ -175,7 +180,14 @@ export class OceanShores {
     geometry.setAttribute('swash', new Float32BufferAttribute(swash, 4));
     geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
     const material = new MeshStandardNodeMaterial();
-    const surface = shoreSurface(surf);
+    // the sea's own height at each vertex's foot on the shoreline, so the hand's waves run up the beach
+    const seaAtFoot = varyingProperty('float', 'vSeaAtFoot');
+    material.positionNode = Fn(() => {
+      const swashFoot = attribute('swash', 'vec4');
+      seaAtFoot.assign(seaHeightAt(normalize(normalize(positionGeometry).add(swashFoot.xyz)), sea));
+      return positionLocal;
+    })();
+    const surface = shoreSurface(surf, seaAtFoot);
     material.colorNode = surface.color;
     material.roughnessNode = surface.roughness;
     material.normalNode = surface.normal;

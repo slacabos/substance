@@ -65,7 +65,7 @@ export class Ocean implements Substance {
     const deformUniforms = createDeformUniforms();
     this.sim = new OceanSim(renderer, geometry, coastal, tuning, { fields: waves, uniforms: deformUniforms });
     const simBuffers = this.sim.renderBuffers();
-    this.shores = coastal ? new OceanShores(coarse, this.sim.surf) : null;
+    this.shores = coastal ? new OceanShores(coarse, this.sim.surf, simBuffers) : null;
     const { material, uniforms } = createDeformMaterial(
       {
         color: 0xffffff,
@@ -211,6 +211,7 @@ export class Ocean implements Substance {
       );
     });
     this.beaufort = beaufortFor(wind.speed, this.weatherField.peak);
+    this.fluid.setBeaufort(this.beaufort);
     for (let i = 0; i < this.weatherField.patches.length; i++) {
       const patch = this.weatherField.patches[i]!;
       this.uniforms.weather[i]!.set(patch.center.x, patch.center.y, patch.center.z, patch.strength);
