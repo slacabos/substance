@@ -9,10 +9,10 @@ import { baseR } from '../nodes/shape';
 import { morphUniform } from '../scene/shape';
 import { createDeformMaterial, createDeformUniforms, DeformMode, type DeformUniforms } from './deform';
 import type { OceanFFT } from './oceanFFT';
+import { OceanFluid } from './oceanFluid';
 import { OceanFoamFlecks } from './oceanFoamFlecks';
 import { OceanSim, oceanReleaseImpulse, type OceanForce } from './oceanSim';
 import { OceanShores } from './oceanShores';
-import { OceanSpray } from './oceanSpray';
 import type { SettingLook } from '../scene/settings';
 import type { FrameContext, MaterialId, Readout, Substance } from './types';
 
@@ -28,7 +28,7 @@ export class Ocean implements Substance {
   private readonly sim: OceanSim;
   private readonly waves: OceanFFT;
   private readonly shores: OceanShores | null;
-  private readonly spray: OceanSpray;
+  private readonly fluid: OceanFluid;
   private readonly foamFlecks: OceanFoamFlecks;
   private readonly weatherField = new OceanWeather();
   private readonly gusts: GustField;
@@ -47,7 +47,6 @@ export class Ocean implements Substance {
   private beaufort = 2;
   private time = 0;
   private lastSprayTime = -Infinity;
-  private lastWhitewaterTime = -Infinity;
 
   constructor(
     geometry: BufferGeometry,
@@ -66,7 +65,6 @@ export class Ocean implements Substance {
     const deformUniforms = createDeformUniforms();
     this.sim = new OceanSim(renderer, geometry, coastal, tuning, { fields: waves, uniforms: deformUniforms });
     const simBuffers = this.sim.renderBuffers();
-    this.spray = new OceanSpray(coarse);
     const { material, uniforms } = createDeformMaterial(
       {
         color: 0xffffff,
@@ -92,6 +90,14 @@ export class Ocean implements Substance {
       spacing: this.sim.spacing,
       count: this.sim.count,
     });
+    this.fluid = new OceanFluid(renderer, coarse, {
+      buffers: simBuffers,
+      landings: this.sim.landings,
+      field: this.sim.field,
+      waves,
+      uniforms,
+      coastal,
+    });
     const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
     const interiorMaterial = new MeshBasicNodeMaterial({ color: '#031525' });
@@ -107,8 +113,8 @@ export class Ocean implements Substance {
       mesh,
       interior,
       this.foamFlecks.mesh,
-      this.spray.mesh,
-      this.spray.mistMesh,
+      this.fluid.mesh,
+      this.fluid.mistMesh,
       ...(this.shores ? [this.shores.mesh] : []),
     ];
   }
@@ -145,7 +151,7 @@ export class Ocean implements Substance {
       this.addForce(this.lastDrag, -strength, motion);
       this.addForce(dir, strength * 1.2, motion);
       if (moved > 0.04 && this.time - this.lastSprayTime > 0.12) {
-        this.spray.splash(dir, Math.min(0.6, strength * 1.4), 5);
+        this.fluid.splash(dir, Math.min(0.6, strength * 1.4), motion);
         this.lastSprayTime = this.time;
       }
       this.lastDrag.copy(dir);
@@ -166,7 +172,7 @@ export class Ocean implements Substance {
     this.heldSeconds = 0;
     this.sim.reset();
     this.rhythm.reset();
-    this.spray.clear();
+    this.fluid.clear();
     this.foamFlecks.clear();
     this.weatherField.clear();
   }
@@ -183,19 +189,7 @@ export class Ocean implements Substance {
       }
       this.weatherField.update(ctx.dt);
       this.sim.update(ctx.dt, this.pendingForces, ctx.time);
-      if (ctx.time - this.lastWhitewaterTime > 0.075) {
-        for (const site of this.sim.whitewaterSites(8)) {
-          this.spray.emitCrest(
-            site.dir,
-            site.flow,
-            site.strength,
-            site.coastal ? 3 : 2,
-            site.coastal ? site.height : undefined,
-          );
-        }
-        this.lastWhitewaterTime = ctx.time;
-      }
-      this.spray.update(ctx.dt, this.sim);
+      this.fluid.update(ctx.dt);
       this.foamFlecks.update(ctx.dt);
     }
     this.pendingForces.length = 0;

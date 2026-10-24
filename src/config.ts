@@ -29,6 +29,14 @@ export const OCEAN_FFT = {
         ],
 } as const;
 
+/** The splash fluid (materials/oceanFluid.ts). */
+export const OCEAN_FLUID = {
+  /** Splash particles alive at once, droplets and mist together. */
+  particles: (coarse: boolean) => (coarse ? 8192 : 32768),
+  /** Grid cell size, orb radii; particles start about half a cell apart. */
+  cell: (coarse: boolean) => (coarse ? 0.045 : 0.03),
+} as const;
+
 /**
  * Desktop renders above screen resolution while the canvas stays under this many pixels, which smooths the fur's
  * fine strands. Phones already render at 2-3x and are left alone.

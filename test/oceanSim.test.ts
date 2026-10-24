@@ -12,7 +12,6 @@ function stubRenderer() {
   const calls: unknown[][] = [];
   const renderer = {
     compute: (nodes: unknown) => calls.push(Array.isArray(nodes) ? nodes : [nodes]),
-    getArrayBufferAsync: async () => new Float32Array(6 * 64 * 8).buffer,
   } as unknown as WebGPURenderer;
   return { renderer, calls };
 }
@@ -28,8 +27,8 @@ describe('ocean surface simulation', () => {
     const { renderer, calls } = stubRenderer();
     const sim = new OceanSim(renderer, sphere(8));
     sim.update(1 / 60, []);
-    // one step (momentum, height), then the volume correction (clear, sum, correct), surface, slope and the
-    // whitewater gather
+    // one step (momentum, height), then splash landings, the volume correction (clear, sum, correct), surface
+    // and slope
     expect(calls.at(-1)).toHaveLength(2 + 6);
     sim.update(1 / 20, [{ dir: new Vector3(0, 0, 1), strength: -0.55 }]);
     expect(calls.at(-1)).toHaveLength(3 * 2 + 6);
@@ -39,18 +38,16 @@ describe('ocean surface simulation', () => {
     expect(calls).toHaveLength(3);
   });
 
-  it('takes presses, deposits and resets without readback, and has no spray sites before any', () => {
+  it('takes presses and resets without reading anything back', () => {
     const { renderer, calls } = stubRenderer();
     const sim = new OceanSim(renderer, sphere(8));
-    const dir = new Vector3(0, 1, 0);
-    sim.setPressure(dir, 0.4);
-    for (let i = 0; i < 20; i++) sim.depositFoam(dir, 0.1);
+    sim.setPressure(new Vector3(0, 1, 0), 0.4);
     sim.update(1 / 60, []);
     sim.setPressure(null, 0);
     sim.reset();
     expect(calls.length).toBe(2);
-    expect(sim.whitewaterSites(8)).toHaveLength(0);
-    expect(sim.groundHeight(dir)).toBe(0);
+    // two landing slots per vertex, for the splash fluid
+    expect(sim.landings.value.count).toBe(sim.count * 2);
   });
 
   it('loads harder the longer a press is held, and releases a bigger wave', () => {

@@ -4,7 +4,6 @@ import {
   abs,
   atomicAdd,
   atomicLoad,
-  atomicMax,
   atomicStore,
   clamp,
   cross,
@@ -36,14 +35,14 @@ import {
   vec4,
 } from 'three/tsl';
 import { createOceanField, type OceanField } from '../core/oceanField';
-import { shoreGroundHeight } from '../core/oceanShores';
+import { FLUID } from '../core/oceanFluid';
 import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 import { OCEAN_DEPTH, OCEAN_WIND_ANGLE } from '../core/oceanFFT';
 import { WIND } from '../core/oceanWind';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
-import { cubeCell, driftBasis, windAt } from '../nodes/oceanSurface';
+import { driftBasis, windAt } from '../nodes/oceanSurface';
 import { oceanWaveFoam, type OceanWaveFields } from '../nodes/oceanWaves';
 
 /** A push on the water: a tap or release (no motion), or a drag step (with motion along the surface). */
@@ -51,20 +50,6 @@ export interface OceanForce {
   dir: Vector3;
   strength: number;
   motion?: Vector3;
-}
-
-export interface OceanWhitewaterSite {
-  dir: Vector3;
-  flow: Vector3;
-  strength: number;
-  height: number;
-  coastal: boolean;
-}
-
-/** Ground and foam deposits, for falling spray. */
-export interface SprayGround {
-  groundHeight(dir: Vector3): number;
-  depositFoam(dir: Vector3, amount: number, radius?: number): void;
 }
 
 /** A finger gradually pushes water down; release gives the loaded surface a small upward kick. */
@@ -96,11 +81,6 @@ const hatNode = (x: Float): Float => float(1).sub(x).mul(exp(x.negate()));
 const STEP = 1 / 60;
 const MAX_STEPS = 4;
 const EVENTS = 4;
-const DEPOSITS = 16;
-/** Whitewater candidates: the best vertex per cell of an 8 x 8 cube grid, read back to the CPU for spray. */
-const SITE_SIZE = 8;
-const SITE_CELLS = 6 * SITE_SIZE * SITE_SIZE;
-const SITE_INTERVAL = 0.075;
 /** Fixed-point scale for summing the sea's mean height: 1e-10 resolution, room for means up to 0.2. */
 const VOLUME_FIXED = 1e10;
 /**
@@ -136,16 +116,15 @@ type Vec3 = Node<'vec3'>;
 /**
  * The interactive sea on the GPU: the step in core/shallowWater.ts (iWave with the finite-depth operator,
  * blended by depth into the nonlinear shallow-water equations), plus foam and turbulence that ride the
- * current, scripted surf on coasts, and whitewater sites for spray. The mesh and coast are fixed at creation;
- * rendering reads the results straight from storage (renderBuffers).
+ * current, and scripted surf on coasts. Splashes (materials/oceanFluid.ts) take water and give it back through
+ * `landings`. The mesh and coast are fixed at creation; rendering reads the results from storage (renderBuffers).
  */
-export class OceanSim implements SprayGround {
+export class OceanSim {
   readonly count: number;
   readonly spacing: number;
   readonly field: OceanField;
 
   private readonly renderer: WebGPURenderer;
-  private readonly coastal: boolean;
   private readonly uniforms = {
     dt: uniform(STEP),
     frameDt: uniform(STEP),
@@ -167,10 +146,12 @@ export class OceanSim implements SprayGround {
   private driftClock = 0;
   private readonly events = Array.from({ length: EVENTS }, () => new Vector4(0, 0, 1, 0));
   private readonly eventShapes = Array.from({ length: EVENTS }, () => new Vector4());
-  private readonly deposits = Array.from({ length: DEPOSITS }, () => new Vector4(0, 0, 1, 0));
-  private readonly depositRadii = Array.from({ length: DEPOSITS }, () => new Vector4());
-  private depositCount = 0;
 
+  /**
+   * Splash water landing on (or leaving) each vertex since the last update, two per vertex in fixed point
+   * (FLUID.landing in core/oceanFluid.ts): volume, and foam. The fluid adds to it atomically; the sim spends it.
+   */
+  readonly landings: StorageBufferNode<'int'>;
   private readonly surface: Vec4Buffer;
   private readonly slope: Vec4Buffer;
   private readonly drift: Vec4Buffer;
@@ -181,14 +162,10 @@ export class OceanSim implements SprayGround {
   private readonly lookup: StorageBufferNode<'uint'>;
   private readonly vertex: Vec4Buffer;
   private readonly neighbor: StorageBufferNode<'uint'>;
-  private readonly siteData: Vec4Buffer;
   private readonly stepNodes: [ComputeNode[], ComputeNode[]];
   private readonly finishNodes: [ComputeNode[], ComputeNode[]];
   private readonly resetNodes: ComputeNode[];
   private parity = 0;
-  private sites: OceanWhitewaterSite[] = [];
-  private siteTimer = 0;
-  private reading = false;
   private readonly wetArea: number;
 
   constructor(
@@ -199,7 +176,6 @@ export class OceanSim implements SprayGround {
     waves?: SimWaves,
   ) {
     this.renderer = renderer;
-    this.coastal = coastal;
     const field = createOceanField(geometry, coastal);
     this.field = field;
     this.count = field.count;
@@ -278,14 +254,11 @@ export class OceanSim implements SprayGround {
     this.drift = instancedArray(n, 'vec4') as Vec4Buffer;
     this.flow = instancedArray(n, 'vec4') as Vec4Buffer;
     this.ground = ground;
-    const sites = instancedArray(SITE_CELLS, 'uint').toAtomic();
-    this.siteData = instancedArray(SITE_CELLS * 2, 'vec4') as Vec4Buffer;
+    this.landings = instancedArray(n * 2, 'int').toAtomic() as StorageBufferNode<'int'>;
 
     const u = this.uniforms;
     const events = uniformArray(this.events, 'vec4') as UniformArrayNode<'vec4'>;
     const eventShapes = uniformArray(this.eventShapes, 'vec4') as UniformArrayNode<'vec4'>;
-    const deposits = uniformArray(this.deposits, 'vec4') as UniformArrayNode<'vec4'>;
-    const depositRadii = uniformArray(this.depositRadii, 'vec4') as UniformArrayNode<'vec4'>;
     const wetAt = (j: Node<'uint'>) => ground.element(j).x.greaterThan(0);
     /**
      * The wind's slow surface drift at vertex j, dying away against the bank. The stored current is the waves'
@@ -559,18 +532,6 @@ export class OceanSim implements SprayGround {
           foam.assign(clamp(foam.add(impact.mul(u.frameDt).mul(g4.w.mul(1.2).add(2.8))), 0, 1));
           turbulence.assign(max(turbulence, impact.mul(0.75)));
         }
-        // splashes and falling spray leave foam
-        for (let d = 0; d < DEPOSITS; d++) {
-          const deposit = deposits.element(d);
-          const radius = depositRadii.element(d).x;
-          const offset = q.sub(deposit.xyz);
-          const r2 = radius.mul(radius);
-          const falloff = float(1)
-            .sub(smoothstep(0, r2, dot(offset, offset)))
-            .mul(deposit.w);
-          foam.assign(clamp(foam.add(falloff), 0, 1));
-          turbulence.assign(clamp(turbulence.add(falloff.mul(0.35)), 0, 1));
-        }
         state.z.assign(foam);
         state.w.assign(turbulence);
         this.surface.element(i).assign(vec4(state.x.add(surfHeight), foam, turbulence, impact));
@@ -615,42 +576,8 @@ export class OceanSim implements SprayGround {
         });
         this.slope.element(i).assign(vec4(gradient, 0));
 
-        // Whitewater sites, where spray starts: water both aerated and churning. A pressed dent is turbulent but
-        // holds no air; foam left by whitecaps holds air but lies still, and spraying from it would make every
-        // calm sea spout.
-        const coastSite = coastal ? g4.y.lessThan(0.09) : float(0).greaterThan(1);
-        const openScore = here.y.mul(0.82).add(here.z.mul(0.3)).add(length(gradient).mul(0.12));
-        const breaking = here.y.greaterThanEqual(0.18).and(here.z.greaterThanEqual(0.1));
-        const score = select(coastSite, here.w, select(breaking, openScore, float(0)));
-        const threshold = select(coastSite, float(0.22), float(0.18));
-        If(score.greaterThan(threshold), () => {
-          const packed = uint(clamp(score, 0, 1).mul(4095))
-            .shiftLeft(20)
-            .bitOr(i);
-          atomicMax(sites.element(cubeCell(q, SITE_SIZE)), packed);
-        });
         void final;
       })().compute(n);
-
-    const gather = Fn(() => {
-      const c = instanceIndex;
-      const packed = atomicLoad(sites.element(c)).toVar();
-      const a = this.siteData.element(c.mul(2));
-      const b = this.siteData.element(c.mul(2).add(1));
-      If(packed.equal(0), () => {
-        a.assign(vec4(0));
-        b.assign(vec4(0));
-        Return();
-      });
-      const i = packed.bitAnd(0xfffff);
-      const score = float(packed.shiftRight(20)).div(4095);
-      const coastSite = coastal ? ground.element(i).y.lessThan(0.09) : float(0).greaterThan(1);
-      // coastal sites are marked by adding 2 to the score
-      a.assign(vec4(this.vertex.element(i).xyz, score.add(select(coastSite, float(2), float(0)))));
-      const flow = select(coastSite, shore.element(i).xyz.mul(0.18), this.flow.element(i).xyz);
-      b.assign(vec4(flow, this.surface.element(i).x));
-      atomicStore(sites.element(c), uint(0));
-    })().compute(SITE_CELLS);
 
     this.stepNodes = [
       [momentum(0), heightStep(0)],
@@ -682,9 +609,27 @@ export class OceanSim implements SprayGround {
           state.y.subAssign(mean);
         });
       })().compute(n);
+    // Splash water: what the fluid took from each vertex as spray or brought back as it landed, raising or
+    // lowering it (a landing sends out a small ring), and the foam a landing leaves. Dry land keeps nothing.
+    const land = (final: number) =>
+      Fn(() => {
+        const i = instanceIndex;
+        const volume = atomicLoad(this.landings.element(i.mul(2))).toVar();
+        const foam = atomicLoad(this.landings.element(i.mul(2).add(1))).toVar();
+        atomicStore(this.landings.element(i.mul(2)), int(0));
+        atomicStore(this.landings.element(i.mul(2).add(1)), int(0));
+        If(ground.element(i).x.lessThanEqual(0), () => {
+          Return();
+        });
+        const state = heights[final]!.element(i);
+        const landed = float(foam).div(FLUID.landing.foam);
+        state.x.addAssign(float(volume).div(FLUID.landing.volume).div(this.vertex.element(i).w));
+        state.z.assign(clamp(state.z.add(landed), 0, 1));
+        state.w.assign(clamp(state.w.add(landed.mul(0.35)), 0, 1));
+      })().compute(n);
     this.finishNodes = [
-      [clearVolume, sumVolume(0), correctVolume(0), finishSurface(0), finishSlope(0), gather],
-      [clearVolume, sumVolume(1), correctVolume(1), finishSurface(1), finishSlope(1), gather],
+      [land(0), clearVolume, sumVolume(0), correctVolume(0), finishSurface(0), finishSlope(0)],
+      [land(1), clearVolume, sumVolume(1), correctVolume(1), finishSurface(1), finishSlope(1)],
     ];
     this.resetNodes = [
       Fn(() => {
@@ -694,6 +639,8 @@ export class OceanSim implements SprayGround {
       })().compute(n),
       Fn(() => {
         const i = instanceIndex;
+        atomicStore(this.landings.element(i.mul(2)), int(0));
+        atomicStore(this.landings.element(i.mul(2).add(1)), int(0));
         this.current[0]!.element(i).assign(vec4(0));
         this.current[1]!.element(i).assign(vec4(0));
         this.flow.element(i).assign(vec4(windDrift(i), 0));
@@ -722,21 +669,9 @@ export class OceanSim implements SprayGround {
     };
   }
 
-  groundHeight(dir: Vector3): number {
-    return this.coastal ? shoreGroundHeight(dir) : 0;
-  }
-
-  /** Small foam deposits made by splashes and falling spray; applied on the next update. */
-  depositFoam(dir: Vector3, amount: number, radius = 0.055): void {
-    const slot = this.depositCount++ % DEPOSITS;
-    this.deposits[slot]!.set(dir.x, dir.y, dir.z, amount);
-    this.depositRadii[slot]!.x = radius;
-  }
-
   reset(): void {
     this.setPressure(null, 0);
     this.renderer.compute(this.resetNodes);
-    this.sites = [];
   }
 
   /** The live wind (core/oceanWind.ts): where it blows, and how hard. */
@@ -783,12 +718,6 @@ export class OceanSim implements SprayGround {
     }
     passes.push(...this.finishNodes[this.parity]!);
     this.renderer.compute(passes);
-    for (const deposit of this.deposits) deposit.w = 0;
-    this.siteTimer += dt;
-    if (this.siteTimer >= SITE_INTERVAL && !this.reading) {
-      this.siteTimer = 0;
-      void this.readSites();
-    }
   }
 
   /**
@@ -815,36 +744,5 @@ export class OceanSim implements SprayGround {
     const press = this.uniforms.press.value;
     if (press.w !== 0) add(press.x, press.y, press.z, HAND.pressSharpness, -press.w * HAND.press, false);
     return total === 0 ? 0 : total / this.wetArea;
-  }
-
-  /** Sparse sites where a moving, aerated surface can shed spray, best first (from the last read-back). */
-  whitewaterSites(maxCount: number): OceanWhitewaterSite[] {
-    return this.sites.slice(0, maxCount);
-  }
-
-  private async readSites(): Promise<void> {
-    this.reading = true;
-    try {
-      const data = new Float32Array(await this.renderer.getArrayBufferAsync(this.siteData.value));
-      const found: OceanWhitewaterSite[] = [];
-      for (let c = 0; c < SITE_CELLS; c++) {
-        const score = data[c * 8 + 3]!;
-        if (score <= 0) continue;
-        const coastal = score >= 2;
-        found.push({
-          dir: new Vector3(data[c * 8], data[c * 8 + 1], data[c * 8 + 2]).normalize(),
-          flow: new Vector3(data[c * 8 + 4], data[c * 8 + 5], data[c * 8 + 6]),
-          strength: Math.min(0.95, Math.max(0.25, coastal ? score - 2 : score)),
-          height: data[c * 8 + 7]!,
-          coastal,
-        });
-      }
-      found.sort((a, b) => b.strength - a.strength);
-      const spaced: OceanWhitewaterSite[] = [];
-      for (const site of found) if (!spaced.some((s) => s.dir.dot(site.dir) > 0.9985)) spaced.push(site);
-      this.sites = spaced;
-    } finally {
-      this.reading = false;
-    }
   }
 }
