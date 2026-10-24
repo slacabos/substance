@@ -5,6 +5,7 @@ import { oceanDetail, readOceanTuning } from './core/oceanTuning';
 import { Spring, stepSprings } from './core/spring';
 import type { DeviceProfile } from './device';
 import { createDeformGeometry } from './materials/deform';
+import { OceanFFT } from './materials/oceanFFT';
 import { Fur } from './materials/fur';
 import { Ocean } from './materials/ocean';
 import { Slime } from './materials/slime';
@@ -12,7 +13,7 @@ import type { FrameContext, MaterialId, ShapeId, Substance } from './materials/t
 import { Water } from './materials/water';
 import { PointerInput, type PointerTarget } from './interaction/pointer';
 import { SpinController } from './interaction/spin';
-import { SETTING_ORDER, type SettingId } from './scene/settings';
+import { SETTING_ORDER, SETTINGS, type SettingId } from './scene/settings';
 import { ShapeMorph } from './scene/shape';
 import { Stage } from './scene/stage';
 import { Controls } from './ui/controls';
@@ -53,17 +54,21 @@ export class App implements PointerTarget {
     this.autoSpin = scene.spin;
     const geometry = createDeformGeometry(device.coarse);
     const oceanTuning = readOceanTuning(location.search);
+    // the open ocean and the coast share one sea; only one is ever on screen
+    const waves = new OceanFFT(stage.renderer, device.coarse, oceanTuning);
     const ocean = new Ocean(
       createDeformGeometry(true, oceanDetail(device.coarse)),
       device.coarse,
       stage.oceanEnvironment,
       oceanTuning,
+      waves,
     );
     const coast = new Ocean(
       createDeformGeometry(true, oceanDetail(device.coarse)),
       device.coarse,
       stage.oceanEnvironment,
       oceanTuning,
+      waves,
       true,
     );
     this.materials = {
@@ -109,6 +114,7 @@ export class App implements PointerTarget {
     this.morph.set(scene.shape, true);
     this.controls.showShape(scene.shape);
     this.controls.showSetting(this.setting);
+    for (const m of Object.values(this.materials)) m.onSettingChange?.(SETTINGS[this.setting]);
     this.controls.showAutoSpin(this.autoSpin);
     this.setMaterial(scene.material, false);
     this.current.enter(new Vector3(0, 0, 1));
@@ -149,6 +155,7 @@ export class App implements PointerTarget {
   setSetting(id: SettingId): void {
     this.setting = id;
     this.stage.backdrop.setSetting(id, this.device.reduceMotion);
+    for (const m of Object.values(this.materials)) m.onSettingChange?.(SETTINGS[id]);
     this.controls.showSetting(id);
     this.syncUrl();
   }

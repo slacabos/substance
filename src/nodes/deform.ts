@@ -1,4 +1,4 @@
-import { Vector3, type Color, type Vector4 } from 'three';
+import type { Color, Vector3, Vector4 } from 'three';
 import type { Node, UniformArrayNode, UniformNode } from 'three/webgpu';
 import {
   abs,
@@ -21,13 +21,13 @@ import {
   vec3,
 } from 'three/tsl';
 import { MAX_IMPULSES } from '../config';
-import { OCEAN_REFERENCE_WAVELENGTH, OCEAN_SPECTRUM } from '../core/oceanSpectrum';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { snoise } from './noise';
-import { baseR } from './shape';
+import { oceanWaveVertex, type OceanWaveFields } from './oceanWaves';
+import { baseN, baseR } from './shape';
 
 // GPU displacement for the water-like materials. Every surface point is a unit direction pushed out by
-// baseR (the orb/cube shape) plus a height from ripples, dents, swells or wobble.
+// baseR (the orb/cube shape) plus a height from ripples, dents, waves or wobble.
 
 /** Which displacement a deform material uses. */
 export const DeformMode = { Water: 0, Slime: 1, Ocean: 2 } as const;
@@ -58,13 +58,15 @@ export interface DeformUniforms {
   uOceanAmplitude: UniformNode<'float', number>;
   uOceanChoppiness: UniformNode<'float', number>;
   uOceanFoam: UniformNode<'float', number>;
+  /** World direction toward the sun, and its linear colour times strength. */
+  uSunDir: UniformNode<'vec3', Vector3>;
+  uSunColor: UniformNode<'color', Color>;
 }
 
 type Vec3 = Node<'vec3'>;
 type Float = Node<'float'>;
 
 const arcDist = (a: Vec3, b: Vec3) => acos(clamp(dot(a, b), -1, 1));
-const unit = (x: number, y: number, z: number) => vec3(new Vector3(x, y, z).normalize());
 
 /** Smooth local weather on the sphere; dot products avoid a pole or longitude seam. */
 function oceanWeatherAt(p: Vec3, u: DeformUniforms): Float {
@@ -76,52 +78,6 @@ function oceanWeatherAt(p: Vec3, u: DeformUniforms): Float {
     weather = max(weather, inside.mul(patch.w));
   }
   return weather;
-}
-
-function oceanAt(
-  p: Vec3,
-  u: DeformUniforms,
-  weather: Float,
-): { height: Float; tangent: Vec3; breaking: Float } {
-  let height: Float = float(0);
-  let tangent: Vec3 = vec3(0);
-  let breaking: Float = float(0);
-  const warp = sin(
-    dot(p, vec3(0.34, 0.87, -0.21))
-      .mul(3.2)
-      .sub(u.uTime.mul(0.17).mul(u.uOceanWind)),
-  )
-    .mul(0.32)
-    .add(
-      sin(
-        dot(p, vec3(-0.62, 0.14, 0.77))
-          .mul(5.1)
-          .add(u.uTime.mul(0.11).mul(u.uOceanWind)),
-      ).mul(0.15),
-    );
-  for (const [amp, [x, y, z], freq, speed, chop, breakWeight] of OCEAN_SPECTRUM) {
-    const wind = unit(x, y, z);
-    const phase = dot(p, wind)
-      .mul(freq)
-      .mul(OCEAN_REFERENCE_WAVELENGTH)
-      .div(u.uOceanWavelength)
-      .add(warp)
-      .sub(u.uTime.mul(speed).mul(u.uOceanWind));
-    const s = sin(phase);
-    const c = cos(phase);
-    const a = float(amp)
-      .mul(u.uOceanAmplitude)
-      .mul(float(1).add(weather.mul(freq < 27 ? 0.2 : 0.75)));
-    height = height.add(s.mul(a));
-    tangent = tangent.add(wind.sub(p.mul(dot(p, wind))).mul(c.mul(a).mul(chop).mul(u.uOceanChoppiness)));
-
-    const front = smoothstep(0.48, 0.86, s).mul(smoothstep(0.06, 0.72, c.negate()));
-    const trail = smoothstep(0.35, 0.88, s)
-      .mul(smoothstep(0.12, 0.85, c))
-      .mul(0.3);
-    breaking = max(breaking, front.add(trail).mul(breakWeight).mul(u.uOceanChoppiness));
-  }
-  return { height, tangent, breaking };
 }
 
 /** Expanding, decaying rings from each tap or drag step, plus the dip under a pressing finger. */
@@ -200,40 +156,38 @@ function dispAt(p: Vec3, mode: DeformMode, u: DeformUniforms): Float {
  * Displaced position plus a finite-difference normal, so any displacement shades correctly. Must be called
  * inside a TSL Fn (it emits loops).
  */
-export function orbDeform(
-  p: Vec3,
-  mode: DeformMode,
-  u: DeformUniforms,
-  coastal = false,
-): { pos: Vec3; nrm: Vec3; height: Float; breaking: Float; weather: Float } {
-  const weather = mode === DeformMode.Ocean ? oceanWeatherAt(p, u).toVar() : float(0);
-  const shoreData = coastal ? attribute('oceanShoreData', 'vec4') : null;
-  const shoreDistance = shoreData?.w;
-  const shoreNormal = shoreData?.xyz;
-  const at = (q: Vec3): { pos: Vec3; height: Float; breaking: Float } => {
-    if (mode === DeformMode.Ocean) {
-      const wave = oceanAt(q, u, weather);
-      const offshore =
-        shoreDistance && shoreNormal
-          ? smoothstep(0, 0.1, shoreDistance.add(dot(q.sub(p), shoreNormal)))
-          : float(1);
-      const height = wave.height.mul(offshore.mul(0.82).add(0.18));
-      const direction = normalize(q.add(wave.tangent.mul(offshore)));
-      return { pos: direction.mul(baseR(direction).add(height)), height, breaking: wave.breaking };
-    }
-    const height = dispAt(q, mode, u);
-    return { pos: q.mul(baseR(q).add(height)), height, breaking: float(0) };
-  };
-  const surface = at(p);
-  const pos = surface.pos.toVar();
+export function orbDeform(p: Vec3, mode: DeformMode, u: DeformUniforms): { pos: Vec3; nrm: Vec3 } {
+  const at = (q: Vec3): Vec3 => q.mul(baseR(q).add(dispAt(q, mode, u)));
+  const pos = at(p).toVar();
   const t1 = normalize(cross(p, select(abs(p.y).lessThan(0.99), vec3(0, 1, 0), vec3(1, 0, 0))));
   const t2 = cross(p, t1);
   const e = 0.004;
-  const pa = normalize(p.add(t1.mul(e)));
-  const pb = normalize(p.add(t2.mul(e)));
-  const A = at(pa).pos;
-  const B = at(pb).pos;
+  const A = at(normalize(p.add(t1.mul(e))));
+  const B = at(normalize(p.add(t2.mul(e))));
   const n = normalize(cross(A.sub(pos), B.sub(pos)));
-  const nrm = select(dot(n, p).lessThan(0), n.negate(), n);
-  return { pos, nrm, height: surface.height, breaking: surface.breaking, weather };
+  return { pos, nrm: select(dot(n, p).lessThan(0), n.negate(), n) };
+}
+
+/**
+ * The ocean surface at the undisplaced direction p: FFT waves (nodes/oceanWaves.ts) on the orb or cube, damped
+ * over the shallows near a coast. `damping` scales the waves' height and slopes (1 offshore). Must be called
+ * inside a TSL Fn.
+ */
+export function oceanDeform(
+  p: Vec3,
+  u: DeformUniforms,
+  waves: OceanWaveFields,
+  spacing: number,
+  coastal: boolean,
+): { pos: Vec3; nrm: Vec3; height: Float; weather: Float; damping: Float } {
+  const weather = oceanWeatherAt(p, u).toVar();
+  const offshore = coastal ? smoothstep(0, 0.1, attribute('oceanShoreData', 'vec4').w) : float(1);
+  const damping = offshore.mul(0.82).add(0.18).toVar();
+  const wave = oceanWaveVertex(p, waves, u, weather, spacing);
+  const height = wave.height.mul(damping).toVar();
+  const direction = normalize(p.add(wave.offset.mul(offshore)));
+  const radius = baseR(direction);
+  const pos = direction.mul(radius.add(height));
+  const nrm = normalize(baseN(p, p.mul(baseR(p))).sub(wave.gradient.mul(damping).div(radius)));
+  return { pos, nrm, height, weather, damping };
 }

@@ -1,4 +1,4 @@
-import { Color, IcosahedronGeometry, Vector4, type BufferGeometry } from 'three';
+import { Color, IcosahedronGeometry, Vector3, Vector4, type BufferGeometry } from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MeshPhysicalNodeMaterial, type MeshPhysicalNodeMaterialParameters } from 'three/webgpu';
 import {
@@ -6,10 +6,14 @@ import {
   Fn,
   float,
   materialRoughness,
+  max,
   mix,
   normalize,
   normalLocal,
   positionGeometry,
+  pow,
+  smoothstep,
+  transformNormalToView,
   uniform,
   uniformArray,
   varyingProperty,
@@ -17,21 +21,31 @@ import {
 import { MAX_IMPULSES } from '../config';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { OCEAN_DEFAULTS } from '../core/oceanTuning';
-import { DeformMode, orbDeform, type DeformUniforms } from '../nodes/deform';
-import { oceanColor, oceanFineNormal, oceanFoam } from '../nodes/ocean';
+import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
+import { oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
+import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
+import { baseN, baseR } from '../nodes/shape';
 
 export { DeformMode, type DeformUniforms };
+
+/** What the ocean material needs beyond the shared uniforms: its FFT waves and the mesh's vertex spacing. */
+export interface OceanSurfaceOptions {
+  waves: OceanWaveFields;
+  spacing: number;
+  coastal: boolean;
+}
 
 const vec4s = (n: number) => Array.from({ length: n }, () => new Vector4());
 
 /**
- * A MeshPhysicalNodeMaterial whose vertices are displaced on the GPU (see nodes/deform.ts).
- * Normals come from finite differences of the same displacement, so ripples and dents light correctly.
+ * A MeshPhysicalNodeMaterial whose vertices are displaced on the GPU (see nodes/deform.ts). Water and slime
+ * normals come from finite differences of the same displacement, so ripples and dents light correctly; the
+ * ocean's come per pixel from its FFT waves.
  */
 export function createDeformMaterial(
   params: MeshPhysicalNodeMaterialParameters,
   mode: DeformMode,
-  coastal = false,
+  ocean?: OceanSurfaceOptions,
 ): { material: MeshPhysicalNodeMaterial; uniforms: DeformUniforms } {
   const material = new MeshPhysicalNodeMaterial(params);
   const imp = vec4s(MAX_IMPULSES).map((v) => v.set(0, 1, 0, 0));
@@ -57,48 +71,73 @@ export function createDeformMaterial(
     uOceanAmplitude: uniform(OCEAN_DEFAULTS.amplitude),
     uOceanChoppiness: uniform(OCEAN_DEFAULTS.choppiness),
     uOceanFoam: uniform(OCEAN_DEFAULTS.foam),
+    uSunDir: uniform(new Vector3(0, 1, 0)),
+    uSunColor: uniform(new Color(0, 0, 0)),
   };
 
+  if (mode !== DeformMode.Ocean || !ocean) {
+    material.positionNode = Fn(() => {
+      const { pos, nrm } = orbDeform(normalize(positionGeometry), mode, uniforms);
+      normalLocal.assign(nrm);
+      return pos;
+    })();
+    return { material, uniforms };
+  }
+
+  const { waves, spacing, coastal } = ocean;
   const wave = varyingProperty('float', 'vWave');
-  const breaking = varyingProperty('float', 'vBreaking');
   const weatherAmount = varyingProperty('float', 'vWeather');
+  const damping = varyingProperty('float', 'vDamping');
+  const direction = varyingProperty('vec3', 'vDirection');
+  const simGradient = varyingProperty('vec3', 'vSimGradient');
   const simulatedFoam = varyingProperty('float', 'vSimFoam');
   const turbulence = varyingProperty('float', 'vTurbulence');
   const obj = varyingProperty('vec3', 'vObj');
   const shore = coastal ? varyingProperty('float', 'vShoreDistance') : undefined;
   material.positionNode = Fn(() => {
     const p = normalize(positionGeometry);
-    const {
-      pos,
-      nrm,
-      height,
-      breaking: breakAmount,
-      weather: localWeather,
-    } = orbDeform(p, mode, uniforms, coastal);
-    if (mode === DeformMode.Ocean) {
-      const simHeight = attribute('oceanHeight', 'float');
-      normalLocal.assign(normalize(nrm.sub(attribute('oceanGradient', 'vec3'))));
-      wave.assign(height.add(simHeight));
-      breaking.assign(breakAmount);
-      weatherAmount.assign(localWeather);
-      simulatedFoam.assign(attribute('oceanFoam', 'float'));
-      turbulence.assign(attribute('oceanTurbulence', 'float'));
-      obj.assign(p.sub(attribute('oceanDrift', 'vec3')));
-      shore?.assign(attribute('oceanShoreData', 'vec4').w);
-      return pos.add(normalize(pos).mul(simHeight));
-    }
-    normalLocal.assign(nrm);
-    return pos;
+    const surface = oceanDeform(p, uniforms, waves, spacing, coastal);
+    const simHeight = attribute('oceanHeight', 'float');
+    simGradient.assign(attribute('oceanGradient', 'vec3'));
+    normalLocal.assign(normalize(surface.nrm.sub(simGradient)));
+    wave.assign(surface.height.add(simHeight));
+    weatherAmount.assign(surface.weather);
+    damping.assign(surface.damping);
+    direction.assign(p);
+    simulatedFoam.assign(attribute('oceanFoam', 'float'));
+    turbulence.assign(attribute('oceanTurbulence', 'float'));
+    obj.assign(p.sub(attribute('oceanDrift', 'vec3')));
+    shore?.assign(attribute('oceanShoreData', 'vec4').w);
+    return surface.pos.add(normalize(surface.pos).mul(simHeight));
   })();
 
-  if (mode === DeformMode.Ocean) {
-    const foam = oceanFoam(obj, breaking, weatherAmount, simulatedFoam, uniforms, shore);
-    material.colorNode = oceanColor(wave, foam, weatherAmount, uniforms);
-    material.roughnessNode = mix(materialRoughness.add(turbulence.mul(0.1)), 0.92, foam);
-    material.specularIntensityNode = mix(float(0.75), float(0.08), foam);
-    material.transmissionNode = mix(float(0.22), float(0), foam);
-    material.normalNode = oceanFineNormal(obj, turbulence, uniforms);
-  }
+  // Per pixel: the full-resolution wave slopes, crests where the surface bunches up, and roughness for the
+  // slopes too small to see.
+  const p = normalize(direction);
+  const surface = oceanWaveSurface(p, waves, uniforms, weatherAmount);
+  // whitecaps from folding now and in the last few seconds
+  const breaking = max(
+    float(1).sub(smoothstep(0.3, 0.85, surface.jacobian)),
+    smoothstep(0.6, 1.05, surface.foam),
+  );
+  const foam = oceanFoam(obj, breaking, weatherAmount, simulatedFoam, uniforms, shore);
+  const base = materialRoughness.add(turbulence.mul(0.1));
+  // GGX alpha^2 grows by twice the hidden slope variance
+  const rough = pow(pow(base, 4).add(surface.lostVariance.mul(damping).mul(damping).mul(2)), 0.25);
+  const normal = transformNormalToView(
+    normalize(
+      baseN(p, p.mul(baseR(p)))
+        .sub(surface.gradient.mul(damping).div(baseR(p)))
+        .sub(simGradient),
+    ),
+  );
+  const roughness = mix(rough, 0.92, foam);
+  material.normalNode = normal;
+  material.colorNode = oceanColor(wave, foam, weatherAmount, uniforms);
+  material.roughnessNode = roughness;
+  material.emissiveNode = oceanSunLight(normal, wave, foam, roughness, uniforms);
+  material.specularIntensityNode = mix(float(0.75), float(0.08), foam);
+  material.transmissionNode = mix(float(0.22), float(0), foam);
   return { material, uniforms };
 }
 

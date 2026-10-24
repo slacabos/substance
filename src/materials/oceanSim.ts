@@ -46,6 +46,8 @@ export const oceanReleaseImpulse = (seconds: number): number =>
 /** A spherical free-surface wave field with tangential flow and advected whitewater. */
 export class OceanSim {
   readonly count: number;
+  /** Mean distance between neighbouring vertices. */
+  readonly spacing: number;
   private readonly positions: Float32Array;
   private readonly neighbors: Uint32Array;
   private readonly shoreDistance: Float32Array | null;
@@ -128,6 +130,7 @@ export class OceanSim {
       }
       geometry.setIndex(wetTriangles);
     }
+    this.spacing = mesh.spacing;
     this.invSpacing = 1 / mesh.spacing;
     this.stiffness = (0.24 * 0.24 * 4) / (mesh.spacing * mesh.spacing);
     this.forceGrain = new Float32Array(this.count);

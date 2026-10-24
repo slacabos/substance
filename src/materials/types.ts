@@ -1,4 +1,5 @@
 import type { Object3D, Vector3 } from 'three';
+import type { SettingLook } from '../scene/settings';
 
 export type MaterialId = 'water' | 'ocean' | 'coast' | 'slime' | 'fur';
 export type ShapeId = 'orb' | 'cube';
@@ -41,4 +42,6 @@ export interface Substance {
   hoverEnd?(): void;
   onShapeChange?(front: Vector3): void;
   onSpinJerk?(axisLocal: Vector3, magnitude: number): void;
+  /** The backdrop changed; materials that reflect a sun follow it. */
+  onSettingChange?(look: SettingLook): void;
 }

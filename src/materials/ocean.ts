@@ -6,10 +6,12 @@ import type { OceanTuning } from '../core/oceanTuning';
 import { baseR } from '../nodes/shape';
 import { morphUniform } from '../scene/shape';
 import { createDeformMaterial, DeformMode, type DeformUniforms } from './deform';
+import type { OceanFFT } from './oceanFFT';
 import { OceanFoamFlecks } from './oceanFoamFlecks';
 import { OceanSim, oceanReleaseImpulse, type OceanForce } from './oceanSim';
 import { OceanShores } from './oceanShores';
 import { OceanSpray } from './oceanSpray';
+import type { SettingLook } from '../scene/settings';
 import type { FrameContext, MaterialId, Readout, Substance } from './types';
 
 /** Storm level (1 = calm) to a Beaufort number for the readout. */
@@ -26,6 +28,7 @@ export class Ocean implements Substance {
   readonly objects;
 
   private readonly sim: OceanSim;
+  private readonly waves: OceanFFT;
   private readonly shores: OceanShores | null;
   private readonly spray: OceanSpray;
   private readonly foamFlecks: OceanFoamFlecks;
@@ -48,14 +51,15 @@ export class Ocean implements Substance {
     coarse: boolean,
     skyReflection: Texture,
     tuning: OceanTuning,
+    waves: OceanFFT,
     coastal = false,
   ) {
     this.id = coastal ? 'coast' : 'ocean';
     this.tuning = tuning;
+    this.waves = waves;
     this.shores = coastal ? new OceanShores(coarse) : null;
     this.sim = new OceanSim(geometry, coastal, tuning);
     this.spray = new OceanSpray(coarse);
-    this.foamFlecks = new OceanFoamFlecks(coarse, tuning);
     const { material, uniforms } = createDeformMaterial(
       {
         color: 0xffffff,
@@ -71,8 +75,9 @@ export class Ocean implements Substance {
         envMapIntensity: 0.92,
       },
       DeformMode.Ocean,
-      coastal,
+      { waves, spacing: this.sim.spacing, coastal },
     );
+    this.foamFlecks = new OceanFoamFlecks(coarse, { waves, uniforms, spacing: this.sim.spacing });
     const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
     const interiorMaterial = new MeshBasicNodeMaterial({ color: '#031525' });
@@ -154,6 +159,7 @@ export class Ocean implements Substance {
     this.time = ctx.time;
     this.uniforms.uTime.value = ctx.time;
     if (this.objects[0]!.visible) {
+      this.waves.update(ctx.time);
       this.shores?.updateMorph(morphUniform.value);
       if (this.pressing) {
         this.heldSeconds = Math.min(2, (performance.now() - this.pressStartedAt) / 1000);
@@ -175,7 +181,7 @@ export class Ocean implements Substance {
         this.lastWhitewaterTime = ctx.time;
       }
       this.spray.update(ctx.dt, this.sim);
-      this.foamFlecks.update(ctx.dt, ctx.time, this.sim, this.weatherField);
+      this.foamFlecks.update(ctx.dt, this.sim, this.weatherField);
     }
     this.pendingForces.length = 0;
     this.storm = 1 + this.weatherField.peak * 1.4;
@@ -184,6 +190,11 @@ export class Ocean implements Substance {
       this.uniforms.weather[i]!.set(patch.center.x, patch.center.y, patch.center.z, patch.strength);
       this.uniforms.weatherB[i]!.x = weatherRadius(patch.age);
     }
+  }
+
+  onSettingChange(look: SettingLook): void {
+    this.uniforms.uSunDir.value.copy(look.sun.direction);
+    this.uniforms.uSunColor.value.copy(look.sun.color);
   }
 
   private addForce(dir: Vector3, strength: number, motion?: Vector3): void {

@@ -27,13 +27,13 @@ describe('ocean foam flecks', () => {
     const foam = new OceanFoamFlecks(true);
     foam.emit(touch, new Vector3(0, 1, 0), 1, 1);
     sim.update(1 / 60, [{ dir: touch, strength: -0.7 }]);
-    foam.update(0.1, 0.1, sim, weather);
+    foam.update(0.1, sim, weather);
     const transform = new Matrix4();
     foam.mesh.getMatrixAt(0, transform);
     const position = new Vector3().setFromMatrixPosition(transform);
     expect(position.length()).toBeGreaterThan(0.9);
     expect(position.length()).toBeLessThan(1.1);
-    for (let i = 0; i < 180; i++) foam.update(1 / 60, 0.1 + i / 60, sim, weather);
+    for (let i = 0; i < 180; i++) foam.update(1 / 60, sim, weather);
     foam.mesh.getMatrixAt(0, transform);
     expect(transform.determinant()).toBe(0);
   });

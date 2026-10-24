@@ -1,8 +1,7 @@
 import type { Node } from 'three/webgpu';
 import {
-  abs,
+  cameraViewMatrix,
   clamp,
-  cross,
   dot,
   float,
   floor,
@@ -11,19 +10,20 @@ import {
   mix,
   normalize,
   normalViewGeometry,
-  positionView,
   positionViewDirection,
   pow,
-  sign,
-  sin,
   smoothstep,
+  sqrt,
   vec3,
+  vec4,
 } from 'three/tsl';
 import type { DeformUniforms } from './deform';
-import { OCEAN_REFERENCE_WAVELENGTH } from '../core/oceanSpectrum';
 
 type Vec3 = Node<'vec3'>;
 type Float = Node<'float'>;
+
+/** Wavelength the foam pattern's scale was authored at. */
+const FOAM_REFERENCE_WAVELENGTH = 0.33;
 
 function h31(x: Vec3): Float {
   const p = fract(x.mul(0.3183099).add(0.1)).mul(17);
@@ -52,7 +52,7 @@ export function oceanFoam(
   shore?: Float,
 ): Float {
   // Narrow in the swell direction and stretched along each crest.
-  const scale = float(OCEAN_REFERENCE_WAVELENGTH).div(u.uOceanWavelength);
+  const scale = float(FOAM_REFERENCE_WAVELENGTH).div(u.uOceanWavelength);
   const q = vec3(
     dot(obj, vec3(0.35, 0.9, 0.25))
       .mul(79)
@@ -69,13 +69,8 @@ export function oceanFoam(
   const n = vnoise(q)
     .mul(0.7)
     .add(vnoise(q.mul(2.35)).mul(0.3));
-  // Keep the transition narrow while retaining derivative antialiasing at small screen sizes.
-  const threshold = mix(0.655, 0.52, weather);
-  const width = max(0.018, n.fwidth().mul(0.5));
-  const coverage = smoothstep(threshold.sub(width), threshold.add(width), n);
-  const crests = smoothstep(0.16, 0.78, breaking)
-    .mul(coverage)
-    .mul(mix(0.2, 0.76, smoothstep(0.14, 0.65, weather)));
+  // Whitecaps where the waves fold over, broken into streaks; the noise varies how readily each spot foams.
+  const crests = smoothstep(mix(0.3, 0.22, weather), 0.75, breaking.mul(n.mul(0.9).add(0.55)));
   const sprayFoam = smoothstep(0.09, 0.6, simulated).mul(smoothstep(0.36, 0.72, n));
   let foam = max(crests, sprayFoam);
   if (shore) {
@@ -98,33 +93,50 @@ export function oceanColor(wave: Float, foam: Float, weather: Float, u: DeformUn
   return mix(lit, vec3(0.93, 0.97, 0.965), foam);
 }
 
-/** Subpixel waves change highlights without adding more geometry or aliasing at small sizes. */
-export function oceanFineNormal(obj: Vec3, turbulence: Float, u: DeformUniforms): Vec3 {
-  const scale = float(OCEAN_REFERENCE_WAVELENGTH).div(u.uOceanWavelength);
-  const phaseA = dot(obj, vec3(0.91, 0.2, 0.36))
-    .mul(61)
-    .mul(scale)
-    .sub(u.uTime.mul(3.1).mul(u.uOceanWind));
-  const phaseB = dot(obj, vec3(0.32, -0.54, 0.78))
-    .mul(103)
-    .mul(scale)
-    .sub(u.uTime.mul(4.1).mul(u.uOceanWind));
-  const fadeA = float(1).sub(smoothstep(0.55, 1.5, phaseA.fwidth()));
-  const fadeB = float(1).sub(smoothstep(0.55, 1.5, phaseB.fwidth()));
-  const activity = float(1).add(turbulence.mul(0.8));
-  const h = sin(phaseA)
-    .mul(fadeA)
-    .mul(0.00085)
-    .add(sin(phaseB).mul(fadeB).mul(0.00045))
-    .mul(activity)
-    .mul(u.uOceanAmplitude);
+/**
+ * The sun on the water, added as emission. A GGX glint whose width follows the surface roughness, so waves too
+ * small to see spread it into a glitter path; light scattered back out of thin crests seen against the sun
+ * (after Atlas, GDC 2019); and sunlit foam. `normal` is the view-space shading normal, `height` the wave height.
+ */
+export function oceanSunLight(
+  normal: Vec3,
+  height: Float,
+  foam: Float,
+  roughness: Float,
+  u: DeformUniforms,
+): Vec3 {
+  const n = normalize(normal);
+  const v = positionViewDirection;
+  const l = normalize(cameraViewMatrix.mul(vec4(u.uSunDir, 0)).xyz);
+  const h = normalize(l.add(v));
+  const nl = clamp(dot(n, l), 0, 1);
+  const nv = clamp(dot(n, v), 1e-3, 1);
+  const nh = clamp(dot(n, h), 0, 1);
+  // the sun's disc keeps even glassy water's glint a little wide
+  const alpha = roughness.mul(roughness);
+  const a2 = max(alpha.mul(alpha), 0.0004);
+  const lobe = nh.mul(nh).mul(a2.sub(1)).add(1);
+  const distribution = a2.div(lobe.mul(lobe).mul(Math.PI));
+  const visibility = float(0.5).div(
+    nl
+      .mul(sqrt(nv.mul(nv).mul(float(1).sub(a2)).add(a2)))
+      .add(nv.mul(sqrt(nl.mul(nl).mul(float(1).sub(a2)).add(a2))))
+      .add(1e-5),
+  );
+  const fresnel = pow(float(1).sub(clamp(dot(v, h), 0, 1)), 5)
+    .mul(0.98)
+    .add(0.02);
+  const glint = distribution.mul(visibility).mul(fresnel).mul(nl);
 
-  const dx = positionView.dFdx();
-  const dy = positionView.dFdy();
-  const n = normalViewGeometry;
-  const r1 = cross(dy, n);
-  const r2 = cross(n, dx);
-  const det = dot(dx, r1);
-  const gradient = r1.mul(h.dFdx()).add(r2.mul(h.dFdy()));
-  return normalize(n.mul(abs(det)).sub(gradient.mul(sign(det))));
+  const crest = smoothstep(0.002, 0.012, height);
+  const towardSun = pow(clamp(dot(v, l.negate()), 0, 1), 4);
+  const litFromBehind = pow(clamp(dot(l, n).mul(-0.5).add(0.5), 0, 1), 3);
+  const scatter = crest
+    .mul(towardSun)
+    .mul(litFromBehind)
+    .mul(0.8)
+    .add(crest.mul(nv.mul(nv)).mul(0.03))
+    .add(nl.mul(0.015));
+  const water = vec3(0.07, 0.36, 0.33).mul(scatter).add(vec3(glint));
+  return mix(water, vec3(nl.mul(0.25)), foam).mul(u.uSunColor);
 }
