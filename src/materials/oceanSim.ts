@@ -618,10 +618,13 @@ export class OceanSim implements SprayGround {
         });
         this.slope.element(i).assign(vec4(gradient, 0));
 
-        // Whitewater sites. A pressed dent is turbulent but holds no air: spray starts only after a crest aerates.
+        // Whitewater sites, where spray starts: water both aerated and churning. A pressed dent is turbulent but
+        // holds no air; foam left by whitecaps holds air but lies still, and spraying from it would make every
+        // calm sea spout.
         const coastSite = coastal ? g4.y.lessThan(0.09) : float(0).greaterThan(1);
         const openScore = here.y.mul(0.82).add(here.z.mul(0.3)).add(length(gradient).mul(0.12));
-        const score = select(coastSite, here.w, select(here.y.greaterThanEqual(0.18), openScore, float(0)));
+        const breaking = here.y.greaterThanEqual(0.18).and(here.z.greaterThanEqual(0.1));
+        const score = select(coastSite, here.w, select(breaking, openScore, float(0)));
         const threshold = select(coastSite, float(0.22), float(0.18));
         If(score.greaterThan(threshold), () => {
           const packed = uint(clamp(score, 0, 1).mul(4095))
