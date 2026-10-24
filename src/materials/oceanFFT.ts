@@ -19,8 +19,8 @@ import {
   vec4,
 } from 'three/tsl';
 import { createOceanSpectrum, OCEAN_REPEAT, type OceanCascade, type OceanSpectrum } from '../core/oceanFFT';
-import type { OceanTuning } from '../core/oceanTuning';
-import { oceanWind, WIND } from '../core/oceanWind';
+import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
+import { oceanWind, seaGain, WIND } from '../core/oceanWind';
 
 type Vec4Buffer = StorageBufferNode<'vec4'>;
 
@@ -50,10 +50,15 @@ export class OceanFFT {
   private readonly renderer: WebGPURenderer;
   private readonly time = uniform(0);
   private readonly dt = uniform(0);
-  /** Where the wind blows (as OCEAN_WIND_ANGLE), and every wave's amplitude for its speed against the tuned one. */
+  /**
+   * Every wave's amplitude for the live wind against the default one the spectrum is built for; what the waves
+   * are relaxing toward, so slope statistics can follow it.
+   */
+  readonly windGain = uniform(1);
+  /** Where the wind blows, as OCEAN_WIND_ANGLE. */
   private readonly windAngle = uniform(0);
-  private readonly windGain = uniform(1);
-  private readonly meanWind: number;
+  /** Read every frame: its wind speed is the mean the live wind wanders around, and the wind control sets it. */
+  private readonly tuning: Readonly<OceanTuning>;
   private readonly amplitude: number;
   private readonly choppiness: number;
   private readonly passes: ComputeNode[];
@@ -61,11 +66,12 @@ export class OceanFFT {
 
   constructor(renderer: WebGPURenderer, coarse: boolean, tuning: Readonly<OceanTuning>) {
     this.renderer = renderer;
-    const spectrum = createOceanSpectrum(coarse, tuning);
+    // built for the default wind and scaled live, so the wind can change (even from calm) without a rebuild
+    const spectrum = createOceanSpectrum(coarse, { ...tuning, windSpeed: OCEAN_DEFAULTS.windSpeed });
     this.size = spectrum.size;
     this.cascades = spectrum.cascades;
     this.slopeVariance = spectrum.slopeVariance;
-    this.meanWind = tuning.windSpeed;
+    this.tuning = tuning;
     this.amplitude = tuning.amplitude;
     this.choppiness = tuning.choppiness * 0.5;
     const texture = () => {
@@ -89,10 +95,9 @@ export class OceanFFT {
     this.dt.value = Number.isFinite(this.lastTime) ? Math.min(0.1, Math.max(0, time - this.lastTime)) : 0;
     this.lastTime = time;
     this.time.value = time % OCEAN_REPEAT;
-    const wind = oceanWind(time, this.meanWind);
+    const wind = oceanWind(time, this.tuning.windSpeed);
     this.windAngle.value = wind.angle;
-    // the sea's height grows as wind speed to the 1.5 (core/oceanFFT.ts)
-    this.windGain.value = this.meanWind > 0 ? (wind.speed / this.meanWind) ** 1.5 : 0;
+    this.windGain.value = seaGain(wind.speed);
     this.renderer.compute(this.passes);
   }
 

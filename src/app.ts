@@ -1,7 +1,8 @@
 import { Quaternion, Vector3 } from 'three';
 import { intersectShape } from './core/hit';
 import { parseScene, sceneQuery, type SceneState } from './core/scene';
-import { oceanDetail, readOceanTuning } from './core/oceanTuning';
+import { oceanDetail, oceanTuningQuery, readOceanTuning, type OceanTuning } from './core/oceanTuning';
+import { BEAUFORT_NAMES, BEAUFORT_STEP, windForBeaufort } from './core/oceanWind';
 import { Spring, stepSprings } from './core/spring';
 import type { DeviceProfile } from './device';
 import { createDeformGeometry } from './materials/deform';
@@ -26,6 +27,8 @@ export class App implements PointerTarget {
   private readonly pointer: PointerInput;
   private readonly spin: SpinController;
   private readonly morph = new ShapeMorph();
+  /** Shared by both oceans and their waves, which read it every frame; the wind control sets its wind. */
+  private readonly oceanTuning: OceanTuning;
   /** Scale "pop" when switching material. */
   private readonly pop = new Spring(240, 13, 1, 1);
   private current: Substance;
@@ -54,6 +57,7 @@ export class App implements PointerTarget {
     this.autoSpin = scene.spin;
     const geometry = createDeformGeometry(device.coarse);
     const oceanTuning = readOceanTuning(location.search);
+    this.oceanTuning = oceanTuning;
     // the open ocean and the coast share one sea; only one is ever on screen
     const waves = new OceanFFT(stage.renderer, device.coarse, oceanTuning);
     const ocean = new Ocean(
@@ -99,6 +103,7 @@ export class App implements PointerTarget {
       onShape: (id) => this.setShape(id),
       onSetting: (id) => this.setSetting(id),
       onToggleSpin: () => this.setAutoSpin(!this.autoSpin),
+      onWind: (level) => this.setWind(level),
       onNextSetting: () =>
         this.setSetting(SETTING_ORDER[(SETTING_ORDER.indexOf(this.setting) + 1) % SETTING_ORDER.length]!),
     });
@@ -137,6 +142,7 @@ export class App implements PointerTarget {
     }
     this.stage.backdrop.setPool(this.current.accent, this.current.poolStrength);
     this.controls.showMaterial(id, this.current.hint(this.device.coarse));
+    this.controls.showWind(this.current.hasWind ? this.windLevel() : null);
     this.controls.showReadout(this.current.readout());
     this.syncUrl();
     if (animate) {
@@ -169,6 +175,18 @@ export class App implements PointerTarget {
     this.syncUrl();
   }
 
+  /** Sets the mean the ocean wind wanders around, as a Beaufort level. */
+  setWind(level: number): void {
+    this.oceanTuning.windSpeed = windForBeaufort(level);
+    this.controls.showWind(level);
+    this.syncUrl();
+  }
+
+  /** The Beaufort level nearest the tuned wind (a URL can ask for any speed). */
+  private windLevel(): number {
+    return Math.min(BEAUFORT_NAMES.length - 1, Math.round(this.oceanTuning.windSpeed / BEAUFORT_STEP));
+  }
+
   /** Mirrors the scene into the URL (without adding history entries), so a reload opens on the same view. */
   private syncUrl(): void {
     const scene = {
@@ -177,7 +195,7 @@ export class App implements PointerTarget {
       setting: this.setting,
       spin: this.autoSpin,
     };
-    const query = sceneQuery(scene, location.search);
+    const query = oceanTuningQuery(this.oceanTuning, sceneQuery(scene, location.search));
     if (query !== location.search)
       history.replaceState(history.state, '', `${location.pathname}${query}${location.hash}`);
   }

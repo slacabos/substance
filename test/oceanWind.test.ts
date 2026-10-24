@@ -1,7 +1,18 @@
 import { Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { dispersion, OCEAN_WIND_ANGLE } from '../src/core/oceanFFT';
-import { GustField, oceanWind, relaxGain, WIND, windAt } from '../src/core/oceanWind';
+import {
+  beaufortFor,
+  BEAUFORT_NAMES,
+  GustField,
+  oceanWind,
+  relaxGain,
+  seaGain,
+  WIND,
+  windAt,
+  windForBeaufort,
+} from '../src/core/oceanWind';
+import { OCEAN_DEFAULTS, OCEAN_LIMITS } from '../src/core/oceanTuning';
 
 describe('ocean wind', () => {
   it('wanders around the tuned wind without running away', () => {
@@ -93,5 +104,32 @@ describe('ocean wind', () => {
         expect(field.intensity(g)).toBeLessThanOrEqual(1);
       }
     }
+  });
+
+  it('reads Beaufort levels both ways, with the default wind a light breeze', () => {
+    expect(beaufortFor(OCEAN_DEFAULTS.windSpeed)).toBe(2);
+    expect(BEAUFORT_NAMES[2]).toBe('Light breeze');
+    for (let level = 0; level < BEAUFORT_NAMES.length; level++) {
+      expect(beaufortFor(windForBeaufort(level))).toBe(level);
+      expect(windForBeaufort(level)).toBeLessThanOrEqual(OCEAN_LIMITS.windSpeed[1]);
+    }
+    // a full touch-made storm adds about six levels
+    expect(beaufortFor(OCEAN_DEFAULTS.windSpeed, 1)).toBe(8);
+    expect(beaufortFor(100, 1)).toBe(12);
+  });
+
+  it('grows the sea with the wind by its slopes, as Cox and Munk measured', () => {
+    expect(seaGain(OCEAN_DEFAULTS.windSpeed)).toBeCloseTo(1, 12);
+    let last = 0;
+    for (let level = 0; level < BEAUFORT_NAMES.length; level++) {
+      const gain = seaGain(windForBeaufort(level));
+      expect(gain).toBeGreaterThan(last);
+      last = gain;
+    }
+    // calm is glassy but still swells; a strong breeze about doubles the slopes
+    expect(seaGain(0)).toBeGreaterThan(0.3);
+    expect(seaGain(0)).toBeLessThan(0.6);
+    expect(seaGain(windForBeaufort(6))).toBeGreaterThan(1.8);
+    expect(seaGain(windForBeaufort(6))).toBeLessThan(2.4);
   });
 });

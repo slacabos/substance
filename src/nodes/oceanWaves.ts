@@ -35,7 +35,10 @@ export interface OceanWaveFields {
   readonly displacement: readonly Texture[];
   readonly derivatives: readonly Texture[];
   readonly foam: readonly Texture[];
+  /** Slope variance each cascade carries at amplitude 1 and the default wind. */
   readonly slopeVariance: readonly number[];
+  /** The waves' amplitude for the live wind against the default; slope variance goes as its square. */
+  readonly windGain: Node<'float'>;
 }
 
 /** Angular radius of a cat's paw. */
@@ -187,7 +190,8 @@ function sampleFace(
     // Slope variance the mip averaged away; it comes back as roughness. Near the base level the local slope
     // is just noisy, so only count it once the texture is really filtered.
     const resolved = deriv.x.mul(deriv.x).add(deriv.y.mul(deriv.y));
-    const lost = max(float(fields.slopeVariance[c]!).sub(resolved), 0).mul(smoothstep(0.5, 2.5, level));
+    const carried = float(fields.slopeVariance[c]!).mul(fields.windGain.mul(fields.windGain));
+    const lost = max(carried.sub(resolved), 0).mul(smoothstep(0.5, 2.5, level));
     sum.lost = sum.lost.add(lost.mul(wSlope).mul(wSlope));
     if (withFoam) {
       // folding was measured at the tuned amplitude; storms deepen it

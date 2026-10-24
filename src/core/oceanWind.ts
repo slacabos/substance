@@ -1,5 +1,6 @@
 import { Vector3 } from 'three';
 import { OCEAN_WIND_ANGLE } from './oceanFFT';
+import { OCEAN_DEFAULTS } from './oceanTuning';
 
 // Real wind is never steady: it veers and backs, freshens and drops, and gusts rough up passing patches of
 // water (cat's paws). The sea answers on many time scales: ripples turn within seconds, while swell raised by
@@ -29,6 +30,43 @@ export const WIND = {
   /** The surface current the wind drives, orb radii per second per unit of wind speed. */
   drift: 0.035,
 } as const;
+
+/** Tuned wind speed per Beaufort level: the default wind, 0.9, is a light breeze. */
+export const BEAUFORT_STEP = 0.45;
+/** The levels the wind control offers, Calm to Strong breeze; past that the orb's sea is all whitecaps. */
+export const BEAUFORT_NAMES = [
+  'Calm',
+  'Light air',
+  'Light breeze',
+  'Gentle breeze',
+  'Moderate breeze',
+  'Fresh breeze',
+  'Strong breeze',
+] as const;
+
+/** The tuned wind speed for a Beaufort level. */
+export function windForBeaufort(level: number): number {
+  return level * BEAUFORT_STEP;
+}
+
+/**
+ * How much bigger the waves are at a tuned wind speed than at the default, by their slopes. A real sea grows
+ * with the wind mostly by lengthening, not steepening: Cox and Munk measured the slope variance as
+ * 0.003 + 0.00512 U (U in m/s), so from Beaufort 2 to 6 slopes only double. (The spectrum's height going as
+ * speed^1.5 at a fixed peak wavelength would steepen it until every crest broke.)
+ */
+export function seaGain(speed: number): number {
+  const slope = (s: number) => {
+    const metres = 0.836 * Math.max(0, s / BEAUFORT_STEP) ** 1.5;
+    return Math.sqrt(0.003 + 0.00512 * metres);
+  };
+  return slope(speed) / slope(OCEAN_DEFAULTS.windSpeed);
+}
+
+/** The Beaufort level, 0 to 12, of a wind speed plus the touch-made rough weather (0 to 1) on top of it. */
+export function beaufortFor(speed: number, storm = 0): number {
+  return Math.min(12, Math.max(0, Math.round(speed / BEAUFORT_STEP + storm * 5.6)));
+}
 
 export interface WindState {
   /** Direction the wind blows toward, in cube-face axes from east toward north (as OCEAN_WIND_ANGLE). */

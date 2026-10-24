@@ -52,3 +52,18 @@ export function readOceanTuning(search: string): OceanTuning {
   }
   return tuning;
 }
+
+/**
+ * The query string with the tuning written back on top of `base` (other parameters are kept), leaving out
+ * values at their defaults so the plain URL stays clean. Returns '' when nothing needs saying.
+ */
+export function oceanTuningQuery(tuning: Readonly<OceanTuning>, base = ''): string {
+  const query = new URLSearchParams(base);
+  for (const name of OCEAN_VALUES) {
+    const value = Math.round(tuning[name] * 1000) / 1000;
+    if (value === OCEAN_DEFAULTS[name]) query.delete(KEYS[name]);
+    else query.set(KEYS[name], String(value));
+  }
+  const text = query.toString();
+  return text ? `?${text}` : '';
+}

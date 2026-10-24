@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createOceanSpectrum } from '../src/core/oceanFFT';
-import { OCEAN_DEFAULTS, oceanDetail, readOceanTuning } from '../src/core/oceanTuning';
+import { OCEAN_DEFAULTS, oceanDetail, oceanTuningQuery, readOceanTuning } from '../src/core/oceanTuning';
 import { createDeformGeometry } from '../src/materials/deform';
 
 describe('ocean tuning', () => {
@@ -15,6 +15,15 @@ describe('ocean tuning', () => {
     const tuning = readOceanTuning('?oceanWind=9&oceanWavelength=0.2&oceanFoam=nope&oceanLod=high');
     expect(tuning).toMatchObject({ windSpeed: 3, peakWavelength: 0.2, foam: 1.4 });
     expect(tuning).not.toHaveProperty('lod');
+  });
+
+  it('writes the tuning back into the URL, keeping other parameters and leaving out defaults', () => {
+    expect(oceanTuningQuery(OCEAN_DEFAULTS, '?material=ocean&oceanWind=2')).toBe('?material=ocean');
+    const windy = { ...OCEAN_DEFAULTS, windSpeed: 0.45 * 3 };
+    const query = oceanTuningQuery(windy, '?material=coast');
+    expect(query).toBe('?material=coast&oceanWind=1.35');
+    expect(readOceanTuning(query)).toEqual(windy);
+    expect(oceanTuningQuery(OCEAN_DEFAULTS)).toBe('');
   });
 
   it('uses about 8k vertices on mobile and 24k on desktop', () => {

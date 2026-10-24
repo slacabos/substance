@@ -28,6 +28,8 @@ export interface Substance {
   readonly objects: readonly Object3D[];
   /** Added to the scene directly (they don't spin); shown only while this material is active. */
   readonly worldObjects?: readonly Object3D[];
+  /** Blown by the ocean wind, so the readout opens the wind control. */
+  readonly hasWind?: boolean;
 
   hint(coarse: boolean): string;
   readout(): Readout;

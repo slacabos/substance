@@ -3,7 +3,7 @@ import { MeshBasicNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import { Fn, normalize, positionGeometry } from 'three/tsl';
 import { TapRhythm } from '../core/oceanRhythm';
 import { OceanWeather, weatherRadius } from '../core/oceanWeather';
-import { GustField, oceanWind } from '../core/oceanWind';
+import { beaufortFor, GustField, oceanWind } from '../core/oceanWind';
 import type { OceanTuning } from '../core/oceanTuning';
 import { baseR } from '../nodes/shape';
 import { morphUniform } from '../scene/shape';
@@ -16,15 +16,11 @@ import { OceanSpray } from './oceanSpray';
 import type { SettingLook } from '../scene/settings';
 import type { FrameContext, MaterialId, Readout, Substance } from './types';
 
-/** Storm level (1 = calm) to a Beaufort number for the readout. */
-export function beaufortFor(storm: number): number {
-  return Math.round(2 + (storm - 1) * 4);
-}
-
 /** A water-covered miniature orb with coherent swells and local, touch-driven rough weather. */
 export class Ocean implements Substance {
   readonly id: MaterialId;
   readonly accent = '#328eaf';
+  readonly hasWind = true;
   readonly poolStrength = 0.14;
   readonly hitPadding = 0.1;
   readonly objects;
@@ -47,7 +43,8 @@ export class Ocean implements Substance {
   private pressing = false;
   private heldSeconds = 0;
   private pressStartedAt = 0;
-  private storm = 1;
+  /** The live wind plus touch-made rough weather, for the readout. */
+  private beaufort = 2;
   private time = 0;
   private lastSprayTime = -Infinity;
   private lastWhitewaterTime = -Infinity;
@@ -123,7 +120,7 @@ export class Ocean implements Substance {
   }
 
   readout(): Readout {
-    return [this.shores ? 'Coast' : 'Ocean', `Beaufort ${beaufortFor(this.storm)}`, '35 g/kg salt'];
+    return [this.shores ? 'Coast' : 'Ocean', `Beaufort ${this.beaufort}`, '35 g/kg salt'];
   }
 
   down(dir: Vector3): void {
@@ -218,8 +215,7 @@ export class Ocean implements Substance {
         this.gusts.intensity(gust) * gustScale,
       );
     });
-    const freshening = this.tuning.windSpeed > 0 ? wind.speed / this.tuning.windSpeed : 1;
-    this.storm = (1 + this.weatherField.peak * 1.4) * freshening;
+    this.beaufort = beaufortFor(wind.speed, this.weatherField.peak);
     for (let i = 0; i < this.weatherField.patches.length; i++) {
       const patch = this.weatherField.patches[i]!;
       this.uniforms.weather[i]!.set(patch.center.x, patch.center.y, patch.center.z, patch.strength);

@@ -33,7 +33,17 @@
         <div class="brand"><span class="mark" aria-hidden="true"></span>Substance</div>
         <div class="fps" id="fps" aria-hidden="true">– fps</div>
       </div>
-      <div class="readout" id="readout"><b>Water</b><br />n = 1.333 · 997 kg/m³</div>
+      <div class="top-right">
+        <div class="readout" id="readout"><b>Water</b><br />n = 1.333 · 997 kg/m³</div>
+        <!-- on materials with wind: its Beaufort level, a ring filling with it; each tap blows harder -->
+        <button type="button" class="wind" id="wind" hidden>
+          <svg class="wind-ring" viewBox="0 0 40 40" aria-hidden="true">
+            <circle class="wind-track" cx="20" cy="20" r="18" />
+            <circle class="wind-arc" id="wind-arc" cx="20" cy="20" r="18" pathLength="1" />
+          </svg>
+          <span class="wind-number" id="wind-number" aria-hidden="true">2</span>
+        </button>
+      </div>
     </header>
 
     <div class="dock" id="dock">
