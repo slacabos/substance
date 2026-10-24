@@ -172,10 +172,18 @@ export function oceanFoam(
 }
 
 /** Approximate absorption through a deep body of water, plus a blue grazing-angle glint. */
-export function oceanColor(wave: Float, foam: Float, weather: Float, u: DeformUniforms): Vec3 {
+export function oceanColor(
+  wave: Float,
+  simWave: Float,
+  foam: Float,
+  weather: Float,
+  u: DeformUniforms,
+): Vec3 {
   const facing = clamp(dot(normalViewGeometry, positionViewDirection), 0, 1);
   const depth = smoothstep(0.2, 0.9, facing);
-  const tint = smoothstep(-0.025, 0.025, wave).mul(0.35).add(depth.mul(0.1));
+  // a wave the hand raises lets more light through its crest and less through its trough
+  const raised = smoothstep(-0.03, 0.03, simWave).sub(0.5).mul(0.45);
+  const tint = clamp(smoothstep(-0.025, 0.025, wave).mul(0.35).add(depth.mul(0.1)).add(raised), 0, 1);
   const water = mix(u.uDeep, u.uShallow, tint).mul(float(1).sub(weather.mul(0.05)));
   const rim = pow(float(1).sub(facing), 5).mul(0.12);
   const lit = mix(water, vec3(0.08, 0.29, 0.39), rim);

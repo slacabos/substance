@@ -22,8 +22,10 @@ import {
   attribute,
   Fn,
   float,
+  length,
   materialRoughness,
   max,
+  min,
   mix,
   normalize,
   normalLocal,
@@ -48,6 +50,11 @@ import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
 import { baseN, baseR } from '../nodes/shape';
 
 export { DeformMode, type DeformUniforms };
+
+/** How far the simulated waves' vertices lean toward their crests, per unit of slope (orb radii). */
+const CREST_LEAN = 0.012;
+/** The most a vertex leans, orb radii: well under half the desktop mesh's 0.025 spacing. */
+const CREST_SHIFT = 0.004;
 
 /** What the ocean material needs beyond the shared uniforms: its FFT waves, the simulated surface, the spacing. */
 export interface OceanSurfaceOptions {
@@ -138,6 +145,7 @@ export function createDeformMaterial(
 
   const { waves, sim, spacing, coastal } = ocean;
   const wave = varyingProperty('float', 'vWave');
+  const simWave = varyingProperty('float', 'vSimWave');
   const weatherAmount = varyingProperty('float', 'vWeather');
   const damping = varyingProperty('float', 'vDamping');
   const direction = varyingProperty('vec3', 'vDirection');
@@ -155,6 +163,7 @@ export function createDeformMaterial(
     simGradient.assign(sim.slope.element(vertexIndex).xyz);
     normalLocal.assign(normalize(surface.nrm.sub(simGradient)));
     wave.assign(surface.height.add(simHeight));
+    simWave.assign(simHeight);
     weatherAmount.assign(surface.weather);
     damping.assign(surface.damping);
     direction.assign(p);
@@ -166,7 +175,11 @@ export function createDeformMaterial(
     objA.assign(p.sub(e1.mul(drift.x)).sub(e2.mul(drift.y)));
     objB.assign(p.sub(e1.mul(drift.z)).sub(e2.mul(drift.w)));
     shore?.assign(attribute('oceanShoreData', 'vec4').w);
-    return surface.pos.add(normalize(surface.pos).mul(simHeight));
+    // The simulated waves' crests sharpened as the swell's are: each vertex shifts a little uphill, so crests
+    // narrow and troughs widen. Capped well under half the mesh spacing, so neighbours can never cross.
+    const lean = simGradient.mul(CREST_LEAN);
+    const shift = lean.mul(min(float(1), float(CREST_SHIFT).div(max(length(lean), 1e-6))));
+    return surface.pos.add(normalize(surface.pos).mul(simHeight)).add(shift);
   })();
 
   // Per pixel: the full-resolution wave slopes, crests where the surface bunches up, and roughness for the
@@ -199,7 +212,7 @@ export function createDeformMaterial(
   );
   const roughness = mix(rough, 0.92, foam);
   material.normalNode = normal;
-  material.colorNode = oceanColor(wave, foam, weatherAmount, uniforms);
+  material.colorNode = oceanColor(wave, simWave, foam, weatherAmount, uniforms);
   material.roughnessNode = roughness;
   material.emissiveNode = oceanSunLight(normal, wave, foam, roughness, uniforms);
   material.specularIntensityNode = mix(float(0.75), float(0.08), foam);

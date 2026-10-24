@@ -35,7 +35,7 @@ export const SURFACE = {
    * How far a hand can press the open sea, orb radii. It reaches less over shallower water (in proportion to
    * the depth), so it can't press the shallows below their bed; a push fades out as the water nears it.
    */
-  handReach: 0.06,
+  handReach: 0.09,
 } as const;
 
 /** How much of a push the water at height h over still depth `depth` still takes (see SURFACE.handReach). */

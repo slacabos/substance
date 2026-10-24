@@ -61,9 +61,12 @@ export const oceanReleaseImpulse = (seconds: number): number =>
 /** How the hand of god moves water. */
 const HAND = {
   /** Vertical speed a tap of strength 1 gives the water under it, orb radii per second. */
-  impulse: 0.4,
-  /** Sharpness k of a tap's footprint (see hat): pressing down out to about 0.14 radians. */
-  tapSharpness: 100,
+  impulse: 1.4,
+  /**
+   * Sharpness k of a tap's footprint (see hat): pressing down out to about 0.08 radians. A narrow, hard push
+   * throws a tall, short ring; a broad one only a long, low swell that hides in the sea.
+   */
+  tapSharpness: 300,
   /** A drag churns a narrower strip. */
   dragSharpness: 110,
   /** Downward acceleration per unit of press load. */
