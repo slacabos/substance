@@ -153,21 +153,7 @@ button:focus-visible {
     border-radius 0.45s cubic-bezier(0.3, 1.6, 0.5, 1),
     background 0.4s ease;
 }
-body[data-shape='cube'] .top-left {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.fps {
-  font-family: var(--f-mono);
-  font-size: 10.5px;
-  line-height: 1;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.mark {
+body[data-shape='cube'] .mark {
   border-radius: 3px;
 }
 .readout {
@@ -468,21 +454,8 @@ body[data-shape='cube'] .top-left {
   button,
   .card,
   .sw,
-  .top-left {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-  }
-  .fps {
-    font-family: var(--f-mono);
-    font-size: 10.5px;
-    line-height: 1;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-  }
-  .mark {
+  .mark,
+  .wind-arc {
     transition: none;
   }
 }
