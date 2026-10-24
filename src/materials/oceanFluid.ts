@@ -77,7 +77,7 @@ const PER_SPLASH = 24;
 /** Particles started per second per unit of sphere area where the water breaks hardest, for 32k particles. */
 const EMISSION = 30000;
 /** How much harder breaking surf throws spray than open-sea whitecaps of the same strength. */
-const SURF_SPRAY = 3;
+const SURF_SPRAY = 6;
 /** A splash is a third droplets, the rest mist (as the old spray). */
 const DROPLET_SHARE = 0.35;
 /** A particle's crowd (see `crowd`) above which it's dense spray, drawn as one surface. */
@@ -214,10 +214,12 @@ export class OceanFluid {
       const aerated = here.y.greaterThanEqual(0.18).and(here.z.greaterThanEqual(0.1));
       const open = select(aerated, here.y.mul(0.82).add(here.z.mul(0.3)), float(0));
       const score = max(here.w, open);
-      // surf pounding a bank throws far more spray than a whitecap
+      // Surf throws its spray as a wave hits: while the breaking rises (the flow's w), not for as long as it
+      // stays broken, which would pour from the same spot like a tap. Far more than an open-sea whitecap.
+      const surge = buffers.flow.element(i).w;
       const excess = max(
         clamp(open.sub(0.2).div(0.8), 0, 1),
-        clamp(here.w.sub(0.1).div(0.4), 0, 1).mul(SURF_SPRAY),
+        clamp(surge.sub(0.3).div(2), 0, 1).mul(SURF_SPRAY),
       );
       const expected = excess
         .mul((EMISSION * n) / 32768)

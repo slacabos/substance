@@ -5,6 +5,8 @@ const SAND = new Color('#9d8967');
 const STONE = new Color('#535a58');
 const GRASS = new Color('#3d5e40');
 const WET = new Color('#344644');
+const SHELF = new Color('#c9bf96');
+const DEEP = new Color('#2c4a52');
 const color = new Color();
 
 const smooth = (a: number, b: number, value: number): number => {
@@ -83,7 +85,11 @@ export class OceanShores {
         .copy(STONE)
         .lerp(GRASS, smooth(0.06, 0.12, height) * (1 - smooth(0.08, 0.32, slope)) * 0.9)
         .lerp(SAND, (1 - smooth(0.018, 0.06, height)) * (1 - smooth(0.12, 0.5, slope)) * 0.65)
-        .lerp(WET, 1 - smooth(-0.025, 0.024, height))
+        // a narrow wet band at the waterline; below it the shelf is pale sand, darkening with depth, which is
+        // what makes clear shallow water turquoise
+        .lerp(WET, (1 - smooth(0.012, 0.024, height)) * smooth(0.002, 0.01, height))
+        .lerp(SHELF, 1 - smooth(0.002, 0.01, height))
+        .lerp(DEEP, 1 - smooth(-0.06, -0.01, height))
         .multiplyScalar(0.85 + grain * 0.13);
       colors.set([color.r, color.g, color.b], i * 3);
     }

@@ -571,9 +571,11 @@ export class OceanSim {
         }
         state.z.assign(foam);
         state.w.assign(turbulence);
+        // how fast the breaking rose since last frame: a wave arriving, which is when surf throws spray
+        const surge = max(impact.sub(this.surface.element(i).w), 0).div(u.frameDt);
         this.surface.element(i).assign(vec4(state.x.add(surfHeight), foam, turbulence, impact));
         const flow = this.current[final]!.element(i).xyz.add(windDrift(i));
-        this.flow.element(i).assign(vec4(flow, 0));
+        this.flow.element(i).assign(vec4(flow, surge));
         // both foam drifts in this vertex's tangent basis, each restarting on its own beat
         const { e1, e2 } = driftBasis(q);
         const moved = vec2(dot(flow, e1), dot(flow, e2)).mul(u.frameDt);

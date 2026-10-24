@@ -36,6 +36,7 @@ import {
   uniform,
   uniformArray,
   varyingProperty,
+  vec3,
   vertexIndex,
 } from 'three/tsl';
 import { MAX_IMPULSES } from '../config';
@@ -50,6 +51,9 @@ import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
 import { baseN, baseR } from '../nodes/shape';
 
 export { DeformMode, type DeformUniforms };
+
+/** The colour of clear water a few millimetres deep over pale rock. */
+const SHALLOW_WATER = vec3(0.16, 0.62, 0.66);
 
 /** How far the simulated waves' vertices lean toward their crests, per unit of slope (orb radii). */
 const CREST_LEAN = 0.012;
@@ -212,11 +216,16 @@ export function createDeformMaterial(
   );
   const roughness = mix(rough, 0.92, foam);
   material.normalNode = normal;
-  material.colorNode = oceanColor(wave, simWave, foam, weatherAmount, uniforms);
+  // Over a coast's shelf the water is a few millimetres deep: clear and turquoise, the bank showing through it,
+  // rather than the open sea's deep blue running into the rock like a wall.
+  const shallow = shore ? float(1).sub(smoothstep(0.004, 0.06, shore)) : float(0);
+  const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms);
+  material.colorNode = mix(color, SHALLOW_WATER, shallow.mul(float(1).sub(foam)).mul(0.55));
   material.roughnessNode = roughness;
   material.emissiveNode = oceanSunLight(normal, wave, foam, roughness, uniforms);
   material.specularIntensityNode = mix(float(0.75), float(0.08), foam);
-  material.transmissionNode = mix(float(0.22), float(0), foam);
+  material.transmissionNode = mix(mix(float(0.22), float(0.85), shallow), float(0), foam);
+  material.thicknessNode = mix(float(0.7), float(0.03), shallow);
   return { material, uniforms };
 }
 
