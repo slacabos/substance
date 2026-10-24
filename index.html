@@ -15,8 +15,14 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700&family=Figtree:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
     />
+    <!-- the default night backdrop, so the page doesn't flash white before the stylesheet and renderer load -->
+    <style>
+      html {
+        background: #1b202b;
+      }
+    </style>
   </head>
-  <body>
+  <body data-setting="night">
     <canvas
       id="stage"
       aria-label="Interactive 3D object. Drag on it to touch it, drag the background to spin it."
