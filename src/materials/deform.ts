@@ -4,7 +4,7 @@ import {
   IcosahedronGeometry,
   LinearFilter,
   LinearMipmapLinearFilter,
-  RedFormat,
+  RGFormat,
   RepeatWrapping,
   UnsignedByteType,
   Vector3,
@@ -70,7 +70,7 @@ let lace: DataTexture | undefined;
 function foamLaceTexture(): DataTexture {
   if (lace) return lace;
   const size = 512;
-  lace = new DataTexture(bakeFoamLace(size, LACE_TILE_CELLS), size, size, RedFormat, UnsignedByteType);
+  lace = new DataTexture(bakeFoamLace(size, LACE_TILE_CELLS), size, size, RGFormat, UnsignedByteType);
   lace.wrapS = lace.wrapT = RepeatWrapping;
   lace.minFilter = LinearMipmapLinearFilter;
   lace.magFilter = LinearFilter;

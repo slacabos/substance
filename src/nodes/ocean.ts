@@ -20,6 +20,7 @@ import {
   smoothstep,
   sqrt,
   texture,
+  vec2,
   vec3,
   vec4,
 } from 'three/tsl';
@@ -61,43 +62,48 @@ const LACE = 40;
 export const LACE_TILE_CELLS = 32;
 
 /**
- * The baked lace's edge distance at obj, in cell widths, projected along the three axes and blended by how
- * squarely each faces the surface. The second, smaller bubble size is offset so the two never line up.
+ * The baked lace at obj (core/foamLace.ts): x the distance to the nearest edge between bubbles, in cell widths;
+ * y the bubble's own random number. Projected along the three axes and blended by how squarely each faces the
+ * surface; each bubble size is offset so they never line up.
  */
-function laceEdge(lace: Texture, obj: Vec3, frequency: number, scale: Float): Float {
+function laceAt(lace: Texture, obj: Vec3, frequency: number, scale: Float): Node<'vec2'> {
   const n = normalize(obj);
   const w = pow(abs(n), vec3(6));
   const weights = w.div(w.x.add(w.y).add(w.z));
-  const at = obj.mul(scale.mul(frequency / LACE_TILE_CELLS)).add(frequency === 1 ? 0 : 0.37);
-  const read = (uv: Node<'vec2'>) => texture(lace, uv).x;
-  return read(at.yz)
-    .mul(weights.x)
-    .add(read(at.zx).mul(weights.y))
-    .add(read(at.xy).mul(weights.z))
-    .mul(LACE_RANGE);
+  const at = obj.mul(scale.mul(frequency / LACE_TILE_CELLS)).add(frequency * 0.37);
+  const read = (uv: Node<'vec2'>) => texture(lace, uv).xy;
+  const sample = read(at.yz).mul(weights.x).add(read(at.zx).mul(weights.y)).add(read(at.xy).mul(weights.z));
+  return vec2(sample.x.mul(LACE_RANGE), sample.y);
 }
 
 /**
- * Churned foam as lace: the web between bubbles, widening as the foam thickens and opening up into rags as it
- * thins (rather than fading evenly). Two sizes of bubble, each read at both drifts and crossfaded before the
- * web is cut, so the bubbles never double up.
+ * Churned foam as lace. Where the sim has foam, a slow noise gathers it into clumps with open water between;
+ * within them, the web between bubbles widens as the foam thickens, each bubble closing by its own amount, and a
+ * few large bubbles stay open. As foam thins the clumps break into rags rather than fading evenly. Each bubble
+ * size is read at both drifts and crossfaded before the web is cut, so bubbles never double up.
  */
 function foamLace(drift: FoamDrift, lace: Texture, amount: Float, u: DeformUniforms): Float {
   const scale = float(FOAM_REFERENCE_WAVELENGTH).div(u.uOceanWavelength).mul(LACE);
-  const middle = mix(drift.b, drift.a, drift.blend);
-  // ragged: some patches hold their foam longer than others
-  const held = clamp(amount.mul(vnoise(middle.mul(scale).mul(0.3)).mul(0.9).add(0.55)), 0, 1);
-  const web = (frequency: number, reach: number) => {
-    const edge = mix(
-      laceEdge(lace, drift.b, frequency, scale),
-      laceEdge(lace, drift.a, frequency, scale),
-      drift.blend,
-    );
+  const middle = mix(drift.b, drift.a, drift.blend).mul(scale);
+  const clumps = vnoise(middle.mul(0.08))
+    .mul(0.65)
+    .add(vnoise(middle.mul(0.21).add(7.1)).mul(0.35));
+  const held = clamp(amount.mul(clumps.sub(0.3).mul(2.6)), 0, 1);
+  const bubbles = (frequency: number) =>
+    mix(laceAt(lace, drift.b, frequency, scale), laceAt(lace, drift.a, frequency, scale), drift.blend);
+  const cutAt = (edge: Float, cut: Float) => {
     const width = fwidth(edge).add(0.02);
-    const cut = held.mul(reach);
     return float(1).sub(smoothstep(cut.sub(width), cut.add(width), edge));
   };
-  return max(web(1, 0.34), web(2.7, 0.22).mul(0.75)).mul(smoothstep(0.01, 0.12, held));
+  // the web around each bubble, as wide as the foam is thick and each bubble's own number allows
+  const web = (b: Node<'vec2'>, reach: number) => cutAt(b.x, held.mul(reach).mul(mix(0.35, 1.6, b.y)));
+  const small = bubbles(2.7);
+  const foam = max(web(bubbles(1), 0.34), web(small, 0.22).mul(0.75));
+  // a few large bubbles stay open, more as the foam thins; their rims are ragged with the small bubbles
+  const large = bubbles(0.38);
+  const opening = smoothstep(0.55, 0.95, large.y).mul(float(1.2).sub(held.mul(0.6)));
+  const open = float(1).sub(cutAt(large.x.add(small.x.mul(0.25)), mix(0.95, 0.12, clamp(opening, 0, 1))));
+  return foam.mul(float(1).sub(open)).mul(smoothstep(0.01, 0.12, held));
 }
 
 /** Two octaves of value noise, each fading to its mean once its cells get smaller than a pixel. */
