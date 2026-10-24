@@ -2,7 +2,7 @@ import { Vector3, type BufferGeometry } from 'three';
 import { OCEAN_DEPTH } from './oceanFFT';
 import { buildDirectionLookup } from './oceanLookup';
 import { oceanMesh } from './oceanMesh';
-import { shoreDistance, shoreGroundHeight } from './oceanShores';
+import { shelfLag, SHORE_SITES, shoreDistance, shoreGroundHeight, shoreSiteDistance } from './oceanShores';
 import { vertexAreas } from './shallowWater';
 import { buildWaveKernel, type WaveKernel } from './waveKernel';
 
@@ -18,10 +18,10 @@ export interface OceanField {
   shoreDistance: Float32Array;
   /** Unit tangent pointing away from the nearest shore, three per vertex (zero on the open ocean). */
   shoreNormal: Float32Array;
-  /** A coordinate running along the coast, so surf breaks in sets rather than all at once. */
-  shoreAlong: Float32Array;
-  /** How squarely the coast faces the prevailing wind (0.45 sheltered to 1 exposed). */
-  shoreExposure: Float32Array;
+  /** Which island (SHORE_SITES) is nearest, whose swell the surf here follows. */
+  shoreSite: Float32Array;
+  /** How far behind a crest falls crossing the shelf to here (shelfLag, core/oceanShores.ts). */
+  shelfLag: Float32Array;
   /** Still-water depth. */
   depth: Float32Array;
   areas: Float32Array;
@@ -34,8 +34,6 @@ export interface OceanField {
 }
 
 const fract = (x: number): number => x - Math.floor(x);
-/** Prevailing wind on the orb, for coast exposure. */
-const WIND = new Vector3(0.35, 0.9, 0.25);
 
 /**
  * Builds the field for an indexed icosphere. On a coast, land vertices become walls and the triangles wholly
@@ -47,8 +45,8 @@ export function createOceanField(geometry: BufferGeometry, coastal: boolean): Oc
   const count = positions.length / 3;
   const distance = new Float32Array(count).fill(1);
   const normal = new Float32Array(count * 3);
-  const along = new Float32Array(count);
-  const exposure = new Float32Array(count).fill(1);
+  const site = new Float32Array(count);
+  const lag = new Float32Array(count);
   const depth = new Float32Array(count).fill(OCEAN_DEPTH);
   const wet = new Uint8Array(count).fill(1);
   const dir = new Vector3();
@@ -74,11 +72,13 @@ export function createOceanField(geometry: BufferGeometry, coastal: boolean): Oc
       }
       const length = Math.hypot(gx, gy, gz) || 1;
       normal.set([gx / length, gy / length, gz / length], i * 3);
-      along[i] = -x * 0.88 + y * 0.32 + z * 0.34;
-      const windDot = x * WIND.x + y * WIND.y + z * WIND.z;
-      const windLength = Math.hypot(WIND.x - x * windDot, WIND.y - y * windDot, WIND.z - z * windDot) || 1;
-      exposure[i] =
-        0.45 + 0.55 * Math.max(0, -(gx * WIND.x + gy * WIND.y + gz * WIND.z) / length / windLength);
+      dir.fromArray(positions, i * 3);
+      let nearest = Infinity;
+      SHORE_SITES.forEach((s, k) => {
+        const d = shoreSiteDistance(s, dir);
+        if (d < nearest) [nearest, site[i]] = [d, k];
+      });
+      lag[i] = shelfLag(distance[i]!);
       wet[i] = distance[i]! > 0 ? 1 : 0;
       // the seabed rises toward the bank; the open sea keeps the ocean's depth
       depth[i] = wet[i]
@@ -110,8 +110,8 @@ export function createOceanField(geometry: BufferGeometry, coastal: boolean): Oc
     wet,
     shoreDistance: distance,
     shoreNormal: normal,
-    shoreAlong: along,
-    shoreExposure: exposure,
+    shoreSite: site,
+    shelfLag: lag,
     depth,
     areas: vertexAreas(mesh),
     kernel: buildWaveKernel(positions, neighbors, depth),

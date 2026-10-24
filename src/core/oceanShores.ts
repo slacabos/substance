@@ -1,4 +1,5 @@
 import { Vector3 } from 'three';
+import { dispersion, OCEAN_DEPTH, OCEAN_GRAVITY, OCEAN_WAVELENGTH_SCALE } from './oceanFFT';
 
 export interface ShoreSite {
   readonly center: Vector3;
@@ -109,31 +110,94 @@ export function shoreGroundHeight(dir: Vector3): number {
   return height;
 }
 
+/**
+ * Still water over the seabed off a shore, at angular distance d (the bank's profile in shoreElevation): a
+ * narrow shelf that reaches the open sea's depth a few hundredths of a radian out.
+ */
+export function shelfDepth(d: number): number {
+  return Math.min(OCEAN_DEPTH, Math.max(0.002, 0.085 * smooth(d / 0.045) - 0.012));
+}
+
+/** Where the shelf ends and the open sea's depth begins. */
+export const SHELF_EDGE = (() => {
+  let d = 0;
+  while (shelfDepth(d) < OCEAN_DEPTH) d += 1e-4;
+  return d;
+})();
+
+/**
+ * How long a crest takes to cross the shelf from distance d out to its edge, per unit of frequency: the
+ * integral of 1 / sqrt(g H) (shallow-water speed). Times the swell's frequency, it's the phase a crest gains
+ * by slowing and bunching up as the water shallows.
+ */
+export function shelfLag(d: number): number {
+  if (d >= SHELF_EDGE) return 0;
+  const from = Math.max(0, d);
+  const steps = 64;
+  const step = (SHELF_EDGE - from) / steps;
+  let sum = 0;
+  for (let i = 0; i < steps; i++)
+    sum += step / Math.sqrt(OCEAN_GRAVITY * shelfDepth(from + (i + 0.5) * step));
+  return sum;
+}
+
+/** The swell that breaks on the shores: the FFT sea's peak, its frequency and its wavenumber in open water. */
+export function shoreSwell(peakWavelength: number): { omega: number; k: number } {
+  const k = (2 * Math.PI) / (peakWavelength * OCEAN_WAVELENGTH_SCALE);
+  return { omega: dispersion(k), k };
+}
+
 export interface ShoreSurfSample {
   height: number;
   breaking: number;
 }
 
-/** A shoaling wave train travels toward d=0, steepens, then collapses at the bank. */
-export function sampleShoreSurf(
-  distance: number,
+/**
+ * The surf's phase at a point off a shore. Offshore it's the swell's own, a plane wave of wavenumber k along
+ * the swell's direction (`along` is the point's distance in that direction from its island's centre). On the
+ * shelf the crests slow and crowd together as the water shallows; the along-shore part of the wavenumber is
+ * kept (Snell's law), so crests swing round to meet the shore and break along it in turn rather than all at once.
+ * `facing` is the cosine between the swell's direction and the way into the shore; `clock` is omega times time.
+ */
+export function shoreSurfPhase(
   along: number,
-  time: number,
-  exposure: number,
-  windSpeed: number,
-  amplitude: number,
+  distance: number,
+  lag: number,
+  facing: number,
+  swell: { omega: number; k: number },
+  clock: number,
+): number {
+  const across = Math.max(0, SHELF_EDGE - distance);
+  return swell.k * along + swell.omega * lag - swell.k * Math.max(facing, 0.15) * across - clock;
+}
+
+/**
+ * Surf at a point with the given phase: the swell rises as it shoals (Green's law, height going as depth to
+ * the -1/4), steepens into a sharp crest, and breaks on the bank. Shores facing the swell take it all; lee
+ * shores only what bends round to them. `energy` is the sea's state (1 at the tuned wind and amplitude).
+ */
+export function sampleShoreSurf(
+  phase: number,
+  distance: number,
+  facing: number,
+  energy: number,
   out: ShoreSurfSample,
 ): void {
-  if (distance < 0 || distance > 0.22) {
+  if (distance < 0 || distance > SURF_REACH) {
     out.height = 0;
     out.breaking = 0;
     return;
   }
-  const envelope = (1 - smooth((distance - 0.11) / 0.11)) * (0.65 + smooth(distance / 0.025) * 0.35);
-  const phase = distance * 43 + time * 3.1 * windSpeed + Math.sin(along * 7) * 0.6 + along * 2;
+  const envelope =
+    (1 - smooth((distance - 0.04) / (SURF_REACH - 0.04))) *
+    Math.min(1.8, (OCEAN_DEPTH / shelfDepth(distance)) ** 0.25) *
+    (0.65 + smooth(distance / 0.025) * 0.35);
+  const exposure = 0.15 + 0.85 * smooth((facing + 0.2) / 0.8);
   const s = Math.sin(phase);
   const crest = Math.max(0, s) ** 5;
-  const windEnergy = Math.min(1.3, Math.max(0, windSpeed));
-  out.height = (s * 0.32 + crest * 0.95 - 0.17) * 0.042 * envelope * exposure * amplitude * windEnergy;
-  out.breaking = crest * (1 - smooth((distance - 0.012) / 0.06)) * exposure * amplitude * windEnergy;
+  out.height = (s * 0.32 + crest * 0.95 - 0.17) * 0.03 * envelope * exposure * energy;
+  out.breaking = crest * (1 - smooth((distance - 0.012) / 0.06)) * exposure * energy;
 }
+
+/** How far out from a shore the surf reaches before it's just the open sea's swell. */
+export const SURF_REACH = 0.12;

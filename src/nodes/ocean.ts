@@ -123,11 +123,11 @@ function foamNoise(obj: Vec3, u: DeformUniforms): Float {
     dot(obj, vec3(0.35, 0.9, 0.25))
       .mul(79)
       .mul(scale)
-      .sub(u.uTime.mul(1.3).mul(u.uOceanWind)),
+      .sub(u.uFoamScroll.mul(1.3)),
     dot(obj, vec3(-0.88, 0.32, 0.34))
       .mul(17)
       .mul(scale)
-      .add(u.uTime.mul(0.18).mul(u.uOceanWind)),
+      .add(u.uFoamScroll.mul(0.18)),
     dot(obj, vec3(0.3, -0.16, 0.94))
       .mul(12)
       .mul(scale),

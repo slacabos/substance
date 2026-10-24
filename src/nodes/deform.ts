@@ -56,7 +56,11 @@ export interface DeformUniforms {
   gusts: Vector4[];
   uDeep: UniformNode<'color', Color>;
   uShallow: UniformNode<'color', Color>;
-  uOceanWind: UniformNode<'float', number>;
+  /**
+   * How far the wind has carried the foam pattern: wind speed added up over time (a product of time and a
+   * changing speed would lurch).
+   */
+  uFoamScroll: UniformNode<'float', number>;
   uOceanWavelength: UniformNode<'float', number>;
   uOceanAmplitude: UniformNode<'float', number>;
   uOceanChoppiness: UniformNode<'float', number>;

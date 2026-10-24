@@ -104,7 +104,7 @@ export function createDeformUniforms(): DeformUniforms {
     gusts,
     uDeep: uniform(new Color('#0b3553')),
     uShallow: uniform(new Color('#1a7695')),
-    uOceanWind: uniform(OCEAN_DEFAULTS.windSpeed),
+    uFoamScroll: uniform(0),
     uOceanWavelength: uniform(OCEAN_DEFAULTS.peakWavelength),
     uOceanAmplitude: uniform(OCEAN_DEFAULTS.amplitude),
     uOceanChoppiness: uniform(OCEAN_DEFAULTS.choppiness),

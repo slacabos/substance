@@ -38,7 +38,8 @@ import { createOceanField, type OceanField } from '../core/oceanField';
 import { FLUID } from '../core/oceanFluid';
 import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 import { OCEAN_DEPTH, OCEAN_WIND_ANGLE } from '../core/oceanFFT';
-import { WIND } from '../core/oceanWind';
+import { WIND, windAt as windOnOrb } from '../core/oceanWind';
+import { SHELF_EDGE, SHORE_SITES, shoreSwell, SURF_REACH } from '../core/oceanShores';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
@@ -133,6 +134,10 @@ export class OceanSim {
     /** Where the wind blows, as OCEAN_WIND_ANGLE (core/oceanWind.ts). */
     windAngle: uniform(OCEAN_WIND_ANGLE),
     amplitude: uniform(OCEAN_DEFAULTS.amplitude),
+    /** The surf's clock: the swell's frequency times time, added up frame by frame, never time times a speed. */
+    surfClock: uniform(0),
+    /** The swell's strength on the shores, following the wind slowly. */
+    surfEnergy: uniform(OCEAN_DEFAULTS.windSpeed * OCEAN_DEFAULTS.amplitude),
     /** xyz direction, w how hard (press load). */
     press: uniform(new Vector4(0, 0, 1, 0)),
     /** The pushes' mean over the sea, taken back everywhere so the hand moves water rather than removing it. */
@@ -144,6 +149,12 @@ export class OceanSim {
   private readonly driftBlend = uniform(0.5);
   /** Where the foam drifts are in their cycle, 0 to 1. */
   private driftClock = 0;
+  /** The swell each island's surf comes from: its heading at the island (as a unit tangent there). */
+  private readonly swellHeadings = SHORE_SITES.map(() => new Vector4());
+  /** The swell's frequency and open-water wavenumber, its direction and strength (each easing after the wind's). */
+  private readonly swell: { omega: number; k: number };
+  private swellAngle = OCEAN_WIND_ANGLE;
+  private swellSpeed: number = OCEAN_DEFAULTS.windSpeed;
   private readonly events = Array.from({ length: EVENTS }, () => new Vector4(0, 0, 1, 0));
   private readonly eventShapes = Array.from({ length: EVENTS }, () => new Vector4());
 
@@ -183,6 +194,8 @@ export class OceanSim {
     this.wetArea = field.areas.reduce((sum, area, i) => sum + (field.wet[i] ? area : 0), 0);
     this.uniforms.wind.value = tuning.windSpeed;
     this.uniforms.amplitude.value = tuning.amplitude;
+    this.swell = shoreSwell(tuning.peakWavelength);
+    this.swellSpeed = tuning.windSpeed;
     if (coastal) {
       // WebGPU guarantees eight vertex buffers; the shore normal and distance share one attribute
       const shoreData = new Float32Array(this.count * 4);
@@ -220,12 +233,12 @@ export class OceanSim {
       slots[s * 2 + 1] = field.kernel.weights[s]!;
     }
     const kernel = instancedArray(slots, 'vec2') as StorageBufferNode<'vec2'>;
-    // depth (0 on land), shore distance, coast exposure, foam grain
+    // depth (0 on land), shore distance, the shelf's lag (core/oceanShores.ts), foam grain
     const ground = instancedArray(
       pack((i) => [
         field.wet[i] ? field.depth[i]! : 0,
         field.shoreDistance[i]!,
-        field.shoreExposure[i]!,
+        field.shelfLag[i]!,
         field.foamGrain[i]!,
       ]),
       'vec4',
@@ -235,7 +248,7 @@ export class OceanSim {
         field.shoreNormal[i * 3]!,
         field.shoreNormal[i * 3 + 1]!,
         field.shoreNormal[i * 3 + 2]!,
-        field.shoreAlong[i]!,
+        field.shoreSite[i]!,
       ]),
       'vec4',
     ) as Vec4Buffer;
@@ -469,24 +482,38 @@ export class OceanSim {
         out.assign(vec4(next, h, foam, turbulence));
       })().compute(n);
 
-    /** Scripted surf rolling in toward the bank (port of sampleShoreSurf in core/oceanShores.ts). */
-    const surfAt = (distance: Float, along: Float, exposure: Float) => {
+    /**
+     * Surf: the swell running in from its own direction, slowing and crowding on the shelf and swinging round to
+     * break along the bank (shoreSurfPhase and sampleShoreSurf in core/oceanShores.ts).
+     */
+    const headings = uniformArray(this.swellHeadings, 'vec4') as UniformArrayNode<'vec4'>;
+    const centres = uniformArray(
+      SHORE_SITES.map((site) => new Vector4(site.center.x, site.center.y, site.center.z, 0)),
+      'vec4',
+    ) as UniformArrayNode<'vec4'>;
+    const surfAt = (distance: Float, lag: Float, site: Float, q: Vec3, normal: Vec3) => {
       const smooth = (x: Float) => smoothstep(0, 1, x);
-      const inside = distance.greaterThanEqual(0).and(distance.lessThanEqual(0.22));
+      const { omega, k } = this.swell;
+      const heading = headings.element(int(site)).xyz;
+      const facing = dot(heading, normal.negate());
+      const across = max(float(SHELF_EDGE).sub(distance), 0);
+      const phase = dot(q.sub(centres.element(int(site)).xyz), heading)
+        .mul(k)
+        .add(lag.mul(omega))
+        .sub(across.mul(k).mul(max(facing, 0.15)))
+        .sub(u.surfClock);
+      const depth = clamp(smooth(distance.div(0.045)).mul(0.085).sub(0.012), 0.002, OCEAN_DEPTH);
       const envelope = float(1)
-        .sub(smooth(distance.sub(0.11).div(0.11)))
+        .sub(smooth(distance.sub(0.04).div(SURF_REACH - 0.04)))
+        .mul(min(float(OCEAN_DEPTH).div(depth).pow(0.25), 1.8))
         .mul(smooth(distance.div(0.025)).mul(0.35).add(0.65));
-      const phase = distance
-        .mul(43)
-        .add(u.time.mul(3.1).mul(u.wind))
-        .add(sin(along.mul(7)).mul(0.6))
-        .add(along.mul(2));
+      const exposure = smooth(facing.add(0.2).div(0.8)).mul(0.85).add(0.15);
       const s = sin(phase);
       const crest = max(s, 0).pow(5);
-      const windEnergy = clamp(u.wind, 0, 1.3);
-      const strength = exposure.mul(u.amplitude).mul(windEnergy);
-      const height = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(0.042).mul(envelope).mul(strength);
+      const strength = exposure.mul(u.surfEnergy);
+      const height = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(0.03).mul(envelope).mul(strength);
       const breaking = crest.mul(float(1).sub(smooth(distance.sub(0.012).div(0.06)))).mul(strength);
+      const inside = distance.greaterThanEqual(0).and(distance.lessThanEqual(SURF_REACH));
       return { height: select(inside, height, float(0)), breaking: select(inside, breaking, float(0)) };
     };
 
@@ -518,7 +545,7 @@ export class OceanSim {
           foam.assign(max(foam, whitecap.mul(WHITECAP.foam)));
         }
         if (coastal) {
-          const surf = surfAt(g4.y, shore.element(i).w, g4.z);
+          const surf = surfAt(g4.y, g4.z, shore.element(i).w, q, shore.element(i).xyz);
           surfHeight.assign(surf.height);
           impact.assign(
             clamp(
@@ -674,6 +701,24 @@ export class OceanSim {
     this.renderer.compute(this.resetNodes);
   }
 
+  /**
+   * The swell on the shores follows the wind slowly (swell outlasts the wind that raised it), and its clock only
+   * ever moves on by its frequency, so a gust or a new wind level changes the surf's size, never its pace.
+   */
+  private updateSwell(dt: number): void {
+    const ease = (tau: number) => 1 - Math.exp(-dt / tau);
+    this.swellAngle += (this.uniforms.windAngle.value - this.swellAngle) * ease(25);
+    this.swellSpeed += (this.uniforms.wind.value - this.swellSpeed) * ease(15);
+    this.uniforms.surfEnergy.value =
+      this.uniforms.amplitude.value * Math.min(1.3, Math.max(0, this.swellSpeed));
+    this.uniforms.surfClock.value = (this.uniforms.surfClock.value + this.swell.omega * dt) % (2 * Math.PI);
+    const heading = new Vector3();
+    SHORE_SITES.forEach((site, i) => {
+      windOnOrb(site.center, this.swellAngle, heading).normalize();
+      this.swellHeadings[i]!.set(heading.x, heading.y, heading.z, 0);
+    });
+  }
+
   /** The live wind (core/oceanWind.ts): where it blows, and how hard. */
   setWind(angle: number, speed: number): void {
     this.uniforms.windAngle.value = angle;
@@ -692,6 +737,7 @@ export class OceanSim {
     this.uniforms.frameDt.value = dt;
     this.uniforms.dt.value = dt / steps;
     this.uniforms.time.value = time;
+    this.updateSwell(dt);
     // a drift restarts as its weight reaches 0: the first at whole periods, the second half a period later
     const phase = this.driftClock;
     this.driftClock = (this.driftClock + dt / DRIFT_PERIOD) % 1;

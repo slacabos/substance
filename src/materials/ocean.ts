@@ -197,7 +197,7 @@ export class Ocean implements Substance {
     const wind = oceanWind(ctx.time, this.tuning.windSpeed);
     this.sim.setWind(wind.angle, wind.speed);
     this.foamFlecks.setWindAngle(wind.angle);
-    this.uniforms.uOceanWind.value = wind.speed;
+    this.uniforms.uFoamScroll.value += wind.speed * ctx.dt;
     this.gusts.update(ctx.dt, wind);
     // cat's paws need wind to raise them
     const gustScale = Math.min(1, wind.speed / 0.6);
