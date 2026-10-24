@@ -38,11 +38,12 @@ import {
 import { createOceanField, type OceanField } from '../core/oceanField';
 import { shoreGroundHeight } from '../core/oceanShores';
 import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
-import { OCEAN_DEPTH } from '../core/oceanFFT';
+import { OCEAN_DEPTH, OCEAN_WIND_ANGLE } from '../core/oceanFFT';
+import { WIND } from '../core/oceanWind';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
-import { cubeCell, driftBasis } from '../nodes/oceanSurface';
+import { cubeCell, driftBasis, windAt } from '../nodes/oceanSurface';
 import { oceanWaveFoam, type OceanWaveFields } from '../nodes/oceanWaves';
 
 /** A push on the water: a tap or release (no motion), or a drag step (with motion along the surface). */
@@ -150,6 +151,8 @@ export class OceanSim implements SprayGround {
     frameDt: uniform(STEP),
     time: uniform(0),
     wind: uniform(OCEAN_DEFAULTS.windSpeed),
+    /** Where the wind blows, as OCEAN_WIND_ANGLE (core/oceanWind.ts). */
+    windAngle: uniform(OCEAN_WIND_ANGLE),
     amplitude: uniform(OCEAN_DEFAULTS.amplitude),
     /** xyz direction, w how hard (press load). */
     press: uniform(new Vector4(0, 0, 1, 0)),
@@ -260,16 +263,8 @@ export class OceanSim implements SprayGround {
       ]),
       'vec4',
     ) as Vec4Buffer;
-    // the slow base current, and how strongly the spot answers a push
-    const base = instancedArray(
-      pack((i) => [
-        field.baseFlow[i * 3]!,
-        field.baseFlow[i * 3 + 1]!,
-        field.baseFlow[i * 3 + 2]!,
-        field.forceGrain[i]!,
-      ]),
-      'vec4',
-    ) as Vec4Buffer;
+    // how strongly each spot answers a push
+    const forceGrains = instancedArray(field.forceGrain, 'float') as StorageBufferNode<'float'>;
     this.lookup = instancedArray(field.lookup, 'uint') as StorageBufferNode<'uint'>;
     // h, h a step ago, foam, turbulence; and the tangential current. Both ping-pong between steps.
     const heights: [Vec4Buffer, Vec4Buffer] = [
@@ -292,11 +287,13 @@ export class OceanSim implements SprayGround {
     const deposits = uniformArray(this.deposits, 'vec4') as UniformArrayNode<'vec4'>;
     const depositRadii = uniformArray(this.depositRadii, 'vec4') as UniformArrayNode<'vec4'>;
     const wetAt = (j: Node<'uint'>) => ground.element(j).x.greaterThan(0);
-    /** The wind's slow surface drift at vertex j, dying away against the bank. */
+    /**
+     * The wind's slow surface drift at vertex j, dying away against the bank. The stored current is the waves'
+     * alone, so a wind that turns or drops moves no water; this is added wherever the whole flow is wanted.
+     */
     const windDrift = (j: Node<'uint'>): Vec3 =>
-      base
-        .element(j)
-        .xyz.mul(u.wind)
+      windAt(this.vertex.element(j).xyz, u.windAngle)
+        .mul(u.wind.mul(WIND.drift))
         .mul(smoothstep(0, 0.06, ground.element(j).y));
     const invSqrt3 = 1 / Math.sqrt(3);
     const invSpacing = 1 / field.spacing;
@@ -358,13 +355,11 @@ export class OceanSim implements SprayGround {
             );
           });
         });
-        // The current is the waves' current plus the wind's drift. Only the waves' part carries water
-        // (heightStep), so only it is pushed by gravity and the hand, turned back at the bank and capped.
+        // The waves' current (the wind's drift is added on top where needed): it carries water (heightStep), is
+        // pushed by gravity and the hand, turned back at the bank and capped.
         const drag = exp(u.dt.mul(-SURFACE.drag));
-        const drift = windDrift(i);
         const waves = this.current[from]!.element(i)
-          .xyz.sub(drift)
-          .mul(drag)
+          .xyz.mul(drag)
           .sub(gradient.mul(u.dt.mul(SURFACE.gravity)).div(v.w))
           .add(stirAt(q).mul(u.dt.div(u.frameDt)))
           .toVar();
@@ -376,7 +371,7 @@ export class OceanSim implements SprayGround {
         }
         waves.subAssign(q.mul(dot(waves, q)));
         const speed = length(waves);
-        out.assign(vec4(waves.mul(min(speed, SURFACE.maxCurrent).div(max(speed, 1e-6))).add(drift), 0));
+        out.assign(vec4(waves.mul(min(speed, SURFACE.maxCurrent).div(max(speed, 1e-6))), 0));
       })().compute(n);
 
     const heightStep = (from: number) =>
@@ -392,7 +387,7 @@ export class OceanSim implements SprayGround {
         const h = state.x;
         const v = this.vertex.element(i);
         const q = v.xyz;
-        const forceGrain = base.element(i).w;
+        const forceGrain = forceGrains.element(i);
         const foamGrain = g4.w;
 
         // iWave's operator, with dry neighbours mirroring this vertex so the coast reflects
@@ -403,7 +398,9 @@ export class OceanSim implements SprayGround {
           operator.addAssign(slot.y.mul(select(wetAt(j), heights[from]!.element(j).x, h)));
         });
 
-        const flow = this.current[1 - from]!.element(i).xyz;
+        // the waves' current carries water; foam rides it and the wind's drift too
+        const waves = this.current[1 - from]!.element(i).xyz;
+        const flow = waves.add(windDrift(i));
         const qi = g4.x.add(h);
         const rise = float(0).toVar();
         const wetNeighbours = float(0).toVar();
@@ -420,12 +417,12 @@ export class OceanSim implements SprayGround {
           sumFoam.addAssign(select(wet, other.z, state.z));
           If(j.notEqual(i).and(wet), () => {
             const chord = this.vertex.element(j).xyz.sub(q);
-            const otherFlow = this.current[1 - from]!.element(j).xyz;
+            const otherWaves = this.current[1 - from]!.element(j).xyz;
             rise.addAssign(other.x.sub(other.y));
             wetNeighbours.addAssign(1);
             // shallow-water flux through the shared face: the edge's mean current (the waves' part only; the
             // wind's drift moves foam, not the water column) times the column on the side it flows from
-            const velocity = dot(flow.sub(windDrift(i)).add(otherFlow.sub(windDrift(j))), chord).mul(0.5);
+            const velocity = dot(waves.add(otherWaves), chord).mul(0.5);
             const column = max(select(velocity.greaterThan(0), qi, ground.element(j).x.add(other.x)), 0);
             outflow.addAssign(velocity.mul(column).mul(invSqrt3));
             sumDelta.addAssign(abs(other.x.sub(h)));
@@ -434,7 +431,7 @@ export class OceanSim implements SprayGround {
             upwindFoam.addAssign(other.z.mul(weight));
             upwindWeight.addAssign(weight);
             spread.addAssign(
-              dot(otherFlow.sub(flow), chord)
+              dot(otherWaves.sub(waves), chord)
                 .div(max(dot(chord, chord), 1e-5))
                 .div(6),
             );
@@ -577,7 +574,7 @@ export class OceanSim implements SprayGround {
         state.z.assign(foam);
         state.w.assign(turbulence);
         this.surface.element(i).assign(vec4(state.x.add(surfHeight), foam, turbulence, impact));
-        const flow = this.current[final]!.element(i).xyz;
+        const flow = this.current[final]!.element(i).xyz.add(windDrift(i));
         this.flow.element(i).assign(vec4(flow, 0));
         // both foam drifts in this vertex's tangent basis, each restarting on its own beat
         const { e1, e2 } = driftBasis(q);
@@ -635,26 +632,25 @@ export class OceanSim implements SprayGround {
         void final;
       })().compute(n);
 
-    const gather = (final: number) =>
-      Fn(() => {
-        const c = instanceIndex;
-        const packed = atomicLoad(sites.element(c)).toVar();
-        const a = this.siteData.element(c.mul(2));
-        const b = this.siteData.element(c.mul(2).add(1));
-        If(packed.equal(0), () => {
-          a.assign(vec4(0));
-          b.assign(vec4(0));
-          Return();
-        });
-        const i = packed.bitAnd(0xfffff);
-        const score = float(packed.shiftRight(20)).div(4095);
-        const coastSite = coastal ? ground.element(i).y.lessThan(0.09) : float(0).greaterThan(1);
-        // coastal sites are marked by adding 2 to the score
-        a.assign(vec4(this.vertex.element(i).xyz, score.add(select(coastSite, float(2), float(0)))));
-        const flow = select(coastSite, shore.element(i).xyz.mul(0.18), this.current[final]!.element(i).xyz);
-        b.assign(vec4(flow, this.surface.element(i).x));
-        atomicStore(sites.element(c), uint(0));
-      })().compute(SITE_CELLS);
+    const gather = Fn(() => {
+      const c = instanceIndex;
+      const packed = atomicLoad(sites.element(c)).toVar();
+      const a = this.siteData.element(c.mul(2));
+      const b = this.siteData.element(c.mul(2).add(1));
+      If(packed.equal(0), () => {
+        a.assign(vec4(0));
+        b.assign(vec4(0));
+        Return();
+      });
+      const i = packed.bitAnd(0xfffff);
+      const score = float(packed.shiftRight(20)).div(4095);
+      const coastSite = coastal ? ground.element(i).y.lessThan(0.09) : float(0).greaterThan(1);
+      // coastal sites are marked by adding 2 to the score
+      a.assign(vec4(this.vertex.element(i).xyz, score.add(select(coastSite, float(2), float(0)))));
+      const flow = select(coastSite, shore.element(i).xyz.mul(0.18), this.flow.element(i).xyz);
+      b.assign(vec4(flow, this.surface.element(i).x));
+      atomicStore(sites.element(c), uint(0));
+    })().compute(SITE_CELLS);
 
     this.stepNodes = [
       [momentum(0), heightStep(0)],
@@ -687,8 +683,8 @@ export class OceanSim implements SprayGround {
         });
       })().compute(n);
     this.finishNodes = [
-      [clearVolume, sumVolume(0), correctVolume(0), finishSurface(0), finishSlope(0), gather(0)],
-      [clearVolume, sumVolume(1), correctVolume(1), finishSurface(1), finishSlope(1), gather(1)],
+      [clearVolume, sumVolume(0), correctVolume(0), finishSurface(0), finishSlope(0), gather],
+      [clearVolume, sumVolume(1), correctVolume(1), finishSurface(1), finishSlope(1), gather],
     ];
     this.resetNodes = [
       Fn(() => {
@@ -698,10 +694,9 @@ export class OceanSim implements SprayGround {
       })().compute(n),
       Fn(() => {
         const i = instanceIndex;
-        const still = vec4(windDrift(i), 0);
-        this.current[0]!.element(i).assign(still);
-        this.current[1]!.element(i).assign(still);
-        this.flow.element(i).assign(still);
+        this.current[0]!.element(i).assign(vec4(0));
+        this.current[1]!.element(i).assign(vec4(0));
+        this.flow.element(i).assign(vec4(windDrift(i), 0));
       })().compute(n),
     ];
   }
@@ -744,7 +739,9 @@ export class OceanSim implements SprayGround {
     this.sites = [];
   }
 
-  setWindSpeed(speed: number): void {
+  /** The live wind (core/oceanWind.ts): where it blows, and how hard. */
+  setWind(angle: number, speed: number): void {
+    this.uniforms.windAngle.value = angle;
     this.uniforms.wind.value = speed;
   }
 

@@ -1,6 +1,7 @@
 import { HalfFloatType, LinearFilter, LinearMipmapLinearFilter, RepeatWrapping } from 'three';
 import { StorageTexture, type ComputeNode, type StorageBufferNode, type WebGPURenderer } from 'three/webgpu';
 import {
+  atan,
   cos,
   exp,
   float,
@@ -8,14 +9,18 @@ import {
   instancedArray,
   instanceIndex,
   max,
+  select,
   sin,
+  sqrt,
   textureStore,
+  uint,
   uniform,
   uvec2,
   vec4,
 } from 'three/tsl';
 import { createOceanSpectrum, OCEAN_REPEAT, type OceanCascade, type OceanSpectrum } from '../core/oceanFFT';
 import type { OceanTuning } from '../core/oceanTuning';
+import { oceanWind, WIND } from '../core/oceanWind';
 
 type Vec4Buffer = StorageBufferNode<'vec4'>;
 
@@ -23,7 +28,9 @@ type Vec4Buffer = StorageBufferNode<'vec4'>;
 const FOAM_LIFE = 2.2;
 
 /**
- * The FFT ocean on the GPU (Tessendorf). Each frame advances every cascade's spectrum, runs a 2D inverse
+ * The FFT ocean on the GPU (Tessendorf). Each frame turns every wave's gain toward the live wind
+ * (core/oceanWind.ts: short waves follow it within seconds, swell for a minute), advances every cascade's
+ * spectrum, runs a 2D inverse
  * Stockham FFT as one compute pass per stage, and writes two tiling textures per cascade:
  * displacement (x, height, z, dDx/dz) and derivatives (dh/dx, dh/dz, dDx/dx, dDz/dz), in the tile's own axes.
  * A third texture remembers foam: how far the surface has bunched up lately (1 - Jacobian), held at its peak
@@ -43,6 +50,10 @@ export class OceanFFT {
   private readonly renderer: WebGPURenderer;
   private readonly time = uniform(0);
   private readonly dt = uniform(0);
+  /** Where the wind blows (as OCEAN_WIND_ANGLE), and every wave's amplitude for its speed against the tuned one. */
+  private readonly windAngle = uniform(0);
+  private readonly windGain = uniform(1);
+  private readonly meanWind: number;
   private readonly amplitude: number;
   private readonly choppiness: number;
   private readonly passes: ComputeNode[];
@@ -54,6 +65,7 @@ export class OceanFFT {
     this.size = spectrum.size;
     this.cascades = spectrum.cascades;
     this.slopeVariance = spectrum.slopeVariance;
+    this.meanWind = tuning.windSpeed;
     this.amplitude = tuning.amplitude;
     this.choppiness = tuning.choppiness * 0.5;
     const texture = () => {
@@ -77,6 +89,10 @@ export class OceanFFT {
     this.dt.value = Number.isFinite(this.lastTime) ? Math.min(0.1, Math.max(0, time - this.lastTime)) : 0;
     this.lastTime = time;
     this.time.value = time % OCEAN_REPEAT;
+    const wind = oceanWind(time, this.meanWind);
+    this.windAngle.value = wind.angle;
+    // the sea's height grows as wind speed to the 1.5 (core/oceanFFT.ts)
+    this.windGain.value = this.meanWind > 0 ? (wind.speed / this.meanWind) ** 1.5 : 0;
     this.renderer.compute(this.passes);
   }
 
@@ -86,20 +102,49 @@ export class OceanFFT {
     const count = this.cascades.length * lines;
     const h0 = this.storage(spectrum.h0);
     const waves = this.storage(spectrum.waves);
+    const shape = this.storage(spectrum.shape);
+    const gain = instancedArray(spectrum.gain, 'float');
     // Two complex fields per vec4, [F0, F1] and [F2, F3] (see evolveMode), ping-ponged through the stages.
     const sets: [Vec4Buffer, Vec4Buffer][] = [
       [this.storage(count), this.storage(count)],
       [this.storage(count), this.storage(count)],
     ];
 
+    // relaxGain (core/oceanWind.ts) toward the Donelan–Banner spread toward this wave, for the live wind
+    const turn = Fn(() => {
+      const i = instanceIndex;
+      const form = shape.element(i);
+      const off = form.z.sub(this.windAngle);
+      const beta = form.x.mul(atan(sin(off), cos(off)));
+      const cosh = exp(beta).add(exp(beta.negate())).mul(0.5);
+      const target = sqrt(form.y).div(cosh).mul(this.windGain);
+      const current = gain.element(i);
+      const periods = select(target.greaterThan(current), float(WIND.growPeriods), float(WIND.decayPeriods));
+      const keep = exp(
+        this.dt
+          .mul(form.w)
+          .div(periods.mul(2 * Math.PI))
+          .negate(),
+      );
+      current.assign(target.add(current.sub(target).mul(keep)));
+    })().compute(count);
+
     const evolve = Fn(() => {
       const i = instanceIndex;
       const w = waves.element(i);
-      const a = h0.element(i);
+      // each side of the mode with its own gain: this wave's, and its mirror's at -k (modeAmplitude)
+      const local = i.mod(lines);
+      const x = local.mod(n);
+      const y = local.div(n);
+      const mirror = i.sub(local).add(uint(n).sub(y).mod(n).mul(n)).add(uint(n).sub(x).mod(n));
+      const a = h0
+        .element(i)
+        .mul(vec4(gain.element(i), gain.element(i), gain.element(mirror), gain.element(mirror)))
+        .toVar();
       const phase = w.z.mul(this.time);
       const c = cos(phase).toVar();
-      const s = sin(phase).toVar();
-      // h = h0 e^{i w t} + conj(h0(-k)) e^{-i w t}
+      const s = sin(phase).negate().toVar();
+      // h = h0 e^{-i w t} + conj(h0(-k)) e^{i w t}: each wave runs downwind (evolveMode)
       const re = a.x.mul(c).sub(a.y.mul(s)).add(a.z.mul(c)).add(a.w.mul(s)).toVar();
       const im = a.x.mul(s).add(a.y.mul(c)).sub(a.z.mul(s)).add(a.w.mul(c)).toVar();
       const kx = w.x;
@@ -189,7 +234,7 @@ export class OceanFFT {
         textureStore(this.foam[c]!, texel, vec4(memory, 0, 0, 1));
       })().compute(lines),
     );
-    return [evolve, ...stages, ...assemble];
+    return [turn, evolve, ...stages, ...assemble];
   }
 
   private storage(data: Float32Array | number): Vec4Buffer {

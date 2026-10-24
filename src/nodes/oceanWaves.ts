@@ -9,6 +9,7 @@ import {
   length,
   log2,
   max,
+  min,
   select,
   smoothstep,
   sqrt,
@@ -17,6 +18,7 @@ import {
   vec3,
 } from 'three/tsl';
 import type { OceanCascade } from '../core/oceanFFT';
+import { OCEAN_GUSTS } from '../core/oceanWind';
 import type { DeformUniforms } from './deform';
 
 // Samples the FFT ocean (materials/oceanFFT.ts) on the orb. Directions map to cube faces in equal-angle
@@ -34,6 +36,21 @@ export interface OceanWaveFields {
   readonly derivatives: readonly Texture[];
   readonly foam: readonly Texture[];
   readonly slopeVariance: readonly number[];
+}
+
+/** Angular radius of a cat's paw. */
+const GUST_RADIUS = 0.3;
+
+/** How hard the gusting wind is roughening the water at p: 0 in calm air, about 1 under a cat's paw. */
+export function oceanGustAt(p: Vec3, u: DeformUniforms): Float {
+  let gust: Float = float(0);
+  for (let i = 0; i < OCEAN_GUSTS; i++) {
+    const patch = u.uGusts.element(i);
+    gust = gust.add(
+      smoothstep(Math.cos(GUST_RADIUS), Math.cos(GUST_RADIUS * 0.3), dot(p, patch.xyz)).mul(patch.w),
+    );
+  }
+  return min(gust, 1);
 }
 
 /** One cube face: its axis n, and the axes e and up its u and v coordinates run along. */
@@ -58,6 +75,8 @@ interface FaceWaves {
 }
 
 const QUARTER = Math.PI / 2;
+/** How much a cat's paw steepens the short waves' slopes at its heart. */
+const GUST_ROUGHENING = 1.5;
 const sideOf = (x: Float) => select(x.greaterThanEqual(0), float(1), float(-1));
 
 /** The equator face facing p: x or z. East runs around the equator, so it lines up across the four faces. */
@@ -101,6 +120,7 @@ function sampleFace(
   fields: OceanWaveFields,
   u: DeformUniforms,
   weather: Float,
+  gust: Float,
   weight: (c: number) => Float,
   lod: (c: number) => Float,
   withFoam = false,
@@ -130,12 +150,14 @@ function sampleFace(
       .mul(u.uOceanAmplitude)
       .mul(weather.mul(c === 0 ? 0.2 : 0.75).add(1));
     const wChop = w.mul(chop);
+    // a gust only ripples the short waves' surface: steeper slopes and more roughness, no height or breaking
+    const wSlope = c === 0 ? w : w.mul(gust.mul(GUST_ROUGHENING).add(1));
     // tile axes back to face axes: R(-turn)
     sum.height = sum.height.add(disp.y.mul(w));
     sum.du = sum.du.add(disp.x.mul(co).add(disp.z.mul(si)).mul(wChop));
     sum.dv = sum.dv.add(disp.z.mul(co).sub(disp.x.mul(si)).mul(wChop));
-    sum.su = sum.su.add(deriv.x.mul(co).add(deriv.y.mul(si)).mul(w));
-    sum.sv = sum.sv.add(deriv.y.mul(co).sub(deriv.x.mul(si)).mul(w));
+    sum.su = sum.su.add(deriv.x.mul(co).add(deriv.y.mul(si)).mul(wSlope));
+    sum.sv = sum.sv.add(deriv.y.mul(co).sub(deriv.x.mul(si)).mul(wSlope));
     // the displacement gradient turns as a tensor: R^T T R
     const [xx, zz, xz] = [deriv.z, deriv.w, disp.w];
     const cc = co * co;
@@ -166,7 +188,7 @@ function sampleFace(
     // is just noisy, so only count it once the texture is really filtered.
     const resolved = deriv.x.mul(deriv.x).add(deriv.y.mul(deriv.y));
     const lost = max(float(fields.slopeVariance[c]!).sub(resolved), 0).mul(smoothstep(0.5, 2.5, level));
-    sum.lost = sum.lost.add(lost.mul(w).mul(w));
+    sum.lost = sum.lost.add(lost.mul(wSlope).mul(wSlope));
     if (withFoam) {
       // folding was measured at the tuned amplitude; storms deepen it
       const memory = texture(fields.foam[c]!, uv).level(level).x;
@@ -203,8 +225,9 @@ export function oceanWaveVertex(
   const weights = blend(p, fields);
   const lod = (c: number) =>
     float(Math.max(0, Math.log2((spacing * fields.size) / fields.cascades[c]!.tile)));
-  const ring = sampleFace(p, ringFace(p), fields, u, weather, (c) => weights(c)[0], lod);
-  const polar = sampleFace(p, polarFace(p), fields, u, weather, (c) => weights(c)[1], lod);
+  const gust = oceanGustAt(p, u);
+  const ring = sampleFace(p, ringFace(p), fields, u, weather, gust, (c) => weights(c)[0], lod);
+  const polar = sampleFace(p, polarFace(p), fields, u, weather, gust, (c) => weights(c)[1], lod);
   const offset = ring.alongU
     .mul(ring.du)
     .add(ring.alongV.mul(ring.dv))
@@ -233,8 +256,9 @@ export function oceanWaveFoam(
   const weights = blend(p, fields);
   const lod = (c: number) =>
     float(Math.max(0, Math.log2((spacing * fields.size) / fields.cascades[c]!.tile)));
-  const ring = sampleFace(p, ringFace(p), fields, u, weather, (c) => weights(c)[0], lod, true);
-  const polar = sampleFace(p, polarFace(p), fields, u, weather, (c) => weights(c)[1], lod, true);
+  // gusts roughen the water without breaking it
+  const ring = sampleFace(p, ringFace(p), fields, u, weather, float(0), (c) => weights(c)[0], lod, true);
+  const polar = sampleFace(p, polarFace(p), fields, u, weather, float(0), (c) => weights(c)[1], lod, true);
   return ring.foam.add(polar.foam);
 }
 
@@ -254,8 +278,9 @@ export function oceanWaveSurface(
   // one texel per pixel footprint
   const footprint = max(length(p.dFdx()), length(p.dFdy()));
   const lod = (c: number) => max(log2(footprint.mul(fields.size / fields.cascades[c]!.tile)), 0);
-  const ring = sampleFace(p, ringFace(p), fields, u, weather, (c) => weights(c)[0], lod, true);
-  const polar = sampleFace(p, polarFace(p), fields, u, weather, (c) => weights(c)[1], lod, true);
+  const gust = oceanGustAt(p, u);
+  const ring = sampleFace(p, ringFace(p), fields, u, weather, gust, (c) => weights(c)[0], lod, true);
+  const polar = sampleFace(p, polarFace(p), fields, u, weather, gust, (c) => weights(c)[1], lod, true);
   const corrected = (f: typeof ring) =>
     f.gradU.mul(f.su.div(max(f.duu.add(1), 0.25))).add(f.gradV.mul(f.sv.div(max(f.dvv.add(1), 0.25))));
   const jacobian = (f: typeof ring) => f.duu.add(1).mul(f.dvv.add(1)).sub(f.duv.mul(f.duv)).sub(1);

@@ -39,6 +39,7 @@ import {
 import { MAX_IMPULSES } from '../config';
 import { bakeFoamLace } from '../core/foamLace';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
+import { OCEAN_GUSTS } from '../core/oceanWind';
 import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
 import { LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
@@ -86,6 +87,7 @@ export function createDeformUniforms(): DeformUniforms {
   const impB = vec4s(MAX_IMPULSES);
   const weather = vec4s(OCEAN_WEATHER_PATCHES).map((v) => v.set(0, 1, 0, 0));
   const weatherB = vec4s(OCEAN_WEATHER_PATCHES).map((v) => v.set(0.35, 0, 0, 0));
+  const gusts = vec4s(OCEAN_GUSTS).map((v) => v.set(0, 1, 0, 0));
   return {
     uTime: uniform(0),
     uImp: uniformArray(imp, 'vec4'),
@@ -98,6 +100,8 @@ export function createDeformUniforms(): DeformUniforms {
     uWeatherB: uniformArray(weatherB, 'vec4'),
     weather,
     weatherB,
+    uGusts: uniformArray(gusts, 'vec4'),
+    gusts,
     uDeep: uniform(new Color('#0b3553')),
     uShallow: uniform(new Color('#1a7695')),
     uOceanWind: uniform(OCEAN_DEFAULTS.windSpeed),

@@ -51,6 +51,9 @@ export interface DeformUniforms {
   uWeatherB: UniformArrayNode<'vec4'>;
   weather: Vector4[];
   weatherB: Vector4[];
+  /** Cat's paws (core/oceanWind.ts GustField): xyz centre, w strength now. */
+  uGusts: UniformArrayNode<'vec4'>;
+  gusts: Vector4[];
   uDeep: UniformNode<'color', Color>;
   uShallow: UniformNode<'color', Color>;
   uOceanWind: UniformNode<'float', number>;

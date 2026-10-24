@@ -2,6 +2,7 @@ import type { Node, StorageBufferNode } from 'three/webgpu';
 import {
   abs,
   clamp,
+  cos,
   cross,
   dot,
   float,
@@ -11,6 +12,7 @@ import {
   max,
   normalize,
   select,
+  sin,
   uint,
   vec3,
 } from 'three/tsl';
@@ -20,6 +22,20 @@ import { LOOKUP_SIZE } from '../core/oceanLookup';
 
 type Vec3 = Node<'vec3'>;
 type UInt = Node<'uint'>;
+
+/**
+ * The wind's direction on the orb at unit direction p, as windAt in core/oceanWind.ts: `angle` from east toward
+ * north, as long as the cosine of the latitude.
+ */
+export function windAt(p: Vec3, angle: Node<'float'>): Vec3 {
+  const c = cos(angle);
+  const s = sin(angle);
+  return vec3(
+    c.mul(p.z).sub(s.mul(p.x).mul(p.y)),
+    s.mul(float(1).sub(p.y.mul(p.y))),
+    c.mul(p.x).negate().sub(s.mul(p.z).mul(p.y)),
+  );
+}
 
 /**
  * A fixed tangent basis at unit direction p, for storing a vertex's foam drift in two numbers. It jumps near the

@@ -3,6 +3,7 @@ import { MeshBasicNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import { Fn, normalize, positionGeometry } from 'three/tsl';
 import { TapRhythm } from '../core/oceanRhythm';
 import { OceanWeather, weatherRadius } from '../core/oceanWeather';
+import { GustField, oceanWind } from '../core/oceanWind';
 import type { OceanTuning } from '../core/oceanTuning';
 import { baseR } from '../nodes/shape';
 import { morphUniform } from '../scene/shape';
@@ -34,6 +35,7 @@ export class Ocean implements Substance {
   private readonly spray: OceanSpray;
   private readonly foamFlecks: OceanFoamFlecks;
   private readonly weatherField = new OceanWeather();
+  private readonly gusts: GustField;
   private readonly rhythm = new TapRhythm();
   /** How much harder the current press pushes, for keeping the beat. */
   private boost = 1;
@@ -61,6 +63,7 @@ export class Ocean implements Substance {
   ) {
     this.id = coastal ? 'coast' : 'ocean';
     this.tuning = tuning;
+    this.gusts = new GustField(coastal ? 2 : 1);
     this.waves = waves;
     this.shores = coastal ? new OceanShores(coarse) : null;
     const deformUniforms = createDeformUniforms();
@@ -199,7 +202,24 @@ export class Ocean implements Substance {
       this.foamFlecks.update(ctx.dt);
     }
     this.pendingForces.length = 0;
-    this.storm = 1 + this.weatherField.peak * 1.4;
+    // the live wind (the same function the FFT reads, so they agree)
+    const wind = oceanWind(ctx.time, this.tuning.windSpeed);
+    this.sim.setWind(wind.angle, wind.speed);
+    this.foamFlecks.setWindAngle(wind.angle);
+    this.uniforms.uOceanWind.value = wind.speed;
+    this.gusts.update(ctx.dt, wind);
+    // cat's paws need wind to raise them
+    const gustScale = Math.min(1, wind.speed / 0.6);
+    this.gusts.gusts.forEach((gust, i) => {
+      this.uniforms.gusts[i]!.set(
+        gust.center.x,
+        gust.center.y,
+        gust.center.z,
+        this.gusts.intensity(gust) * gustScale,
+      );
+    });
+    const freshening = this.tuning.windSpeed > 0 ? wind.speed / this.tuning.windSpeed : 1;
+    this.storm = (1 + this.weatherField.peak * 1.4) * freshening;
     for (let i = 0; i < this.weatherField.patches.length; i++) {
       const patch = this.weatherField.patches[i]!;
       this.uniforms.weather[i]!.set(patch.center.x, patch.center.y, patch.center.z, patch.strength);
@@ -220,12 +240,10 @@ export class Ocean implements Substance {
   }
 
   private applyTuning(): void {
-    this.uniforms.uOceanWind.value = this.tuning.windSpeed;
     this.uniforms.uOceanWavelength.value = this.tuning.peakWavelength;
     this.uniforms.uOceanAmplitude.value = this.tuning.amplitude;
     this.uniforms.uOceanChoppiness.value = this.tuning.choppiness;
     this.uniforms.uOceanFoam.value = this.tuning.foam;
     this.foamFlecks.setIntensity(this.tuning.foam);
-    this.sim.setWindSpeed(this.tuning.windSpeed);
   }
 }

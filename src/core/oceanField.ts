@@ -31,8 +31,6 @@ export interface OceanField {
   /** Per-vertex noise: how strongly a spot answers a push, and how readily it foams. */
   forceGrain: Float32Array;
   foamGrain: Float32Array;
-  /** The slow circulation the surface current relaxes to at wind speed 1, three per vertex. */
-  baseFlow: Float32Array;
 }
 
 const fract = (x: number): number => x - Math.floor(x);
@@ -98,13 +96,10 @@ export function createOceanField(geometry: BufferGeometry, coastal: boolean): Oc
 
   const forceGrain = new Float32Array(count);
   const foamGrain = new Float32Array(count);
-  const baseFlow = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
     const [x, y, z] = [positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!];
     forceGrain[i] = 0.85 + Math.sin((x * 37 + y * 51 + z * 83) * 11) * 0.15;
     foamGrain[i] = fract(Math.sin((x * 43.7 + y * 91.3 + z * 67.9) * 67.3) * 43758.5453);
-    if (!wet[i]) continue;
-    baseFlow.set([(z - y * 0.2) * 0.035, (x * 0.2 - z * 0.15) * 0.035, (y * 0.15 - x) * 0.035], i * 3);
   }
 
   return {
@@ -123,6 +118,5 @@ export function createOceanField(geometry: BufferGeometry, coastal: boolean): Oc
     lookup: buildDirectionLookup(positions),
     forceGrain,
     foamGrain,
-    baseFlow,
   };
 }

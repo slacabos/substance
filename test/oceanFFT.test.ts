@@ -5,9 +5,11 @@ import {
   evaluateCascade,
   evolveMode,
   inverseFFT,
+  modeAmplitude,
   oceanCascades,
   OCEAN_REPEAT,
   OCEAN_WAVELENGTH_SCALE,
+  OCEAN_WIND_ANGLE,
 } from '../src/core/oceanFFT';
 import { OCEAN_DEFAULTS } from '../src/core/oceanTuning';
 
@@ -59,6 +61,7 @@ describe('ocean FFT', () => {
     const time = 3.7;
     const fields = evaluateCascade(spectrum, cascade, time);
     const mode = new Float64Array(8);
+    const h0 = new Float64Array(4);
     const tile = spectrum.cascades[cascade]!.tile;
     for (const [px, pz] of [
       [0, 0],
@@ -72,7 +75,8 @@ describe('ocean FFT', () => {
       for (let i = 0; i < size * size; i++) {
         const at = (cascade * size * size + i) * 4;
         const [kx, kz] = [spectrum.waves[at]!, spectrum.waves[at + 1]!];
-        evolveMode(spectrum.h0.subarray(at, at + 4), spectrum.waves.subarray(at, at + 4), time, mode);
+        modeAmplitude(spectrum, spectrum.gain, cascade * size * size + i, h0);
+        evolveMode(h0, spectrum.waves.subarray(at, at + 4), time, mode);
         const c = Math.cos(kx * x + kz * z);
         const s = Math.sin(kx * x + kz * z);
         // field 0 packs Dx + i h, so the real part of its sum is Dx and the imaginary part is h
@@ -85,6 +89,27 @@ describe('ocean FFT', () => {
     }
   });
 
+  it('runs its waves downwind', () => {
+    const spectrum = createOceanSpectrum(true, OCEAN_DEFAULTS);
+    const { size } = spectrum;
+    const a = evaluateCascade(spectrum, 0, 0).height;
+    const b = evaluateCascade(spectrum, 0, 0.5).height;
+    // the shift, in texels, that best carries the sea at 0 onto the sea half a second later
+    let best = [0, 0, Infinity];
+    for (let dy = -4; dy <= 4; dy++)
+      for (let dx = -4; dx <= 4; dx++) {
+        let error = 0;
+        for (let y = 0; y < size; y++)
+          for (let x = 0; x < size; x++)
+            error += (b[((y + dy + size) % size) * size + ((x + dx + size) % size)]! - a[y * size + x]!) ** 2;
+        if (error < best[2]!) best = [dx, dy, error];
+      }
+    const cascade = spectrum.cascades[0]!;
+    const wind = OCEAN_WIND_ANGLE + Math.atan2(cascade.sin, cascade.cos);
+    const heading = Math.atan2(best[1]!, best[0]!);
+    expect(Math.cos(heading - wind)).toBeGreaterThan(0.7);
+  });
+
   it('keeps h(-k) the conjugate of h(k), so the height field is real', () => {
     const spectrum = createOceanSpectrum(true, OCEAN_DEFAULTS);
     const { size } = spectrum;
@@ -92,10 +117,10 @@ describe('ocean FFT', () => {
       const at = (y * size + x) * 4;
       const [a, b, c, d] = Array.from(spectrum.h0.subarray(at, at + 4));
       const w = spectrum.waves[at + 2]! * 1.9;
-      // h = h0 e^{iwt} + conj(h0(-k)) e^{-iwt}
+      // h = h0 e^{-iwt} + conj(h0(-k)) e^{iwt}
       return [
-        a! * Math.cos(w) - b! * Math.sin(w) + c! * Math.cos(w) + d! * Math.sin(w),
-        a! * Math.sin(w) + b! * Math.cos(w) - c! * Math.sin(w) + d! * Math.cos(w),
+        a! * Math.cos(w) + b! * Math.sin(w) + c! * Math.cos(w) - d! * Math.sin(w),
+        b! * Math.cos(w) - a! * Math.sin(w) + c! * Math.sin(w) + d! * Math.cos(w),
       ];
     };
     for (const [x, y] of [

@@ -91,26 +91,49 @@ export function jonswap(omega: number, peak: number, gamma = 3.3): number {
   return omega ** -5 * Math.exp(-1.25 * (peak / omega) ** 4) * gamma ** r;
 }
 
-/** Donelan–Banner directional spreading; theta is from the wind, and it integrates to 1 over a turn. */
-export function donelanBanner(ratio: number, theta: number): number {
-  const beta =
-    ratio < 0.95
-      ? 2.61 * ratio ** 1.3
-      : ratio < 1.6
-        ? 2.28 * ratio ** -0.65
-        : 10 ** (-0.4 + 0.8393 * Math.exp(-0.567 * Math.log(ratio * ratio)));
+/** How narrowly Donelan–Banner spreading gathers a wave at `ratio` times the peak frequency around the wind. */
+export function spreadingBeta(ratio: number): number {
+  return ratio < 0.95
+    ? 2.61 * ratio ** 1.3
+    : ratio < 1.6
+      ? 2.28 * ratio ** -0.65
+      : 10 ** (-0.4 + 0.8393 * Math.exp(-0.567 * Math.log(ratio * ratio)));
+}
+
+/** What makes a spread of this beta integrate to 1 over a turn. */
+export function spreadNorm(beta: number): number {
+  return beta / (2 * Math.tanh(beta * Math.PI));
+}
+
+/** Donelan–Banner spread for a given beta; theta is from the wind, and it integrates to 1 over a turn. */
+export function spread(beta: number, theta: number): number {
   const t = Math.atan2(Math.sin(theta), Math.cos(theta));
   const sech = 1 / Math.cosh(beta * t);
-  return (beta / (2 * Math.tanh(beta * Math.PI))) * sech * sech;
+  return spreadNorm(beta) * sech * sech;
+}
+
+/** Donelan–Banner directional spreading; theta is from the wind, and it integrates to 1 over a turn. */
+export function donelanBanner(ratio: number, theta: number): number {
+  return spread(spreadingBeta(ratio), theta);
 }
 
 export interface OceanSpectrum {
   size: number;
   cascades: OceanCascade[];
-  /** Per cascade and mode, vec4: h0(k) and conj(h0(-k)), real and imaginary parts. */
+  /**
+   * Per cascade and mode, vec4: h0(k) and conj(h0(-k)), real and imaginary parts, for a wind blowing every way
+   * at once; each mode's gain (below) turns that into the sea for the actual wind.
+   */
   h0: Float32Array;
   /** Per cascade and mode, vec4: kx, kz, omega, 1 / |k|. */
   waves: Float32Array;
+  /**
+   * Per cascade and mode, vec4: the spreading's beta and its normalisation, the wave's heading on the cube face
+   * (as OCEAN_WIND_ANGLE), and its true frequency (omega in `waves` is rounded and can be 0).
+   */
+  shape: Float32Array;
+  /** Per cascade and mode: the amplitude gain for the starting wind, sqrt of the spread toward the wave. */
+  gain: Float32Array;
   /** Expected slope variance (both directions) each cascade carries, before amplitude. */
   slopeVariance: number[];
 }
@@ -137,14 +160,16 @@ export function createOceanSpectrum(coarse: boolean, tuning: Readonly<OceanTunin
   const modes = size * size;
   const energy = new Float64Array(cascades.length * modes);
   const waves = new Float32Array(cascades.length * modes * 4);
+  const shape = new Float32Array(cascades.length * modes * 4);
+  const gain = new Float32Array(cascades.length * modes);
   const peakK = (2 * Math.PI) / (tuning.peakWavelength * OCEAN_WAVELENGTH_SCALE);
   const peakOmega = dispersion(peakK);
 
   let total = 0;
   cascades.forEach((cascade, c) => {
     const dk = (2 * Math.PI) / cascade.tile;
-    // the tile is turned, so the wind is too, to keep it the same on the orb
-    const wind = OCEAN_WIND_ANGLE + Math.atan2(cascade.sin, cascade.cos);
+    // the tile is turned, so its waves' headings on the face are turned back
+    const turn = Math.atan2(cascade.sin, cascade.cos);
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const i = c * modes + y * size + x;
@@ -154,14 +179,15 @@ export function createOceanSpectrum(coarse: boolean, tuning: Readonly<OceanTunin
         waves.set([kx, kz, oceanOmega(k), k > 0 ? 1 / k : 0], i * 4);
         if (k <= cascade.kMin || k > cascade.kMax) continue;
         const omega = dispersion(k);
-        // E(kx, kz) dkx dkz = S(omega) D(theta) domega dtheta, with dkx dkz = k dk dtheta
-        const density =
-          (jonswap(omega, peakOmega) *
-            donelanBanner(omega / peakOmega, Math.atan2(kz, kx) - wind) *
-            groupSpeed(k)) /
-          k;
-        energy[i] = density * dk * dk;
-        total += energy[i]!;
+        const beta = spreadingBeta(omega / peakOmega);
+        const heading = Math.atan2(kz, kx) - turn;
+        shape.set([beta, spreadNorm(beta), heading, omega], i * 4);
+        const toward = spread(beta, heading - OCEAN_WIND_ANGLE);
+        gain[i] = Math.sqrt(toward);
+        // E(kx, kz) dkx dkz = S(omega) D(theta) domega dtheta, with dkx dkz = k dk dtheta; energy keeps the
+        // spread-free part, so the sea's height follows the wind
+        energy[i] = ((jonswap(omega, peakOmega) * groupSpeed(k)) / k) * dk * dk;
+        total += energy[i]! * toward;
       }
     }
   });
@@ -188,12 +214,12 @@ export function createOceanSpectrum(coarse: boolean, tuning: Readonly<OceanTunin
         h0[i * 4 + 2] = h0[mirror * 4]!;
         h0[i * 4 + 3] = -h0[mirror * 4 + 1]!;
         const k2 = waves[i * 4]! ** 2 + waves[i * 4 + 1]! ** 2;
-        sum += 2 * energy[i]! * scale * k2;
+        sum += 2 * energy[i]! * gain[i]! ** 2 * scale * k2;
       }
     }
     return sum;
   });
-  return { size, cascades, h0, waves, slopeVariance };
+  return { size, cascades, h0, waves, shape, gain, slopeVariance };
 }
 
 /** The four complex fields each IFFT carries, packed two real fields apiece. */
@@ -201,7 +227,9 @@ export const OCEAN_FIELDS = 4;
 
 /**
  * Spectrum of one mode at time t, packed for the inverse FFT as
- * [Dx + i h, Dz + i dDx/dz, dh/dx + i dh/dz, dDx/dx + i dDz/dz]: four complex numbers, real part first.
+ * [Dx + i h, Dz + i dDx/dz, dh/dx + i dh/dz, dDx/dx + i dDz/dz]: four complex numbers, real part first. `h0`
+ * is the mode's [h0(k), conj(h0(-k))] with each side's gain applied. Each wave runs along k, downwind (with
+ * Tessendorf's e^{+i w t} it would run against it).
  */
 export function evolveMode(
   h0: ArrayLike<number>,
@@ -211,8 +239,8 @@ export function evolveMode(
 ): void {
   const [kx, kz, omega, invK] = [wave[0]!, wave[1]!, wave[2]!, wave[3]!];
   const c = Math.cos(omega * time);
-  const s = Math.sin(omega * time);
-  // h = h0 e^{i w t} + conj(h0(-k)) e^{-i w t}
+  const s = -Math.sin(omega * time);
+  // h = h0 e^{-i w t} + conj(h0(-k)) e^{i w t}
   const re = h0[0]! * c - h0[1]! * s + h0[2]! * c + h0[3]! * s;
   const im = h0[0]! * s + h0[1]! * c - h0[2]! * s + h0[3]! * c;
   const ux = kx * invK;
@@ -229,6 +257,22 @@ export function evolveMode(
   // dDx/dx = (kx^2/k) h,  i dDz/dz = i (kz^2/k) h
   out[6] = kx * ux * re - kz * uz * im;
   out[7] = kx * ux * im + kz * uz * re;
+}
+
+/** The mode's [h0(k), conj(h0(-k))] with each side's gain: its own, and its mirror's at -k. */
+export function modeAmplitude(
+  spectrum: OceanSpectrum,
+  gain: ArrayLike<number>,
+  index: number,
+  out: Float64Array,
+): void {
+  const { size, h0 } = spectrum;
+  const modes = size * size;
+  const local = index % modes;
+  const x = local % size;
+  const y = Math.floor(local / size);
+  const mirror = index - local + ((size - y) % size) * size + ((size - x) % size);
+  for (let j = 0; j < 4; j++) out[j] = h0[index * 4 + j]! * gain[j < 2 ? index : mirror]!;
 }
 
 /**
@@ -277,7 +321,12 @@ export function inverseFFT(re: ArrayLike<number>, im: ArrayLike<number>): [Float
  * The fields of one cascade at time t on its size² grid, from the CPU path: displacement x and z, height,
  * slopes and the displacement derivatives, each size² long and indexed y * size + x.
  */
-export function evaluateCascade(spectrum: OceanSpectrum, cascade: number, time: number) {
+export function evaluateCascade(
+  spectrum: OceanSpectrum,
+  cascade: number,
+  time: number,
+  gain: ArrayLike<number> = spectrum.gain,
+) {
   const { size } = spectrum;
   const modes = size * size;
   const fields = Array.from({ length: OCEAN_FIELDS }, (): [Float64Array, Float64Array] => [
@@ -285,9 +334,11 @@ export function evaluateCascade(spectrum: OceanSpectrum, cascade: number, time: 
     new Float64Array(modes),
   ]);
   const mode = new Float64Array(OCEAN_FIELDS * 2);
+  const h0 = new Float64Array(4);
   for (let i = 0; i < modes; i++) {
     const at = (cascade * modes + i) * 4;
-    evolveMode(spectrum.h0.subarray(at, at + 4), spectrum.waves.subarray(at, at + 4), time, mode);
+    modeAmplitude(spectrum, gain, cascade * modes + i, h0);
+    evolveMode(h0, spectrum.waves.subarray(at, at + 4), time, mode);
     for (let f = 0; f < OCEAN_FIELDS; f++) {
       fields[f]![0][i] = mode[f * 2]!;
       fields[f]![1][i] = mode[f * 2 + 1]!;

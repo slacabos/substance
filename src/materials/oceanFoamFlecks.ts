@@ -1,4 +1,4 @@
-import { CircleGeometry, DoubleSide, InstancedBufferGeometry, Mesh, Vector3 } from 'three';
+import { CircleGeometry, DoubleSide, InstancedBufferGeometry, Mesh } from 'three';
 import {
   MeshBasicNodeMaterial,
   type ComputeNode,
@@ -29,9 +29,10 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
+import { OCEAN_WIND_ANGLE } from '../core/oceanFFT';
 import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
-import { sampleSurface, type SurfaceBuffers } from '../nodes/oceanSurface';
+import { sampleSurface, windAt, type SurfaceBuffers } from '../nodes/oceanSurface';
 import { oceanWaveVertex, type OceanWaveFields } from '../nodes/oceanWaves';
 import { baseR } from '../nodes/shape';
 
@@ -46,7 +47,6 @@ export interface FleckSurface {
   count: number;
 }
 
-const WIND = new Vector3(0.35, 0.9, 0.25).normalize();
 /** Flecks started per second per unit of sphere area where the water is all whitewater, for 900 flecks. */
 const EMISSION = 4000;
 
@@ -66,6 +66,8 @@ export class OceanFoamFlecks {
   private readonly dt = uniform(0);
   /** Frame number (wrapping), so each frame draws new random numbers. */
   private readonly frame = uniform(0);
+  /** Where the wind blows (core/oceanWind.ts). */
+  private readonly windAngle = uniform(OCEAN_WIND_ANGLE);
   private readonly emitNode: ComputeNode;
   private readonly stepNode: ComputeNode;
   private readonly resetNode: ComputeNode;
@@ -124,12 +126,9 @@ export class OceanFoamFlecks {
         const flow = here.flow.sub(d.mul(dot(here.flow, d)));
         const moved = normalize(d.add(flow.mul(this.dt)));
         state.assign(vec4(moved, select(here.shore.lessThanEqual(0), float(0), state.w.sub(this.dt))));
-        const wind = vec3(WIND.x, WIND.y, WIND.z);
-        const tangent = select(
-          length(flow).greaterThan(1e-3),
-          normalize(flow),
-          normalize(wind.sub(moved.mul(dot(wind, moved)))),
-        );
+        // streaming with the current; where it's still, downwind (and anything sideways at the poles)
+        const wind = windAt(moved, this.windAngle).add(cross(moved, vec3(1, 0, 0)).mul(1e-3));
+        const tangent = select(length(flow).greaterThan(1e-3), normalize(flow), normalize(wind));
         detail.element(i.mul(2).add(1)).assign(vec4(tangent, here.height));
         form.w.assign(smoothstep(0, 0.1, here.shore));
       });
@@ -174,6 +173,10 @@ export class OceanFoamFlecks {
     geometry.instanceCount = n;
     this.mesh = new Mesh(geometry, this.material);
     this.mesh.frustumCulled = false;
+  }
+
+  setWindAngle(angle: number): void {
+    this.windAngle.value = angle;
   }
 
   setIntensity(foam: number): void {
