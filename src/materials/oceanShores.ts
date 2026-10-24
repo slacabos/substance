@@ -1,10 +1,12 @@
-import { BufferGeometry, Color, Float32BufferAttribute, Mesh, MeshStandardMaterial, Vector3 } from 'three';
-import { SHORE_SITES, shoreElevation, shoreRadius, shoreNoise } from '../core/oceanShores';
+import { BufferGeometry, Color, Float32BufferAttribute, Mesh, Vector3 } from 'three';
+import { MeshStandardNodeMaterial } from 'three/webgpu';
+import { SHORE_SITES, shoreElevation, shoreNoise, shoreRadius, shoreSiteDistance } from '../core/oceanShores';
+import { shoreSurface } from '../nodes/shore';
 
-const SAND = new Color('#9d8967');
+const SAND = new Color('#c9b48a');
+const WET_SAND = new Color('#8f7d5b');
 const STONE = new Color('#535a58');
 const GRASS = new Color('#3d5e40');
-const WET = new Color('#344644');
 const SHELF = new Color('#c9bf96');
 const DEEP = new Color('#2c4a52');
 const color = new Color();
@@ -30,12 +32,14 @@ export class OceanShores {
     const directions: number[] = [];
     const elevations: number[] = [];
     const indices: number[] = [];
+    const siteOf: number[] = [];
     const dir = new Vector3();
-    for (const site of SHORE_SITES) {
+    for (const [k, site] of SHORE_SITES.entries()) {
       const center = positions.length / 3;
       const addVertex = () => {
         const elevation = shoreElevation(site, dir);
         directions.push(dir.x, dir.y, dir.z);
+        siteOf.push(k);
         elevations.push(elevation);
         positions.push(dir.x * (1 + elevation), dir.y * (1 + elevation), dir.z * (1 + elevation));
       };
@@ -75,26 +79,51 @@ export class OceanShores {
     this.directions = new Float32Array(directions);
     this.elevations = new Float32Array(elevations);
     const colors = new Float32Array(positions.length);
+    // how much of each surface a vertex is (rock, sand, grass) and how wet its sand is, for the close-up
+    // detail in nodes/shore.ts
+    const terrain = new Float32Array(elevations.length * 4);
     const normals = geometry.getAttribute('normal');
     for (let i = 0; i < elevations.length; i++) {
       dir.fromArray(this.directions, i * 3);
+      const site = SHORE_SITES[siteOf[i]!]!;
       const slope = 1 - (normals.getX(i) * dir.x + normals.getY(i) * dir.y + normals.getZ(i) * dir.z);
       const height = elevations[i]!;
+      const ashore = -shoreSiteDistance(site, dir);
       const grain = shoreNoise(dir.x * 173, dir.y * 173, dir.z * 173);
+      // the beach, and low flat ground; then grass on gentle slopes high enough above it, rock elsewhere
+      const sand = Math.max(
+        1 - smooth(site.beach * 0.75, site.beach * 1.15 + 0.006, ashore),
+        (1 - smooth(0.02, 0.035, height)) * (1 - smooth(0.12, 0.45, slope)),
+      );
+      // grass from a little above the beach, giving way to bare rock on the highest ground and steep slopes
+      const above = (height - 0.016) / site.height;
+      const grass =
+        (1 - sand) *
+        smooth(0.2, 0.5, above) *
+        (1 - smooth(0.75, 0.95, above)) *
+        (1 - smooth(0.08, 0.3, slope));
+      const wet = sand * (1 - smooth(0.0045, 0.009, height));
+      terrain.set([Math.max(0, 1 - sand - grass), sand, grass, wet], i * 4);
       color
         .copy(STONE)
-        .lerp(GRASS, smooth(0.06, 0.12, height) * (1 - smooth(0.08, 0.32, slope)) * 0.9)
-        .lerp(SAND, (1 - smooth(0.018, 0.06, height)) * (1 - smooth(0.12, 0.5, slope)) * 0.65)
-        // a narrow wet band at the waterline; below it the shelf is pale sand, darkening with depth, which is
-        // what makes clear shallow water turquoise
-        .lerp(WET, (1 - smooth(0.012, 0.024, height)) * smooth(0.002, 0.01, height))
-        .lerp(SHELF, 1 - smooth(0.002, 0.01, height))
+        .lerp(GRASS, grass / Math.max(1e-3, 1 - sand))
+        .lerp(SAND, sand)
+        .lerp(WET_SAND, wet)
+        // below the waterline the shelf is pale sand, darkening with depth, which is what makes clear shallow
+        // water turquoise
+        .lerp(SHELF, 1 - smooth(0.001, 0.004, height))
         .lerp(DEEP, 1 - smooth(-0.06, -0.01, height))
-        .multiplyScalar(0.85 + grain * 0.13);
+        .multiplyScalar(0.9 + grain * 0.08);
       colors.set([color.r, color.g, color.b], i * 3);
     }
+    geometry.setAttribute('terrain', new Float32BufferAttribute(terrain, 4));
     geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
-    this.mesh = new Mesh(geometry, new MeshStandardMaterial({ vertexColors: true, roughness: 0.93 }));
+    const material = new MeshStandardNodeMaterial({ vertexColors: true });
+    const surface = shoreSurface();
+    material.colorNode = surface.tone;
+    material.roughnessNode = surface.roughness;
+    material.normalNode = surface.normal;
+    this.mesh = new Mesh(geometry, material);
     this.mesh.frustumCulled = false;
     this.updateMorph(0);
   }

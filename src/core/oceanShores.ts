@@ -8,6 +8,8 @@ export interface ShoreSite {
   readonly radius: number;
   readonly height: number;
   readonly seed: number;
+  /** How far the sand runs inland from the waterline before the dunes or rock begin, radians. */
+  readonly beach: number;
 }
 
 const makeSite = (
@@ -17,21 +19,29 @@ const makeSite = (
   radius: number,
   height: number,
   seed: number,
+  beach: number,
 ): ShoreSite => {
   const center = new Vector3(x, y, z).normalize();
   const east = new Vector3(0, 1, 0).cross(center).normalize();
   const north = center.clone().cross(east).normalize();
-  return { center, east, north, radius, height, seed };
+  return { center, east, north, radius, height, seed, beach };
 };
 
-/** Raised islands, with the largest coast visible from the initial camera angle. */
+/**
+ * Islands, with the largest coast visible from the initial camera angle: a high one with rock behind its beach,
+ * two low sandy cays, and two in between.
+ */
 export const SHORE_SITES: readonly ShoreSite[] = [
-  makeSite(0.48, 0.3, 0.82, 0.27, 0.17, 0.6),
-  makeSite(-0.58, -0.12, 0.8, 0.2, 0.13, 1.8),
-  makeSite(0.08, -0.68, 0.73, 0.17, 0.115, 3.4),
-  makeSite(-0.24, 0.76, 0.6, 0.14, 0.1, 5.1),
-  makeSite(0.3, -0.2, -0.93, 0.22, 0.14, 2.7),
+  makeSite(0.48, 0.3, 0.82, 0.27, 0.14, 0.6, 0.022),
+  makeSite(-0.58, -0.12, 0.8, 0.2, 0.028, 1.8, 0.055),
+  makeSite(0.08, -0.68, 0.73, 0.17, 0.085, 3.4, 0.014),
+  makeSite(-0.24, 0.76, 0.6, 0.14, 0.018, 5.1, 0.06),
+  makeSite(0.3, -0.2, -0.93, 0.22, 0.06, 2.7, 0.035),
 ];
+
+/** Height of the waterline's sand above the still sea, and how much a beach climbs to its top. */
+const WATERLINE = 0.004;
+const BEACH_RISE = 0.012;
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
 const smooth = (x: number): number => {
@@ -85,20 +95,24 @@ export function shoreDistance(dir: Vector3): number {
   return nearest;
 }
 
-/** A narrow wet bank rises into rock ledges and ridged high ground. */
+/**
+ * The ground at dir: offshore the seabed shelves away; ashore a beach climbs gently from the waterline, then
+ * dunes or rock rise toward the island's ridged heart, as high as the site allows.
+ */
 export function shoreElevation(site: ShoreSite, dir: Vector3): number {
   const distance = shoreSiteDistance(site, dir);
-  if (distance > 0) return 0.012 - 0.085 * smooth(distance / 0.045);
+  if (distance > 0) return WATERLINE - 0.085 * smooth(distance / 0.045);
+  const sand = WATERLINE + BEACH_RISE * smooth(-distance / site.beach);
   const angle = Math.acos(Math.min(1, Math.max(-1, site.center.dot(dir))));
   const inland = smooth((site.radius * 1.04 - angle) / (site.radius * 0.85));
-  const bank = smooth(-distance / 0.035);
+  const bank = smooth((-distance - site.beach * 0.8) / 0.035);
   const u = site.east.dot(dir) / site.radius;
   const v = site.north.dot(dir) / site.radius;
   const ridge = 1 - Math.abs(shoreNoise(u * 3.2 + site.seed, v * 3.2, site.seed * 3));
   const detail = shoreNoise(u * 7, v * 7 + site.seed, site.seed * 2);
   const relief = 0.36 + ridge * 0.56 + detail * 0.18;
   const grain = shoreNoise(dir.x * 83, dir.y * 83, dir.z * 83);
-  return 0.012 + 0.052 * bank + site.height * inland * bank * relief + grain * 0.008 * inland;
+  return sand + site.height * bank * (0.3 + 0.7 * inland * relief) + grain * 0.006 * inland * bank;
 }
 
 /** Ground height used by spray collision; distant seabed sits well below the surface. */
@@ -115,7 +129,7 @@ export function shoreGroundHeight(dir: Vector3): number {
  * narrow shelf that reaches the open sea's depth a few hundredths of a radian out.
  */
 export function shelfDepth(d: number): number {
-  return Math.min(OCEAN_DEPTH, Math.max(0.002, 0.085 * smooth(d / 0.045) - 0.012));
+  return Math.min(OCEAN_DEPTH, Math.max(0.002, 0.085 * smooth(d / 0.045) - WATERLINE));
 }
 
 /** Where the shelf ends and the open sea's depth begins. */

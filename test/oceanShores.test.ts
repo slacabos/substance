@@ -6,6 +6,7 @@ import {
   SHORE_SITES,
   shoreDistance,
   shoreElevation,
+  shoreRadius,
   shoreSurfPhase,
   shoreSwell,
   SURF_SET_WAVES,
@@ -15,11 +16,23 @@ import { OCEAN_DEFAULTS } from '../src/core/oceanTuning';
 import { OceanShores } from '../src/materials/oceanShores';
 
 describe('coastal ocean', () => {
-  it('raises inland terrain above the largest ambient swells', () => {
+  it('raises every island above the largest swells, some high and some low and sandy', () => {
     expect(SHORE_SITES.length).toBeGreaterThanOrEqual(4);
+    const peaks = SHORE_SITES.map((site) => shoreElevation(site, site.center));
+    for (const site of SHORE_SITES) expect(shoreDistance(site.center)).toBeLessThan(0);
+    for (const peak of peaks) expect(peak).toBeGreaterThan(0.03);
+    expect(Math.max(...peaks)).toBeGreaterThan(0.1);
+    expect(Math.min(...peaks)).toBeLessThan(0.05);
+    // a beach climbs gently from the waterline: no step out of the sea
     for (const site of SHORE_SITES) {
-      expect(shoreDistance(site.center)).toBeLessThan(0);
-      expect(shoreElevation(site, site.center)).toBeGreaterThan(0.1);
+      const ashore = (d: number) => {
+        // due east of the centre (bearing 0), the waterline is shoreRadius(site, 0) out
+        const angle = shoreRadius(site, 0) + d;
+        const dir = site.center.clone().multiplyScalar(Math.cos(angle));
+        return shoreElevation(site, dir.addScaledVector(site.east, Math.sin(angle)).normalize());
+      };
+      expect(ashore(0.002)).toBeLessThan(0.006);
+      expect(ashore(-site.beach * 0.5)).toBeLessThan(0.02);
     }
     expect(shoreDistance(new Vector3(0, 0, -1))).toBeGreaterThan(0);
     const shores = new OceanShores(true);

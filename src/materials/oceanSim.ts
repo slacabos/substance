@@ -512,7 +512,8 @@ export class OceanSim {
         .mul(0.5)
         .add(0.5);
       const set = lull.mul(lull).mul(0.9).add(0.55);
-      const depth = clamp(smooth(distance.div(0.045)).mul(0.085).sub(0.012), 0.002, OCEAN_DEPTH);
+      // shelfDepth (core/oceanShores.ts)
+      const depth = clamp(smooth(distance.div(0.045)).mul(0.085).sub(0.004), 0.002, OCEAN_DEPTH);
       const envelope = float(1)
         .sub(smooth(distance.sub(0.04).div(SURF_REACH - 0.04)))
         .mul(min(float(OCEAN_DEPTH).div(depth).pow(0.25), 1.8))
