@@ -1,11 +1,35 @@
 import type { Node, StorageBufferNode } from 'three/webgpu';
-import { abs, clamp, dot, float, floor, If, Loop, max, select, uint, vec3 } from 'three/tsl';
+import {
+  abs,
+  clamp,
+  cross,
+  dot,
+  float,
+  floor,
+  If,
+  Loop,
+  max,
+  normalize,
+  select,
+  uint,
+  vec3,
+} from 'three/tsl';
 import { LOOKUP_SIZE } from '../core/oceanLookup';
 
 // Shared GPU helpers for reading the interactive ocean surface (materials/oceanSim.ts) at a direction.
 
 type Vec3 = Node<'vec3'>;
 type UInt = Node<'uint'>;
+
+/**
+ * A fixed tangent basis at unit direction p, for storing a vertex's foam drift in two numbers. It jumps near the
+ * y poles, which doesn't matter: each vertex only ever reads its own drift back in its own basis.
+ */
+export function driftBasis(p: Vec3): { e1: Vec3; e2: Vec3 } {
+  const axis = select(abs(p.y).lessThan(0.9), vec3(0, 1, 0), vec3(1, 0, 0));
+  const e1 = normalize(cross(axis, p));
+  return { e1, e2: cross(p, e1) };
+}
 
 /**
  * The cube-map cell of a direction, matching core/oceanLookup.ts: faces +x, -x, +y, -y, +z, -z, each split

@@ -6,6 +6,8 @@ import {
   float,
   floor,
   fract,
+  fwidth,
+  length,
   max,
   mix,
   normalize,
@@ -42,15 +44,15 @@ function vnoise(x: Vec3): Float {
   );
 }
 
-/** Whitecaps follow steep travelling crests; simulated foam persists and drifts after impacts. */
-export function oceanFoam(
-  obj: Vec3,
-  breaking: Float,
-  weather: Float,
-  simulated: Float,
-  u: DeformUniforms,
-  shore?: Float,
-): Float {
+/** Where the foam pattern is read: two drifted positions and how much of it follows the first (see OceanSim). */
+export interface FoamDrift {
+  a: Vec3;
+  b: Vec3;
+  blend: Float;
+}
+
+/** Two octaves of value noise, each fading to its mean once its cells get smaller than a pixel. */
+function foamNoise(obj: Vec3, u: DeformUniforms): Float {
   // Narrow in the swell direction and stretched along each crest.
   const scale = float(FOAM_REFERENCE_WAVELENGTH).div(u.uOceanWavelength);
   const q = vec3(
@@ -66,9 +68,30 @@ export function oceanFoam(
       .mul(12)
       .mul(scale),
   );
-  const n = vnoise(q)
-    .mul(0.7)
-    .add(vnoise(q.mul(2.35)).mul(0.3));
+  const cells = length(fwidth(q));
+  const octave = (frequency: number) =>
+    mix(vnoise(q.mul(frequency)), float(0.5), smoothstep(0.35, 0.8, cells.mul(frequency)));
+  return octave(1).mul(0.7).add(octave(2.35).mul(0.3));
+}
+
+/** Whitecaps follow steep travelling crests; simulated foam persists and drifts after impacts. */
+export function oceanFoam(
+  drift: FoamDrift,
+  breaking: Float,
+  weather: Float,
+  simulated: Float,
+  u: DeformUniforms,
+  shore?: Float,
+): Float {
+  // the two drifted patterns crossfaded, keeping the noise's contrast through the blend
+  const wa = drift.blend;
+  const wb = float(1).sub(wa);
+  const n = foamNoise(drift.a, u)
+    .sub(0.5)
+    .mul(wa)
+    .add(foamNoise(drift.b, u).sub(0.5).mul(wb))
+    .div(sqrt(wa.mul(wa).add(wb.mul(wb))))
+    .add(0.5);
   // Whitecaps where the waves fold over, broken into streaks; the noise varies how readily each spot foams.
   const crests = smoothstep(mix(0.3, 0.22, weather), 0.75, breaking.mul(n.mul(0.9).add(0.55)));
   const sprayFoam = smoothstep(0.09, 0.6, simulated).mul(smoothstep(0.36, 0.72, n));

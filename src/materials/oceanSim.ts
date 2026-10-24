@@ -1,4 +1,4 @@
-import { BufferAttribute, Vector3, Vector4, type BufferGeometry } from 'three';
+import { BufferAttribute, Vector2, Vector3, Vector4, type BufferGeometry } from 'three';
 import type { ComputeNode, Node, StorageBufferNode, UniformArrayNode, WebGPURenderer } from 'three/webgpu';
 import {
   abs,
@@ -31,6 +31,7 @@ import {
   uint,
   uniform,
   uniformArray,
+  vec2,
   vec3,
   vec4,
 } from 'three/tsl';
@@ -41,7 +42,7 @@ import { OCEAN_DEPTH } from '../core/oceanFFT';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
-import { cubeCell } from '../nodes/oceanSurface';
+import { cubeCell, driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveFoam, type OceanWaveFields } from '../nodes/oceanWaves';
 
 /** A push on the water: a tap or release (no motion), or a drag step (with motion along the surface). */
@@ -101,6 +102,17 @@ const SITE_CELLS = 6 * SITE_SIZE * SITE_SIZE;
 const SITE_INTERVAL = 0.075;
 /** Fixed-point scale for summing the sea's mean height: 1e-10 resolution, room for means up to 0.2. */
 const VOLUME_FIXED = 1e10;
+/**
+ * Seconds each foam drift runs before it starts over. Foam's pattern is read at its vertex moved back by the
+ * drift; a drift that ran forever would shear it into fingerprints wherever the current swirls, so two drifts,
+ * half a cycle apart, each restart while hidden and the shader crossfades them (flow maps, Vlachos 2010).
+ */
+const DRIFT_PERIOD = 1;
+/**
+ * Farthest a foam drift goes, orb radii: a couple of the pattern's own grains. The foam itself rides the current
+ * in the sim; the pattern only has to look carried, and a swirl's shear can't wind it into rings.
+ */
+const DRIFT_REACH = 0.025;
 
 /** How the FFT's whitecaps (their remembered folding, averaged over a vertex) leave foam in the sim. */
 const WHITECAP = {
@@ -143,7 +155,13 @@ export class OceanSim implements SprayGround {
     press: uniform(new Vector4(0, 0, 1, 0)),
     /** The pushes' mean over the sea, taken back everywhere so the hand moves water rather than removing it. */
     pushMean: uniform(0),
+    /** 0 where a foam drift restarts this frame, 1 where it keeps running. */
+    driftKeep: uniform(new Vector2(1, 1)),
   };
+  /** How much of the foam pattern follows the first drift (the second takes the rest). */
+  private readonly driftBlend = uniform(0.5);
+  /** Where the foam drifts are in their cycle, 0 to 1. */
+  private driftClock = 0;
   private readonly events = Array.from({ length: EVENTS }, () => new Vector4(0, 0, 1, 0));
   private readonly eventShapes = Array.from({ length: EVENTS }, () => new Vector4());
   private readonly deposits = Array.from({ length: DEPOSITS }, () => new Vector4(0, 0, 1, 0));
@@ -561,8 +579,14 @@ export class OceanSim implements SprayGround {
         this.surface.element(i).assign(vec4(state.x.add(surfHeight), foam, turbulence, impact));
         const flow = this.current[final]!.element(i).xyz;
         this.flow.element(i).assign(vec4(flow, 0));
+        // both foam drifts in this vertex's tangent basis, each restarting on its own beat
+        const { e1, e2 } = driftBasis(q);
+        const moved = vec2(dot(flow, e1), dot(flow, e2)).mul(u.frameDt);
         const drift = this.drift.element(i);
-        drift.assign(vec4(drift.xyz.add(flow.mul(u.frameDt)), 0));
+        const reach = (d: Node<'vec2'>) => d.mul(min(float(1), float(DRIFT_REACH).div(max(length(d), 1e-6))));
+        drift.assign(
+          vec4(reach(drift.xy.add(moved)).mul(u.driftKeep.x), reach(drift.zw.add(moved)).mul(u.driftKeep.y)),
+        );
       })().compute(n);
 
     const finishSlope = (final: number) =>
@@ -691,6 +715,7 @@ export class OceanSim implements SprayGround {
       surface: view(this.surface, 'vec4'),
       slope: view(this.slope, 'vec4'),
       drift: view(this.drift, 'vec4'),
+      driftBlend: this.driftBlend,
       flow: view(this.flow, 'vec4'),
       ground: view(this.ground, 'vec4'),
       vertex: view(this.vertex, 'vec4'),
@@ -732,6 +757,13 @@ export class OceanSim implements SprayGround {
     this.uniforms.frameDt.value = dt;
     this.uniforms.dt.value = dt / steps;
     this.uniforms.time.value = time;
+    // a drift restarts as its weight reaches 0: the first at whole periods, the second half a period later
+    const phase = this.driftClock;
+    this.driftClock = (this.driftClock + dt / DRIFT_PERIOD) % 1;
+    const next = this.driftClock;
+    const keep = (offset: number) => ((next + offset) % 1 < (phase + offset) % 1 ? 0 : 1);
+    this.uniforms.driftKeep.value.set(keep(0), keep(0.5));
+    this.driftBlend.value = 1 - Math.abs(2 * next - 1);
     for (let e = 0; e < EVENTS; e++) {
       const force = forces[e];
       this.events[e]!.set(force?.dir.x ?? 0, force?.dir.y ?? 0, force?.dir.z ?? 1, force?.strength ?? 0);

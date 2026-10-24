@@ -3,6 +3,7 @@ import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   MeshPhysicalNodeMaterial,
   type MeshPhysicalNodeMaterialParameters,
+  type Node,
   type StorageBufferNode,
 } from 'three/webgpu';
 import {
@@ -28,6 +29,7 @@ import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
 import { oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
+import { driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
 import { baseN, baseR } from '../nodes/shape';
 
@@ -41,6 +43,7 @@ export interface OceanSurfaceOptions {
     surface: StorageBufferNode<'vec4'>;
     slope: StorageBufferNode<'vec4'>;
     drift: StorageBufferNode<'vec4'>;
+    driftBlend: Node<'float'>;
   };
   spacing: number;
   coastal: boolean;
@@ -108,7 +111,8 @@ export function createDeformMaterial(
   const simGradient = varyingProperty('vec3', 'vSimGradient');
   const simulatedFoam = varyingProperty('float', 'vSimFoam');
   const turbulence = varyingProperty('float', 'vTurbulence');
-  const obj = varyingProperty('vec3', 'vObj');
+  const objA = varyingProperty('vec3', 'vObjA');
+  const objB = varyingProperty('vec3', 'vObjB');
   const shore = coastal ? varyingProperty('float', 'vShoreDistance') : undefined;
   material.positionNode = Fn(() => {
     const p = normalize(positionGeometry);
@@ -123,7 +127,11 @@ export function createDeformMaterial(
     direction.assign(p);
     simulatedFoam.assign(simulated.y);
     turbulence.assign(simulated.z);
-    obj.assign(p.sub(sim.drift.element(vertexIndex).xyz));
+    // where the foam pattern is read: this vertex moved back by each of its two drifts
+    const drift = sim.drift.element(vertexIndex);
+    const { e1, e2 } = driftBasis(p);
+    objA.assign(p.sub(e1.mul(drift.x)).sub(e2.mul(drift.y)));
+    objB.assign(p.sub(e1.mul(drift.z)).sub(e2.mul(drift.w)));
     shore?.assign(attribute('oceanShoreData', 'vec4').w);
     return surface.pos.add(normalize(surface.pos).mul(simHeight));
   })();
@@ -137,7 +145,14 @@ export function createDeformMaterial(
     float(1).sub(smoothstep(0.3, 0.85, surface.jacobian)),
     smoothstep(0.6, 1.05, surface.foam),
   );
-  const foam = oceanFoam(obj, breaking, weatherAmount, simulatedFoam, uniforms, shore);
+  const foam = oceanFoam(
+    { a: objA, b: objB, blend: sim.driftBlend },
+    breaking,
+    weatherAmount,
+    simulatedFoam,
+    uniforms,
+    shore,
+  );
   const base = materialRoughness.add(turbulence.mul(0.1));
   // GGX alpha^2 grows by twice the hidden slope variance
   const rough = pow(pow(base, 4).add(surface.lostVariance.mul(damping).mul(damping).mul(2)), 0.25);
