@@ -57,7 +57,7 @@ const SHALLOW_WATER = vec3(0.16, 0.62, 0.66);
 
 /** How far the simulated waves' vertices lean toward their crests, per unit of slope (orb radii). */
 const CREST_LEAN = 0.012;
-/** The most a vertex leans, orb radii: well under half the desktop mesh's 0.025 spacing. */
+/** The most a vertex leans, orb radii: well under half the desktop mesh's 0.0165 spacing. */
 const CREST_SHIFT = 0.004;
 
 /** What the ocean material needs beyond the shared uniforms: its FFT waves, the simulated surface, the spacing. */

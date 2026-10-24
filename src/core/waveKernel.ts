@@ -12,8 +12,12 @@
 export const WAVE_RINGS = 4;
 /** Slots per vertex: itself, then up to 60 neighbours (unused slots repeat the vertex with weight 0). */
 export const WAVE_SLOTS = 61;
-/** Deepest water, in spacings, the stencil still fits well (about 5% worst error). */
-export const WAVE_MAX_DEPTH = 2;
+/**
+ * Deepest water, in spacings, the stencil is fitted for: the open sea on the desktop mesh. Two spacings fit to
+ * about 15% at worst; three to about 19% (wave speeds within about 9%), which beats treating the sea as two
+ * spacings deep: that slows its long waves by a fifth.
+ */
+export const WAVE_MAX_DEPTH = 3;
 const DEPTH_STEPS = 32;
 /**
  * Ridge penalty on the fitted weights. Unpenalised, the deeper fits alternate in sign and turn negative at
@@ -193,16 +197,4 @@ export function buildWaveKernel(
     weights[base] = -sum;
   }
   return { indices, weights };
-}
-
-/** Applies the operator: out[i] = sum of weight * h over vertex i's slots. */
-export function applyWaveKernel(kernel: WaveKernel, h: ArrayLike<number>, out: Float32Array): void {
-  const count = out.length;
-  for (let i = 0; i < count; i++) {
-    let sum = 0;
-    for (let s = 0; s < WAVE_SLOTS; s++) {
-      sum += kernel.weights[i * WAVE_SLOTS + s]! * h[kernel.indices[i * WAVE_SLOTS + s]!]!;
-    }
-    out[i] = sum;
-  }
 }

@@ -287,6 +287,7 @@ export class OceanSim {
         .mul(u.wind.mul(WIND.drift))
         .mul(smoothstep(0, 0.06, ground.element(j).y));
     const invSqrt3 = 1 / Math.sqrt(3);
+    const meanArea = field.areas.reduce((sum, area) => sum + area, 0) / n;
     const invSpacing = 1 / field.spacing;
 
     /** Vertical acceleration from taps, releases, drags (each spread over the frame) and a held press. */
@@ -394,6 +395,7 @@ export class OceanSim {
         const flow = waves.add(windDrift(i));
         const qi = g4.x.add(h);
         const rise = float(0).toVar();
+        const spreadH = float(0).toVar();
         const wetNeighbours = float(0).toVar();
         const outflow = float(0).toVar();
         const sumFoam = float(0).toVar();
@@ -410,6 +412,7 @@ export class OceanSim {
             const chord = this.vertex.element(j).xyz.sub(q);
             const otherWaves = this.current[1 - from]!.element(j).xyz;
             rise.addAssign(other.x.sub(other.y));
+            spreadH.addAssign(other.x.sub(h));
             wetNeighbours.addAssign(1);
             // shallow-water flux through the shared face: the edge's mean current (the waves' part only; the
             // wind's drift moves foam, not the water column) times the column on the side it flows from
@@ -449,7 +452,9 @@ export class OceanSim {
           .sub(operator.mul(dt2g))
           .add(push)
           .div(a.add(1));
-        const shallow = h.sub(u.dt.mul(outflow).div(v.w)).add(push);
+        // conservative smoothing between neighbours (SURFACE.shallowSmoothing)
+        const smoothing = float(SURFACE.shallowSmoothing * meanArea).div(v.w);
+        const shallow = h.sub(u.dt.mul(outflow).div(v.w)).add(spreadH.mul(smoothing)).add(push);
         const mixShallow = float(1).sub(smoothstep(0.008, 0.025, g4.x));
         // never below the bed in the shallows (surfaceFloor in core/shallowWater.ts)
         const floor = mix(float(-SURFACE.maxHeight), g4.x.negate(), mixShallow);

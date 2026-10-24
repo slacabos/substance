@@ -19,11 +19,12 @@ export const FLUID = {
   /** Fixed-point scale for the grid's atomic sums (WebGPU has no float atomics). */
   fixed: 2 ** 20,
   /**
-   * Sea water one splash particle carries: what it takes from the vertex it leaves and gives back to the one
-   * it lands on, so landings leave small rings. Far less than its share of the grid: a splash of fifty takes
-   * about 5 mm from the sea, not centimetres.
+   * Sea water one splash particle carries: what it takes from the vertex it leaves and gives back where it
+   * lands, about 0.08 mm of height on the desktop mesh. Kept tiny on purpose: landings raise the bank, a rising
+   * bank reads as surf arriving, and surf throws more spray, so a bigger share feeds back into a runaway sea.
+   * The sim keeps the sea's volume exact on its own.
    */
-  splashVolume: 2.5e-7,
+  splashVolume: 2e-8,
   /** Fixed-point scales for the landings the sim adds up per vertex: volume, and foam. */
   landing: { volume: 1e10, foam: 1e6 },
   /** Water is allowed to compress but never to pull: free droplets fly apart rather than clumping. */

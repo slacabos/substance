@@ -32,6 +32,13 @@ export const SURFACE = {
    */
   viscosity: 0.03,
   /**
+   * The same for the shallow-water update, which otherwise has no damping at all: a share of each vertex's
+   * difference from its neighbours (scaled by their mean area over its own) moves to them each step, as fluxes
+   * between pairs, so no water is made or lost. Without it a grid-scale ripple can build on a shelf several
+   * cells wide.
+   */
+  shallowSmoothing: 0.01,
+  /**
    * How far a hand can press the open sea, orb radii. It reaches less over shallower water (in proportion to
    * the depth), so it can't press the shallows below their bed; a push fades out as the water nears it.
    */
@@ -127,6 +134,8 @@ export function stepSurface(
   const nextH = new Float32Array(count);
   const nextU = new Float32Array(count * 3);
   const areas = field.areas;
+  let meanArea = 0;
+  for (let i = 0; i < count; i++) meanArea += areas[i]! / count;
   const c = [0, 0, 0];
 
   // Chord from i to j: unit direction into c, length returned. Its face in the dual hexagon is length/sqrt 3
@@ -203,7 +212,13 @@ export function stepSurface(
       const column = Math.max(0, velocity > 0 ? depth[i]! + h[i]! : depth[j]! + h[j]!);
       outflow += velocity * column * face;
     }
-    const shallow = h[i]! - (dt * outflow) / areas[i]! + push;
+    let spread = 0;
+    for (let k = 0; k < 6; k++) {
+      const j = neighbors[i * 6 + k]!;
+      if (j !== i && wet[j]) spread += h[j]! - h[i]!;
+    }
+    const smoothing = (SURFACE.shallowSmoothing * meanArea) / areas[i]!;
+    const shallow = h[i]! - (dt * outflow) / areas[i]! + smoothing * spread + push;
 
     const s = shallowWeight(depth[i]!);
     nextH[i] = Math.min(SURFACE.maxHeight, Math.max(surfaceFloor(depth[i]!), wave * (1 - s) + shallow * s));

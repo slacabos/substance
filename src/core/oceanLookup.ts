@@ -3,7 +3,7 @@
 // The GPU reads the cell's vertex and blends it with that vertex's six neighbours.
 
 /** Cells per side of each cube face. */
-export const LOOKUP_SIZE = 96;
+export const LOOKUP_SIZE = 192;
 
 /** For each face (+x, -x, +y, -y, +z, -z), the two axes its cell coordinates run along. */
 export const LOOKUP_AXES: readonly (readonly [number, number])[] = [

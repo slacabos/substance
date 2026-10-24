@@ -26,14 +26,14 @@ describe('ocean tuning', () => {
     expect(oceanTuningQuery(OCEAN_DEFAULTS)).toBe('');
   });
 
-  it('uses about 8k vertices on mobile and 24k on desktop', () => {
+  it('uses about 13k vertices on mobile and 53k on desktop', () => {
     const counts = [true, false].map((coarse) => {
       const geometry = createDeformGeometry(true, oceanDetail(coarse));
       const count = geometry.getAttribute('position').count;
       geometry.dispose();
       return count;
     });
-    expect(counts).toEqual([8412, 24012]);
+    expect(counts).toEqual([13692, 53292]);
   });
 
   it('lengthens the sea with the peak wavelength and calms it with the wind', () => {

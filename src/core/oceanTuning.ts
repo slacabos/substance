@@ -34,9 +34,12 @@ const KEYS: Record<OceanTuningValue, string> = {
 
 export const OCEAN_VALUES = Object.keys(KEYS) as OceanTuningValue[];
 
-/** Around 8k vertices on touch devices and 24k on desktops. */
+/**
+ * Around 13k vertices on touch devices and 53k on desktops: fine enough for a tap's crest to stay sharp and for
+ * the coast's narrow shelf to span a few cells.
+ */
 export function oceanDetail(coarse: boolean): number {
-  return coarse ? 28 : 48;
+  return coarse ? 36 : 72;
 }
 
 export function readOceanTuning(search: string): OceanTuning {
