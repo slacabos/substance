@@ -80,7 +80,8 @@ function bubblesAt(lace: Texture, obj: Vec3, frequency: number, scale: Float): N
  * Churned foam: white water full of round holes. Where the sim has foam, a slow noise gathers it into clumps
  * with open water between. Within them each bubble opens to its own radius: pinholes in thick foam, growing and
  * merging into a thin, translucent web as it thins, and a few large bubbles open wide. Each bubble size is read
- * at both drifts and crossfaded before the holes are cut, so bubbles never double up.
+ * at both drifts and crossfaded before the holes are cut, so bubbles never double up. Already scaled by the
+ * foam strength.
  */
 function foamLace(drift: FoamDrift, lace: Texture, amount: Float, u: DeformUniforms): Float {
   const scale = float(FOAM_REFERENCE_WAVELENGTH).div(u.uOceanWavelength).mul(LACE);
@@ -107,11 +108,11 @@ function foamLace(drift: FoamDrift, lace: Texture, amount: Float, u: DeformUnifo
   const open = float(1)
     .sub(outside(large.x.add(small.x.mul(0.12)), opening))
     .mul(smoothstep(0, 0.05, opening));
-  // thin foam is a translucent film
-  return foam
-    .mul(float(1).sub(open))
-    .mul(smoothstep(0.01, 0.12, held))
-    .mul(mix(0.55, 1, held));
+  const coverage = foam.mul(float(1).sub(open)).mul(smoothstep(0.01, 0.12, held));
+  // Applied after the foam strength, so it can't push churned foam back to solid white: thin foam is a
+  // translucent film, and even the thickest lets a little water through, more under some bubbles than others.
+  const film = mix(0.4, 0.85, held).mul(mix(0.85, 1, small.y));
+  return clamp(coverage.mul(u.uOceanFoam), 0, 1).mul(film);
 }
 
 /** Two octaves of value noise, each fading to its mean once its cells get smaller than a pixel. */
@@ -160,14 +161,14 @@ export function oceanFoam(
   const crests = smoothstep(mix(0.3, 0.22, weather), 0.75, breaking.mul(n.mul(0.9).add(0.55)));
   // churned foam left by the sim: taps, drags, splashes and old whitecaps
   const sprayFoam = foamLace(drift, lace, smoothstep(0.04, 0.6, simulated), u);
-  let foam = max(crests, sprayFoam);
+  let foam = crests;
   if (shore) {
     const wash = smoothstep(0.1, 0.62, simulated)
       .mul(float(1).sub(smoothstep(0.03, 0.13, shore)))
       .mul(mix(0.5, 0.9, n));
     foam = max(foam, wash);
   }
-  return clamp(foam.mul(u.uOceanFoam), 0, 1);
+  return max(clamp(foam.mul(u.uOceanFoam), 0, 1), sprayFoam);
 }
 
 /** Approximate absorption through a deep body of water, plus a blue grazing-angle glint. */
