@@ -199,5 +199,21 @@ export function sampleShoreSurf(
   out.breaking = crest * (1 - smooth((distance - 0.012) / 0.06)) * exposure * energy;
 }
 
+/**
+ * Waves per set. Swell is many trains of slightly different periods: where they fall into step the waves add up
+ * into a set of bigger ones, where they don't there's a lull. At the swell's 7 s period that's about a minute.
+ */
+export const SURF_SET_WAVES = 9;
+
+/**
+ * How big the surf is at this point of a set: about 0.55 in a lull to 1.45 at a set's heart, 0.9 on average.
+ * `spatial` is the surf's phase without its clock, so a set travels in with the crests; `setClock` runs at the
+ * swell's frequency over SURF_SET_WAVES, and `seed` puts each island's sets at their own times.
+ */
+export function surfSet(spatial: number, setClock: number, seed: number): number {
+  const s = 0.5 + 0.5 * Math.sin(spatial / SURF_SET_WAVES - setClock + seed);
+  return 0.55 + 0.9 * s * s;
+}
+
 /** How far out from a shore the surf reaches before it's just the open sea's swell. */
 export const SURF_REACH = 0.12;

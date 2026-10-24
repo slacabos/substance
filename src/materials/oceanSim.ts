@@ -39,7 +39,7 @@ import { FLUID } from '../core/oceanFluid';
 import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 import { OCEAN_DEPTH, OCEAN_WIND_ANGLE } from '../core/oceanFFT';
 import { WIND, windAt as windOnOrb } from '../core/oceanWind';
-import { SHELF_EDGE, SHORE_SITES, shoreSwell, SURF_REACH } from '../core/oceanShores';
+import { SHELF_EDGE, SHORE_SITES, shoreSwell, SURF_REACH, SURF_SET_WAVES } from '../core/oceanShores';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
@@ -136,6 +136,8 @@ export class OceanSim {
     amplitude: uniform(OCEAN_DEFAULTS.amplitude),
     /** The surf's clock: the swell's frequency times time, added up frame by frame, never time times a speed. */
     surfClock: uniform(0),
+    /** The sets' clock: the swell's frequency over SURF_SET_WAVES, added up the same way. */
+    setClock: uniform(0),
     /** The swell's strength on the shores, following the wind slowly. */
     surfEnergy: uniform(OCEAN_DEFAULTS.windSpeed * OCEAN_DEFAULTS.amplitude),
     /** xyz direction, w how hard (press load). */
@@ -497,11 +499,16 @@ export class OceanSim {
       const heading = headings.element(int(site)).xyz;
       const facing = dot(heading, normal.negate());
       const across = max(float(SHELF_EDGE).sub(distance), 0);
-      const phase = dot(q.sub(centres.element(int(site)).xyz), heading)
+      const spatial = dot(q.sub(centres.element(int(site)).xyz), heading)
         .mul(k)
         .add(lag.mul(omega))
-        .sub(across.mul(k).mul(max(facing, 0.15)))
-        .sub(u.surfClock);
+        .sub(across.mul(k).mul(max(facing, 0.15)));
+      const phase = spatial.sub(u.surfClock);
+      // sets of bigger waves riding in with the crests, at each island's own times (surfSet)
+      const lull = sin(spatial.div(SURF_SET_WAVES).sub(u.setClock).add(site.mul(2.4)))
+        .mul(0.5)
+        .add(0.5);
+      const set = lull.mul(lull).mul(0.9).add(0.55);
       const depth = clamp(smooth(distance.div(0.045)).mul(0.085).sub(0.012), 0.002, OCEAN_DEPTH);
       const envelope = float(1)
         .sub(smooth(distance.sub(0.04).div(SURF_REACH - 0.04)))
@@ -510,7 +517,7 @@ export class OceanSim {
       const exposure = smooth(facing.add(0.2).div(0.8)).mul(0.85).add(0.15);
       const s = sin(phase);
       const crest = max(s, 0).pow(5);
-      const strength = exposure.mul(u.surfEnergy);
+      const strength = exposure.mul(u.surfEnergy).mul(set);
       const height = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(0.03).mul(envelope).mul(strength);
       const breaking = crest.mul(float(1).sub(smooth(distance.sub(0.012).div(0.06)))).mul(strength);
       const inside = distance.greaterThanEqual(0).and(distance.lessThanEqual(SURF_REACH));
@@ -711,7 +718,10 @@ export class OceanSim {
     this.swellSpeed += (this.uniforms.wind.value - this.swellSpeed) * ease(15);
     this.uniforms.surfEnergy.value =
       this.uniforms.amplitude.value * Math.min(1.3, Math.max(0, this.swellSpeed));
-    this.uniforms.surfClock.value = (this.uniforms.surfClock.value + this.swell.omega * dt) % (2 * Math.PI);
+    const turn = 2 * Math.PI;
+    this.uniforms.surfClock.value = (this.uniforms.surfClock.value + this.swell.omega * dt) % turn;
+    this.uniforms.setClock.value =
+      (this.uniforms.setClock.value + (this.swell.omega / SURF_SET_WAVES) * dt) % turn;
     const heading = new Vector3();
     SHORE_SITES.forEach((site, i) => {
       windOnOrb(site.center, this.swellAngle, heading).normalize();

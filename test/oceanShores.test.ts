@@ -8,6 +8,8 @@ import {
   shoreElevation,
   shoreSurfPhase,
   shoreSwell,
+  SURF_SET_WAVES,
+  surfSet,
 } from '../src/core/oceanShores';
 import { OCEAN_DEFAULTS } from '../src/core/oceanTuning';
 import { OceanShores } from '../src/materials/oceanShores';
@@ -92,5 +94,27 @@ describe('coastal ocean', () => {
         shoreSurfPhase(0, 0.01, shelfLag(0.01), 1, swell, swell.omega * time);
       expect(step).toBeCloseTo(-swell.omega, 6);
     }
+  });
+
+  it('brings the surf in sets: groups of bigger waves, then a lull, about a minute apart', () => {
+    // the biggest breaker at a point on the bank in each wave period, over a few sets
+    const period = (2 * Math.PI) / swell.omega;
+    const peaks: number[] = [];
+    for (let wave = 0; wave < 4 * SURF_SET_WAVES; wave++) {
+      let peak = 0;
+      for (let t = wave * period; t < (wave + 1) * period; t += 0.05) {
+        const spatial = shoreSurfPhase(-0.012, 0.012, shelfLag(0.012), 1, swell, 0);
+        const out = { height: 0, breaking: 0 };
+        const clock = swell.omega * t;
+        sampleShoreSurf(spatial - clock, 0.012, 1, surfSet(spatial, clock / SURF_SET_WAVES, 0), out);
+        peak = Math.max(peak, out.breaking);
+      }
+      peaks.push(peak);
+    }
+    const sorted = [...peaks].sort((a, b) => a - b);
+    expect(sorted.at(-1)! / sorted[0]!).toBeGreaterThan(2);
+    // and they come round again: the strongest waves of each set repeat every SURF_SET_WAVES
+    for (let wave = 0; wave + SURF_SET_WAVES < peaks.length; wave++)
+      expect(peaks[wave + SURF_SET_WAVES]).toBeCloseTo(peaks[wave]!, 1);
   });
 });
