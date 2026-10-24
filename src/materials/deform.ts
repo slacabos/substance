@@ -1,4 +1,16 @@
-import { Color, IcosahedronGeometry, Vector3, Vector4, type BufferGeometry } from 'three';
+import {
+  Color,
+  DataTexture,
+  IcosahedronGeometry,
+  LinearFilter,
+  LinearMipmapLinearFilter,
+  RedFormat,
+  RepeatWrapping,
+  UnsignedByteType,
+  Vector3,
+  Vector4,
+  type BufferGeometry,
+} from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   MeshPhysicalNodeMaterial,
@@ -25,10 +37,11 @@ import {
   vertexIndex,
 } from 'three/tsl';
 import { MAX_IMPULSES } from '../config';
+import { bakeFoamLace } from '../core/foamLace';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
-import { oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
+import { LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
 import { driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
 import { baseN, baseR } from '../nodes/shape';
@@ -50,6 +63,22 @@ export interface OceanSurfaceOptions {
 }
 
 const vec4s = (n: number) => Array.from({ length: n }, () => new Vector4());
+
+let lace: DataTexture | undefined;
+
+/** The baked foam lace (core/foamLace.ts), made once and shared by every ocean. */
+function foamLaceTexture(): DataTexture {
+  if (lace) return lace;
+  const size = 512;
+  lace = new DataTexture(bakeFoamLace(size, LACE_TILE_CELLS), size, size, RedFormat, UnsignedByteType);
+  lace.wrapS = lace.wrapT = RepeatWrapping;
+  lace.minFilter = LinearMipmapLinearFilter;
+  lace.magFilter = LinearFilter;
+  lace.generateMipmaps = true;
+  lace.anisotropy = 4;
+  lace.needsUpdate = true;
+  return lace;
+}
 
 /** The deform material's uniforms; made first when something else, such as the ocean's sim, needs them too. */
 export function createDeformUniforms(): DeformUniforms {
@@ -147,6 +176,7 @@ export function createDeformMaterial(
   );
   const foam = oceanFoam(
     { a: objA, b: objB, blend: sim.driftBlend },
+    foamLaceTexture(),
     breaking,
     weatherAmount,
     simulatedFoam,

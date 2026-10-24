@@ -1,6 +1,9 @@
+import type { Texture } from 'three';
 import type { Node } from 'three/webgpu';
+import { LACE_RANGE } from '../core/foamLace';
 import {
   cameraViewMatrix,
+  abs,
   clamp,
   dot,
   float,
@@ -16,6 +19,7 @@ import {
   pow,
   smoothstep,
   sqrt,
+  texture,
   vec3,
   vec4,
 } from 'three/tsl';
@@ -51,6 +55,51 @@ export interface FoamDrift {
   blend: Float;
 }
 
+/** Foam lace cells per orb radius at the authored wavelength: bubbles a few pixels across. */
+const LACE = 40;
+/** Cells across the baked lace tile (core/foamLace.ts). */
+export const LACE_TILE_CELLS = 32;
+
+/**
+ * The baked lace's edge distance at obj, in cell widths, projected along the three axes and blended by how
+ * squarely each faces the surface. The second, smaller bubble size is offset so the two never line up.
+ */
+function laceEdge(lace: Texture, obj: Vec3, frequency: number, scale: Float): Float {
+  const n = normalize(obj);
+  const w = pow(abs(n), vec3(6));
+  const weights = w.div(w.x.add(w.y).add(w.z));
+  const at = obj.mul(scale.mul(frequency / LACE_TILE_CELLS)).add(frequency === 1 ? 0 : 0.37);
+  const read = (uv: Node<'vec2'>) => texture(lace, uv).x;
+  return read(at.yz)
+    .mul(weights.x)
+    .add(read(at.zx).mul(weights.y))
+    .add(read(at.xy).mul(weights.z))
+    .mul(LACE_RANGE);
+}
+
+/**
+ * Churned foam as lace: the web between bubbles, widening as the foam thickens and opening up into rags as it
+ * thins (rather than fading evenly). Two sizes of bubble, each read at both drifts and crossfaded before the
+ * web is cut, so the bubbles never double up.
+ */
+function foamLace(drift: FoamDrift, lace: Texture, amount: Float, u: DeformUniforms): Float {
+  const scale = float(FOAM_REFERENCE_WAVELENGTH).div(u.uOceanWavelength).mul(LACE);
+  const middle = mix(drift.b, drift.a, drift.blend);
+  // ragged: some patches hold their foam longer than others
+  const held = clamp(amount.mul(vnoise(middle.mul(scale).mul(0.3)).mul(0.9).add(0.55)), 0, 1);
+  const web = (frequency: number, reach: number) => {
+    const edge = mix(
+      laceEdge(lace, drift.b, frequency, scale),
+      laceEdge(lace, drift.a, frequency, scale),
+      drift.blend,
+    );
+    const width = fwidth(edge).add(0.02);
+    const cut = held.mul(reach);
+    return float(1).sub(smoothstep(cut.sub(width), cut.add(width), edge));
+  };
+  return max(web(1, 0.34), web(2.7, 0.22).mul(0.75)).mul(smoothstep(0.01, 0.12, held));
+}
+
 /** Two octaves of value noise, each fading to its mean once its cells get smaller than a pixel. */
 function foamNoise(obj: Vec3, u: DeformUniforms): Float {
   // Narrow in the swell direction and stretched along each crest.
@@ -77,6 +126,7 @@ function foamNoise(obj: Vec3, u: DeformUniforms): Float {
 /** Whitecaps follow steep travelling crests; simulated foam persists and drifts after impacts. */
 export function oceanFoam(
   drift: FoamDrift,
+  lace: Texture,
   breaking: Float,
   weather: Float,
   simulated: Float,
@@ -94,7 +144,8 @@ export function oceanFoam(
     .add(0.5);
   // Whitecaps where the waves fold over, broken into streaks; the noise varies how readily each spot foams.
   const crests = smoothstep(mix(0.3, 0.22, weather), 0.75, breaking.mul(n.mul(0.9).add(0.55)));
-  const sprayFoam = smoothstep(0.09, 0.6, simulated).mul(smoothstep(0.36, 0.72, n));
+  // churned foam left by the sim: taps, drags, splashes and old whitecaps
+  const sprayFoam = foamLace(drift, lace, smoothstep(0.04, 0.6, simulated), u);
   let foam = max(crests, sprayFoam);
   if (shore) {
     const wash = smoothstep(0.1, 0.62, simulated)
