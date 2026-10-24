@@ -42,7 +42,8 @@ export const SHORE_SITES: readonly ShoreSite[] = [
 export const MAINLAND = SHORE_SITES[0]!;
 
 /** Height of the waterline's sand above the still sea, and how much a beach climbs to its top. */
-const WATERLINE = 0.004;
+export const SHORE_WATERLINE = 0.004;
+const WATERLINE = SHORE_WATERLINE;
 const BEACH_RISE = 0.012;
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));

@@ -9,6 +9,7 @@ import {
   shoreSiteDistance,
 } from '../core/oceanShores';
 import { shoreSurface } from '../nodes/shore';
+import type { SurfInputs } from '../nodes/surf';
 
 const SAND = new Color('#c9b48a');
 const WET_SAND = new Color('#8f7d5b');
@@ -17,6 +18,8 @@ const GRASS = new Color('#3d5e40');
 const SHELF = new Color('#c9bf96');
 const DEEP = new Color('#2c4a52');
 const color = new Color();
+const UP = new Vector3(0, 1, 0);
+const SIDE = new Vector3(1, 0, 0);
 
 const smooth = (a: number, b: number, value: number): number => {
   const t = Math.min(1, Math.max(0, (value - a) / (b - a)));
@@ -30,7 +33,7 @@ export class OceanShores {
   private readonly elevations: Float32Array;
   private morph = Number.NaN;
 
-  constructor(coarse: boolean) {
+  constructor(coarse: boolean, surf: SurfInputs) {
     const skirtRings = 8;
     const detail = coarse ? 0.5 : 1;
     const positions: number[] = [];
@@ -151,10 +154,29 @@ export class OceanShores {
       colors.set([color.r, color.g, color.b], i * 3);
     }
     geometry.setAttribute('terrain', new Float32BufferAttribute(terrain, 4));
+    // for the swash: the way out to sea and how far the shoreline is (as one offset), and the site
+    const swash = new Float32Array(elevations.length * 4);
+    const t1 = new Vector3();
+    const t2 = new Vector3();
+    const probe = new Vector3();
+    for (let i = 0; i < elevations.length; i++) {
+      dir.fromArray(this.directions, i * 3);
+      const site = SHORE_SITES[siteOf[i]!]!;
+      t1.crossVectors(dir, Math.abs(dir.y) < 0.9 ? UP : SIDE).normalize();
+      t2.crossVectors(dir, t1);
+      const slope = (t: Vector3) =>
+        (shoreSiteDistance(site, probe.copy(dir).addScaledVector(t, 1e-3).normalize()) -
+          shoreSiteDistance(site, probe.copy(dir).addScaledVector(t, -1e-3).normalize())) /
+        2e-3;
+      const seaward = t1.clone().multiplyScalar(slope(t1)).addScaledVector(t2, slope(t2)).normalize();
+      const ashore = Math.max(0, -shoreSiteDistance(site, dir));
+      swash.set([seaward.x * ashore, seaward.y * ashore, seaward.z * ashore, siteOf[i]!], i * 4);
+    }
+    geometry.setAttribute('swash', new Float32BufferAttribute(swash, 4));
     geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
-    const material = new MeshStandardNodeMaterial({ vertexColors: true });
-    const surface = shoreSurface();
-    material.colorNode = surface.tone;
+    const material = new MeshStandardNodeMaterial();
+    const surface = shoreSurface(surf);
+    material.colorNode = surface.color;
     material.roughnessNode = surface.roughness;
     material.normalNode = surface.normal;
     this.mesh = new Mesh(geometry, material);

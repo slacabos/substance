@@ -2,7 +2,6 @@ import { BufferAttribute, Vector2, Vector3, Vector4, type BufferGeometry } from 
 import type { ComputeNode, Node, StorageBufferNode, UniformArrayNode, WebGPURenderer } from 'three/webgpu';
 import {
   abs,
-  acos,
   atomicAdd,
   atomicLoad,
   atomicStore,
@@ -21,7 +20,6 @@ import {
   max,
   min,
   mix,
-  normalize,
   Return,
   round,
   select,
@@ -41,11 +39,12 @@ import { FLUID } from '../core/oceanFluid';
 import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 import { OCEAN_DEPTH, OCEAN_WIND_ANGLE } from '../core/oceanFFT';
 import { WIND, windAt as windOnOrb } from '../core/oceanWind';
-import { MAINLAND, SHELF_EDGE, shoreSwell, SURF_REACH, SURF_SET_WAVES } from '../core/oceanShores';
+import { MAINLAND, shoreSwell, SURF_REACH, SURF_SET_WAVES } from '../core/oceanShores';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { driftBasis, windAt } from '../nodes/oceanSurface';
+import { surfWave, type SurfInputs } from '../nodes/surf';
 import { oceanWaveFoam, type OceanWaveFields } from '../nodes/oceanWaves';
 
 /** A push on the water: a tap or release (no motion), or a drag step (with motion along the surface). */
@@ -165,6 +164,8 @@ export class OceanSim {
   private readonly swellTarget = uniform(new Vector3(0, 1, 0));
   /** The swell's frequency and open-water wavenumber, its direction and strength (each easing after the wind's). */
   private readonly swell: { omega: number; k: number };
+  /** The swell on the shores, for the surf here and the swash on the land (nodes/surf.ts). */
+  readonly surf: SurfInputs;
   private swellAngle = OCEAN_WIND_ANGLE;
   private swellSpeed: number = OCEAN_DEFAULTS.windSpeed;
   private readonly events = Array.from({ length: EVENTS }, () => new Vector4(0, 0, 1, 0));
@@ -207,6 +208,13 @@ export class OceanSim {
     this.uniforms.wind.value = tuning.windSpeed;
     this.uniforms.amplitude.value = tuning.amplitude;
     this.swell = shoreSwell(tuning.peakWavelength);
+    this.surf = {
+      target: this.swellTarget,
+      clock: this.uniforms.surfClock,
+      setClock: this.uniforms.setClock,
+      energy: this.uniforms.surfEnergy,
+      ...this.swell,
+    };
     this.swellSpeed = tuning.windSpeed;
     if (coastal) {
       // WebGPU guarantees eight vertex buffers; the shore normal and distance share one attribute
@@ -505,34 +513,16 @@ export class OceanSim {
      */
     const surfAt = (distance: Float, lag: Float, site: Float, q: Vec3, normal: Vec3) => {
       const smooth = (x: Float) => smoothstep(0, 1, x);
-      const { omega, k } = this.swell;
-      const target = this.swellTarget;
-      const toward = dot(q, target);
-      const heading = normalize(target.sub(q.mul(toward)).add(q.cross(vec3(1, 0, 0)).mul(1e-4)));
-      const facing = dot(heading, normal.negate());
-      const across = max(float(SHELF_EDGE).sub(distance), 0);
-      // how far the swell has come: the arc still to run to its target, counted down
-      const spatial = acos(clamp(toward, -1, 1))
-        .negate()
-        .mul(k)
-        .add(lag.mul(omega))
-        .sub(across.mul(k).mul(max(facing, 0.15)));
-      const phase = spatial.sub(u.surfClock);
-      // sets of bigger waves riding in with the crests, at each island's own times (surfSet)
-      const lull = sin(spatial.div(SURF_SET_WAVES).sub(u.setClock).add(site.mul(2.4)))
-        .mul(0.5)
-        .add(0.5);
-      const set = lull.mul(lull).mul(0.9).add(0.55);
+      const { phase, set, exposure } = surfWave(q, distance, lag, site, normal, this.surf);
       // shelfDepth (core/oceanShores.ts)
       const depth = clamp(smooth(distance.div(0.045)).mul(0.085).sub(0.004), 0.002, OCEAN_DEPTH);
       const envelope = float(1)
         .sub(smooth(distance.sub(0.04).div(SURF_REACH - 0.04)))
         .mul(min(float(OCEAN_DEPTH).div(depth).pow(0.25), 1.8))
         .mul(smooth(distance.div(0.025)).mul(0.35).add(0.65));
-      const exposure = smooth(facing.add(0.2).div(0.8)).mul(0.85).add(0.15);
       const s = sin(phase);
       const crest = max(s, 0).pow(5);
-      const strength = exposure.mul(u.surfEnergy).mul(set);
+      const strength = exposure.mul(this.surf.energy).mul(set);
       const height = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(0.03).mul(envelope).mul(strength);
       const breaking = crest.mul(float(1).sub(smooth(distance.sub(0.012).div(0.06)))).mul(strength);
       const inside = distance.greaterThanEqual(0).and(distance.lessThanEqual(SURF_REACH));
