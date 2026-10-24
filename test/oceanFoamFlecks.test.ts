@@ -1,4 +1,4 @@
-import { IcosahedronGeometry, Vector3 } from 'three';
+import { IcosahedronGeometry } from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { MeshBasicNodeMaterial, WebGPURenderer } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
@@ -21,6 +21,7 @@ function flecks() {
     waves,
     uniforms,
     spacing: sim.spacing,
+    count: sim.count,
   });
   return { foam, calls };
 }
@@ -37,16 +38,12 @@ describe('ocean foam flecks', () => {
     expect(material.opacity).toBeGreaterThan(0.66);
   });
 
-  it('starts flecks on the GPU in the frame they are emitted, then forgets them', () => {
+  it('starts and moves flecks in one GPU dispatch a frame, with nothing from the CPU', () => {
     const { foam, calls } = flecks();
-    const spawns = (foam as unknown as { spawns: { w: number }[] }).spawns;
-    foam.emit(new Vector3(0, 0, 1), new Vector3(0, 1, 0), 1, 4);
-    expect(spawns.filter((s) => s.w > 0)).toHaveLength(4);
-    // never more than one frame's worth
-    foam.emit(new Vector3(1, 0, 0), null, 1, 100);
-    expect(spawns.filter((s) => s.w > 0)).toHaveLength(spawns.length);
     foam.update(1 / 60);
-    expect(calls).toHaveLength(1);
-    expect(spawns.every((s) => s.w === 0)).toBe(true);
+    foam.update(1 / 60);
+    expect(calls).toHaveLength(2);
+    // emission over the surface's vertices, then the step over the flecks
+    expect(calls[0]).toHaveLength(2);
   });
 });

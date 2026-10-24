@@ -219,6 +219,26 @@ export function oceanWaveVertex(
 }
 
 /**
+ * The remembered folding whitecaps grow from, at undisplaced direction p, averaged over the mesh's vertex
+ * spacing: how much of the water around a vertex has broken in the last few seconds. Compute passes can read
+ * it (the mips are chosen explicitly).
+ */
+export function oceanWaveFoam(
+  p: Vec3,
+  fields: OceanWaveFields,
+  u: DeformUniforms,
+  weather: Float,
+  spacing: number,
+): Float {
+  const weights = blend(p, fields);
+  const lod = (c: number) =>
+    float(Math.max(0, Math.log2((spacing * fields.size) / fields.cascades[c]!.tile)));
+  const ring = sampleFace(p, ringFace(p), fields, u, weather, (c) => weights(c)[0], lod, true);
+  const polar = sampleFace(p, polarFace(p), fields, u, weather, (c) => weights(c)[1], lod, true);
+  return ring.foam.add(polar.foam);
+}
+
+/**
  * Fragment-stage waves at the interpolated undisplaced direction p: the height gradient on the unit sphere
  * (corrected for how chop squeezes crests), the Jacobian of the horizontal displacement (below 1 where the
  * surface bunches up, below 0 where crests fold over and break), the slope variance the mips filtered out, and

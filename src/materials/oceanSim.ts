@@ -40,7 +40,9 @@ import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 import { OCEAN_DEPTH } from '../core/oceanFFT';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
+import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { cubeCell } from '../nodes/oceanSurface';
+import { oceanWaveFoam, type OceanWaveFields } from '../nodes/oceanWaves';
 
 /** A push on the water: a tap or release (no motion), or a drag step (with motion along the surface). */
 export interface OceanForce {
@@ -99,6 +101,20 @@ const SITE_CELLS = 6 * SITE_SIZE * SITE_SIZE;
 const SITE_INTERVAL = 0.075;
 /** Fixed-point scale for summing the sea's mean height: 1e-10 resolution, room for means up to 0.2. */
 const VOLUME_FIXED = 1e10;
+
+/** How the FFT's whitecaps (their remembered folding, averaged over a vertex) leave foam in the sim. */
+const WHITECAP = {
+  from: 0.25,
+  to: 0.7,
+  /** The foam a vertex keeps while its water is breaking. */
+  foam: 0.45,
+} as const;
+
+/** The FFT waves, for whitecap foam; the ocean material's uniforms carry their tuning and weather. */
+export interface SimWaves {
+  fields: OceanWaveFields;
+  uniforms: DeformUniforms;
+}
 
 type Vec4Buffer = StorageBufferNode<'vec4'>;
 type Float = Node<'float'>;
@@ -159,6 +175,7 @@ export class OceanSim implements SprayGround {
     geometry: BufferGeometry,
     coastal = false,
     tuning: Readonly<OceanTuning> = OCEAN_DEFAULTS,
+    waves?: SimWaves,
   ) {
     this.renderer = renderer;
     this.coastal = coastal;
@@ -499,6 +516,19 @@ export class OceanSim implements SprayGround {
         const turbulence = state.w.toVar();
         const surfHeight = float(0).toVar();
         const impact = float(0).toVar();
+        if (waves) {
+          // whitecaps leave foam on the water, which then rides the current (a tap's ring sweeps it aside)
+          const memory = oceanWaveFoam(
+            q,
+            waves.fields,
+            waves.uniforms,
+            oceanWeatherAt(q, waves.uniforms),
+            field.spacing,
+          );
+          const offshore = coastal ? smoothstep(0, 0.1, g4.y) : float(1);
+          const whitecap = smoothstep(WHITECAP.from, WHITECAP.to, memory).mul(offshore);
+          foam.assign(max(foam, whitecap.mul(WHITECAP.foam)));
+        }
         if (coastal) {
           const surf = surfAt(g4.y, shore.element(i).w, g4.z);
           surfHeight.assign(surf.height);

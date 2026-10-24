@@ -1,17 +1,18 @@
-import { CircleGeometry, DoubleSide, InstancedBufferGeometry, Mesh, Vector3, Vector4 } from 'three';
+import { CircleGeometry, DoubleSide, InstancedBufferGeometry, Mesh, Vector3 } from 'three';
 import {
   MeshBasicNodeMaterial,
   type ComputeNode,
   type StorageBufferNode,
-  type UniformArrayNode,
   type WebGPURenderer,
 } from 'three/webgpu';
 import {
+  atomicAdd,
   clamp,
   cross,
   dot,
   float,
   Fn,
+  hash,
   If,
   instancedArray,
   instanceIndex,
@@ -19,11 +20,12 @@ import {
   min,
   normalize,
   positionGeometry,
+  Return,
   select,
   smoothstep,
   storage,
+  uint,
   uniform,
-  uniformArray,
   vec3,
   vec4,
 } from 'three/tsl';
@@ -40,35 +42,33 @@ export interface FleckSurface {
   uniforms: DeformUniforms;
   /** The ocean mesh's vertex spacing: flecks follow the waves the mesh can show. */
   spacing: number;
+  /** How many vertices the surface has. */
+  count: number;
 }
 
 const WIND = new Vector3(0.35, 0.9, 0.25).normalize();
-const SIDE = new Vector3(1, 0, 0);
-/** Flecks that can start in one frame. */
-const SPAWNS = 24;
+/** Flecks started per second per unit of sphere area where the water is all whitewater, for 900 flecks. */
+const EMISSION = 4000;
 
 type Vec4Buffer = StorageBufferNode<'vec4'>;
 
 /**
- * Lagrangian whitewater flecks advected over the globe by the simulated current, on the GPU. The CPU only
- * decides where new ones start; each frame a compute pass carries every fleck along the surface and fades it,
- * and the vertex shader lays it on the waves.
+ * Lagrangian whitewater flecks advected over the globe by the simulated current, all on the GPU. Each frame one
+ * pass over the surface's vertices starts flecks where the water is breaking (claiming the oldest slots of a
+ * ring), another carries every fleck along the surface and fades it, and the vertex shader lays it on the
+ * waves.
  */
 export class OceanFoamFlecks {
   readonly mesh: Mesh;
   private readonly material: MeshBasicNodeMaterial;
   private readonly renderer: WebGPURenderer;
   private readonly count: number;
-  private readonly spawns = Array.from({ length: SPAWNS }, () => new Vector4(0, 0, 1, 0));
-  private readonly spawnShapes = Array.from({ length: SPAWNS }, () => new Vector4());
-  private spawnCount = 0;
   private readonly dt = uniform(0);
+  /** Frame number (wrapping), so each frame draws new random numbers. */
+  private readonly frame = uniform(0);
+  private readonly emitNode: ComputeNode;
   private readonly stepNode: ComputeNode;
   private readonly resetNode: ComputeNode;
-  private readonly tangent = new Vector3();
-  private readonly side = new Vector3();
-  private head = 0;
-  private seed = 28734621;
 
   constructor(renderer: WebGPURenderer, coarse: boolean, surface: FleckSurface) {
     this.renderer = renderer;
@@ -79,24 +79,48 @@ export class OceanFoamFlecks {
     // and the simulated height under it.
     const fleck = instancedArray(n, 'vec4') as Vec4Buffer;
     const detail = instancedArray(n * 2, 'vec4') as Vec4Buffer;
-    const spawns = uniformArray(this.spawns, 'vec4') as UniformArrayNode<'vec4'>;
-    const spawnShapes = uniformArray(this.spawnShapes, 'vec4') as UniformArrayNode<'vec4'>;
+    const { buffers } = surface;
+
+    // Where the water is breaking, by the same measure as spray sites (OceanSim): surf on a coast's breaking
+    // band, aerated water elsewhere (a pressed dent is turbulent but holds no air).
+    const head = instancedArray(1, 'uint').toAtomic();
+    const budget = (EMISSION * n) / 900;
+    this.emitNode = Fn(() => {
+      const i = instanceIndex;
+      const ground = buffers.ground.element(i);
+      If(ground.x.lessThanEqual(0), () => {
+        Return();
+      });
+      const here = buffers.surface.element(i);
+      const vertex = buffers.vertex.element(i);
+      const coastSite = ground.y.lessThan(0.09);
+      const aerated = select(here.y.greaterThanEqual(0.18), here.y.mul(0.82).add(here.z.mul(0.3)), float(0));
+      const score = select(coastSite, here.w, aerated);
+      const threshold = select(coastSite, float(0.22), float(0.18));
+      const excess = clamp(score.sub(threshold).div(float(1).sub(threshold)), 0, 1);
+      const seed = uint(this.frame).mul(surface.count).add(i).mul(8);
+      const random = (k: number) => hash(seed.add(k));
+      If(random(0).lessThan(excess.mul(budget).mul(vertex.w).mul(this.dt)), () => {
+        const slot = atomicAdd(head.element(0), uint(1)).mod(n);
+        const jitter = vec3(random(1), random(2), random(3))
+          .sub(0.5)
+          .mul(surface.spacing * 1.2);
+        const duration = random(4).mul(1.4).add(1.1);
+        const strength = clamp(score, 0.25, 0.95);
+        const streak = random(5).mul(0.014).add(0.008).mul(strength.mul(0.5).add(0.5));
+        const width = random(6).mul(0.005).add(0.003);
+        fleck.element(slot).assign(vec4(normalize(vertex.xyz.add(jitter)), duration));
+        detail.element(slot.mul(2)).assign(vec4(duration, streak, width, 1));
+      });
+    })().compute(surface.count);
 
     this.stepNode = Fn(() => {
       const i = instanceIndex;
       const state = fleck.element(i);
       const form = detail.element(i.mul(2));
-      for (let s = 0; s < SPAWNS; s++) {
-        const spawn = spawns.element(s);
-        const spawnShape = spawnShapes.element(s);
-        If(spawn.w.greaterThan(0).and(spawnShape.w.equal(float(i))), () => {
-          state.assign(spawn);
-          form.assign(vec4(spawnShape.xyz, 1));
-        });
-      }
       If(state.w.greaterThan(0), () => {
         const d = normalize(state.xyz);
-        const here = sampleSurface(d, surface.buffers);
+        const here = sampleSurface(d, buffers);
         const flow = here.flow.sub(d.mul(dot(here.flow, d)));
         const moved = normalize(d.add(flow.mul(this.dt)));
         state.assign(vec4(moved, select(here.shore.lessThanEqual(0), float(0), state.w.sub(this.dt))));
@@ -156,43 +180,13 @@ export class OceanFoamFlecks {
     this.material.opacity = Math.min(1, (0.66 * foam) / OCEAN_DEFAULTS.foam);
   }
 
-  emit(dir: Vector3, flow: Vector3 | null, strength: number, count: number): void {
-    this.tangent.copy(flow ?? WIND).addScaledVector(dir, -(flow ?? WIND).dot(dir));
-    if (this.tangent.lengthSq() < 1e-5) this.tangent.copy(SIDE).addScaledVector(dir, -SIDE.dot(dir));
-    this.tangent.normalize();
-    this.side.crossVectors(dir, this.tangent).normalize();
-    for (let i = 0; i < count && this.spawnCount < SPAWNS; i++) {
-      const at = new Vector3()
-        .copy(dir)
-        .addScaledVector(this.tangent, (this.random() - 0.5) * 0.1 * strength)
-        .addScaledVector(this.side, (this.random() - 0.5) * 0.11 * strength)
-        .normalize();
-      const duration = 1.1 + this.random() * 1.4;
-      const length = (0.008 + this.random() * 0.014) * (0.5 + strength * 0.5);
-      const width = 0.003 + this.random() * 0.005;
-      this.spawns[this.spawnCount]!.set(at.x, at.y, at.z, duration);
-      this.spawnShapes[this.spawnCount]!.set(duration, length, width, this.head++ % this.count);
-      this.spawnCount++;
-    }
-  }
-
   clear(): void {
-    this.spawnCount = 0;
-    for (const spawn of this.spawns) spawn.w = 0;
     this.renderer.compute(this.resetNode);
   }
 
   update(dt: number): void {
     this.dt.value = dt;
-    this.renderer.compute(this.stepNode);
-    for (const spawn of this.spawns) spawn.w = 0;
-    this.spawnCount = 0;
-  }
-
-  private random(): number {
-    this.seed ^= this.seed << 13;
-    this.seed ^= this.seed >>> 17;
-    this.seed ^= this.seed << 5;
-    return (this.seed >>> 0) / 0x100000000;
+    this.frame.value = (this.frame.value + 1) % 4096;
+    this.renderer.compute([this.emitNode, this.stepNode]);
   }
 }

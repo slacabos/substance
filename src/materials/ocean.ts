@@ -6,7 +6,7 @@ import { OceanWeather, weatherRadius } from '../core/oceanWeather';
 import type { OceanTuning } from '../core/oceanTuning';
 import { baseR } from '../nodes/shape';
 import { morphUniform } from '../scene/shape';
-import { createDeformMaterial, DeformMode, type DeformUniforms } from './deform';
+import { createDeformMaterial, createDeformUniforms, DeformMode, type DeformUniforms } from './deform';
 import type { OceanFFT } from './oceanFFT';
 import { OceanFoamFlecks } from './oceanFoamFlecks';
 import { OceanSim, oceanReleaseImpulse, type OceanForce } from './oceanSim';
@@ -63,7 +63,8 @@ export class Ocean implements Substance {
     this.tuning = tuning;
     this.waves = waves;
     this.shores = coastal ? new OceanShores(coarse) : null;
-    this.sim = new OceanSim(renderer, geometry, coastal, tuning);
+    const deformUniforms = createDeformUniforms();
+    this.sim = new OceanSim(renderer, geometry, coastal, tuning, { fields: waves, uniforms: deformUniforms });
     const simBuffers = this.sim.renderBuffers();
     this.spray = new OceanSpray(coarse);
     const { material, uniforms } = createDeformMaterial(
@@ -82,12 +83,14 @@ export class Ocean implements Substance {
       },
       DeformMode.Ocean,
       { waves, sim: simBuffers, spacing: this.sim.spacing, coastal },
+      deformUniforms,
     );
     this.foamFlecks = new OceanFoamFlecks(renderer, coarse, {
       buffers: simBuffers,
       waves,
       uniforms,
       spacing: this.sim.spacing,
+      count: this.sim.count,
     });
     const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
@@ -189,7 +192,6 @@ export class Ocean implements Substance {
             site.coastal ? 3 : 2,
             site.coastal ? site.height : undefined,
           );
-          this.foamFlecks.emit(site.dir, site.flow, site.strength, site.coastal ? 2 : 4);
         }
         this.lastWhitewaterTime = ctx.time;
       }

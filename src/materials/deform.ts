@@ -48,22 +48,13 @@ export interface OceanSurfaceOptions {
 
 const vec4s = (n: number) => Array.from({ length: n }, () => new Vector4());
 
-/**
- * A MeshPhysicalNodeMaterial whose vertices are displaced on the GPU (see nodes/deform.ts). Water and slime
- * normals come from finite differences of the same displacement, so ripples and dents light correctly; the
- * ocean's come per pixel from its FFT waves.
- */
-export function createDeformMaterial(
-  params: MeshPhysicalNodeMaterialParameters,
-  mode: DeformMode,
-  ocean?: OceanSurfaceOptions,
-): { material: MeshPhysicalNodeMaterial; uniforms: DeformUniforms } {
-  const material = new MeshPhysicalNodeMaterial(params);
+/** The deform material's uniforms; made first when something else, such as the ocean's sim, needs them too. */
+export function createDeformUniforms(): DeformUniforms {
   const imp = vec4s(MAX_IMPULSES).map((v) => v.set(0, 1, 0, 0));
   const impB = vec4s(MAX_IMPULSES);
   const weather = vec4s(OCEAN_WEATHER_PATCHES).map((v) => v.set(0, 1, 0, 0));
   const weatherB = vec4s(OCEAN_WEATHER_PATCHES).map((v) => v.set(0.35, 0, 0, 0));
-  const uniforms: DeformUniforms = {
+  return {
     uTime: uniform(0),
     uImp: uniformArray(imp, 'vec4'),
     uImpB: uniformArray(impB, 'vec4'),
@@ -85,6 +76,20 @@ export function createDeformMaterial(
     uSunDir: uniform(new Vector3(0, 1, 0)),
     uSunColor: uniform(new Color(0, 0, 0)),
   };
+}
+
+/**
+ * A MeshPhysicalNodeMaterial whose vertices are displaced on the GPU (see nodes/deform.ts). Water and slime
+ * normals come from finite differences of the same displacement, so ripples and dents light correctly; the
+ * ocean's come per pixel from its FFT waves.
+ */
+export function createDeformMaterial(
+  params: MeshPhysicalNodeMaterialParameters,
+  mode: DeformMode,
+  ocean?: OceanSurfaceOptions,
+  uniforms: DeformUniforms = createDeformUniforms(),
+): { material: MeshPhysicalNodeMaterial; uniforms: DeformUniforms } {
+  const material = new MeshPhysicalNodeMaterial(params);
 
   if (mode !== DeformMode.Ocean || !ocean) {
     material.positionNode = Fn(() => {
