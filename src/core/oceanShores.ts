@@ -28,16 +28,18 @@ const makeSite = (
 };
 
 /**
- * Islands, with the largest coast visible from the initial camera angle: a high one with rock behind its beach,
- * two low sandy cays, and two in between.
+ * The land: a continent covering about half the orb, its coast in view from the start, with deep bays and
+ * headlands, wide beaches and dunes, low grassy hills and a few rocky tops; and two small sandy islands out in
+ * the open half.
  */
 export const SHORE_SITES: readonly ShoreSite[] = [
-  makeSite(0.48, 0.3, 0.82, 0.27, 0.14, 0.6, 0.022),
-  makeSite(-0.58, -0.12, 0.8, 0.2, 0.028, 1.8, 0.055),
-  makeSite(0.08, -0.68, 0.73, 0.17, 0.085, 3.4, 0.014),
-  makeSite(-0.24, 0.76, 0.6, 0.14, 0.018, 5.1, 0.06),
-  makeSite(0.3, -0.2, -0.93, 0.22, 0.06, 2.7, 0.035),
+  makeSite(0.9, 0.35, -0.25, 1.42, 0.07, 0.6, 0.16),
+  makeSite(-0.35, -0.3, 0.88, 0.1, 0.02, 3.4, 0.05),
+  makeSite(-0.7, 0.55, 0.3, 0.07, 0.016, 5.1, 0.05),
 ];
+
+/** The continent, whose side of the orb the swell runs toward. */
+export const MAINLAND = SHORE_SITES[0]!;
 
 /** Height of the waterline's sand above the still sea, and how much a beach climbs to its top. */
 const WATERLINE = 0.004;
@@ -73,13 +75,24 @@ export function shoreNoise(x: number, y: number, z: number): number {
 }
 
 export function shoreRadius(site: ShoreSite, bearing: number): number {
+  // broad lobes in proportion to the site, and finer bays and headlands of their own size (but no bigger than a
+  // small island can take)
+  const fine = Math.min(site.radius, 0.3) ** 2 / 0.3;
   return (
     site.radius *
-    (1 +
-      0.17 * Math.cos(bearing * 2 + site.seed) +
-      0.095 * Math.sin(bearing * 3 - site.seed * 1.7) +
-      0.045 * Math.sin(bearing * 7 + site.seed * 2.3))
+      (1 +
+        0.17 * Math.cos(bearing * 2 + site.seed) +
+        0.095 * Math.sin(bearing * 3 - site.seed * 1.7) +
+        0.045 * Math.sin(bearing * 7 + site.seed * 2.3)) +
+    fine * (0.1 * Math.sin(bearing * 13 + site.seed * 3.1) + 0.05 * Math.sin(bearing * 29 - site.seed))
   );
+}
+
+/** How wide the beach is at dir: wide sweeps of sand and narrow stretches along the same coast. */
+export function beachWidth(site: ShoreSite, dir: Vector3): number {
+  const bearing = Math.atan2(site.north.dot(dir), site.east.dot(dir));
+  const along = shoreNoise(Math.cos(bearing) * 2.5 + site.seed, Math.sin(bearing) * 2.5, site.seed * 7);
+  return site.beach * (1 + 0.6 * along);
 }
 
 /** Angular distance from the irregular shoreline: negative on land, positive in water. */
@@ -102,17 +115,21 @@ export function shoreDistance(dir: Vector3): number {
 export function shoreElevation(site: ShoreSite, dir: Vector3): number {
   const distance = shoreSiteDistance(site, dir);
   if (distance > 0) return WATERLINE - 0.085 * smooth(distance / 0.045);
-  const sand = WATERLINE + BEACH_RISE * smooth(-distance / site.beach);
+  const beach = beachWidth(site, dir);
+  const sand = WATERLINE + BEACH_RISE * smooth(-distance / beach);
   const angle = Math.acos(Math.min(1, Math.max(-1, site.center.dot(dir))));
   const inland = smooth((site.radius * 1.04 - angle) / (site.radius * 0.85));
-  const bank = smooth((-distance - site.beach * 0.8) / 0.035);
+  // past the beach the land rises: steeply on a small island, over a long slope inland on the continent
+  const bank = smooth((-distance - beach * 0.8) / Math.max(0.035, site.radius * 0.1));
   const u = site.east.dot(dir) / site.radius;
   const v = site.north.dot(dir) / site.radius;
   const ridge = 1 - Math.abs(shoreNoise(u * 3.2 + site.seed, v * 3.2, site.seed * 3));
   const detail = shoreNoise(u * 7, v * 7 + site.seed, site.seed * 2);
   const relief = 0.36 + ridge * 0.56 + detail * 0.18;
   const grain = shoreNoise(dir.x * 83, dir.y * 83, dir.z * 83);
-  return sand + site.height * bank * (0.3 + 0.7 * inland * relief) + grain * 0.006 * inland * bank;
+  // dunes: low sandy ridges behind the beach
+  const dunes = (1 - Math.abs(shoreNoise(dir.x * 31 + site.seed, dir.y * 31, dir.z * 31))) * 0.006 * bank;
+  return sand + dunes + site.height * bank * (0.3 + 0.7 * inland * relief) + grain * 0.006 * inland * bank;
 }
 
 /** Ground height used by spray collision; distant seabed sits well below the surface. */

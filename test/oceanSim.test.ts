@@ -63,7 +63,8 @@ describe('coastal ocean field', () => {
     const fullIndexCount = geometry.getIndex()!.count;
     const field = createOceanField(geometry, true);
     expect(geometry.getIndex()!.count).toBeLessThan(fullIndexCount);
-    expect(geometry.getIndex()!.count).toBeGreaterThan(fullIndexCount * 0.75);
+    // about half the orb is land
+    expect(geometry.getIndex()!.count).toBeGreaterThan(fullIndexCount * 0.4);
     const dir = new Vector3();
     let dry = 0;
     let shallow = 0;

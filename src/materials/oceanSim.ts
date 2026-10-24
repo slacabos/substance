@@ -2,6 +2,7 @@ import { BufferAttribute, Vector2, Vector3, Vector4, type BufferGeometry } from 
 import type { ComputeNode, Node, StorageBufferNode, UniformArrayNode, WebGPURenderer } from 'three/webgpu';
 import {
   abs,
+  acos,
   atomicAdd,
   atomicLoad,
   atomicStore,
@@ -20,6 +21,7 @@ import {
   max,
   min,
   mix,
+  normalize,
   Return,
   round,
   select,
@@ -39,7 +41,7 @@ import { FLUID } from '../core/oceanFluid';
 import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 import { OCEAN_DEPTH, OCEAN_WIND_ANGLE } from '../core/oceanFFT';
 import { WIND, windAt as windOnOrb } from '../core/oceanWind';
-import { SHELF_EDGE, SHORE_SITES, shoreSwell, SURF_REACH, SURF_SET_WAVES } from '../core/oceanShores';
+import { MAINLAND, SHELF_EDGE, shoreSwell, SURF_REACH, SURF_SET_WAVES } from '../core/oceanShores';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
@@ -87,6 +89,8 @@ const MAX_STEPS = 4;
 const EVENTS = 4;
 /** Fixed-point scale for summing the sea's mean height: 1e-10 resolution, room for means up to 0.2. */
 const VOLUME_FIXED = 1e10;
+/** How far downwind of the continent's middle the swell's target sits, radians. */
+const SWELL_OFFSET = 0.8;
 /**
  * Seconds each foam drift runs before it starts over. Foam's pattern is read at its vertex moved back by the
  * drift; a drift that ran forever would shear it into fingerprints wherever the current swirls, so two drifts,
@@ -154,8 +158,11 @@ export class OceanSim {
   private readonly driftBlend = uniform(0.5);
   /** Where the foam drifts are in their cycle, 0 to 1. */
   private driftClock = 0;
-  /** The swell each island's surf comes from: its heading at the island (as a unit tangent there). */
-  private readonly swellHeadings = SHORE_SITES.map(() => new Vector4());
+  /**
+   * The point on the orb the swell runs toward: crests are rings around it, closing in. It sits over the
+   * continent, pushed downwind, so coasts facing the open sea and the wind take the swell and the rest lie in lee.
+   */
+  private readonly swellTarget = uniform(new Vector3(0, 1, 0));
   /** The swell's frequency and open-water wavenumber, its direction and strength (each easing after the wind's). */
   private readonly swell: { omega: number; k: number };
   private swellAngle = OCEAN_WIND_ANGLE;
@@ -496,18 +503,17 @@ export class OceanSim {
      * Surf: the swell running in from its own direction, slowing and crowding on the shelf and swinging round to
      * break along the bank (shoreSurfPhase and sampleShoreSurf in core/oceanShores.ts).
      */
-    const headings = uniformArray(this.swellHeadings, 'vec4') as UniformArrayNode<'vec4'>;
-    const centres = uniformArray(
-      SHORE_SITES.map((site) => new Vector4(site.center.x, site.center.y, site.center.z, 0)),
-      'vec4',
-    ) as UniformArrayNode<'vec4'>;
     const surfAt = (distance: Float, lag: Float, site: Float, q: Vec3, normal: Vec3) => {
       const smooth = (x: Float) => smoothstep(0, 1, x);
       const { omega, k } = this.swell;
-      const heading = headings.element(int(site)).xyz;
+      const target = this.swellTarget;
+      const toward = dot(q, target);
+      const heading = normalize(target.sub(q.mul(toward)).add(q.cross(vec3(1, 0, 0)).mul(1e-4)));
       const facing = dot(heading, normal.negate());
       const across = max(float(SHELF_EDGE).sub(distance), 0);
-      const spatial = dot(q.sub(centres.element(int(site)).xyz), heading)
+      // how far the swell has come: the arc still to run to its target, counted down
+      const spatial = acos(clamp(toward, -1, 1))
+        .negate()
         .mul(k)
         .add(lag.mul(omega))
         .sub(across.mul(k).mul(max(facing, 0.15)));
@@ -733,11 +739,9 @@ export class OceanSim {
     this.uniforms.surfClock.value = (this.uniforms.surfClock.value + this.swell.omega * dt) % turn;
     this.uniforms.setClock.value =
       (this.uniforms.setClock.value + (this.swell.omega / SURF_SET_WAVES) * dt) % turn;
-    const heading = new Vector3();
-    SHORE_SITES.forEach((site, i) => {
-      windOnOrb(site.center, this.swellAngle, heading).normalize();
-      this.swellHeadings[i]!.set(heading.x, heading.y, heading.z, 0);
-    });
+    const downwind = windOnOrb(MAINLAND.center, this.swellAngle).normalize();
+    this.swellTarget.value.copy(MAINLAND.center).multiplyScalar(Math.cos(SWELL_OFFSET));
+    this.swellTarget.value.addScaledVector(downwind, Math.sin(SWELL_OFFSET)).normalize();
   }
 
   /** The live wind (core/oceanWind.ts): where it blows, and how hard. */

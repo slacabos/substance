@@ -16,13 +16,22 @@ import { OCEAN_DEFAULTS } from '../src/core/oceanTuning';
 import { OceanShores } from '../src/materials/oceanShores';
 
 describe('coastal ocean', () => {
-  it('raises every island above the largest swells, some high and some low and sandy', () => {
-    expect(SHORE_SITES.length).toBeGreaterThanOrEqual(4);
+  it('covers about half the orb with land above the largest swells, its sand shelving into the sea', () => {
+    // a continent over about half the orb, and small islands out in the other half
+    let land = 0;
+    const samples = 4000;
+    for (let i = 0; i < samples; i++) {
+      const z = 1 - (2 * (i + 0.5)) / samples;
+      const a = i * 2.399963;
+      const r = Math.sqrt(1 - z * z);
+      if (shoreDistance(new Vector3(r * Math.cos(a), z, r * Math.sin(a))) < 0) land++;
+    }
+    expect(land / samples).toBeGreaterThan(0.4);
+    expect(land / samples).toBeLessThan(0.6);
     const peaks = SHORE_SITES.map((site) => shoreElevation(site, site.center));
     for (const site of SHORE_SITES) expect(shoreDistance(site.center)).toBeLessThan(0);
-    for (const peak of peaks) expect(peak).toBeGreaterThan(0.03);
-    expect(Math.max(...peaks)).toBeGreaterThan(0.1);
-    expect(Math.min(...peaks)).toBeLessThan(0.05);
+    for (const peak of peaks) expect(peak).toBeGreaterThan(0.025);
+    expect(Math.max(...peaks)).toBeLessThan(0.15);
     // a beach climbs gently from the waterline: no step out of the sea
     for (const site of SHORE_SITES) {
       const ashore = (d: number) => {
@@ -34,7 +43,7 @@ describe('coastal ocean', () => {
       expect(ashore(0.002)).toBeLessThan(0.006);
       expect(ashore(-site.beach * 0.5)).toBeLessThan(0.02);
     }
-    expect(shoreDistance(new Vector3(0, 0, -1))).toBeGreaterThan(0);
+    expect(shoreDistance(SHORE_SITES[0]!.center.clone().negate())).toBeGreaterThan(0);
     const shores = new OceanShores(true);
     const position = shores.mesh.geometry.getAttribute('position');
     const before = position.getX(0);

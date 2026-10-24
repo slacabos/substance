@@ -122,7 +122,7 @@ export class Ocean implements Substance {
 
   hint(): string {
     return this.shores
-      ? 'Press for waves. Watch them break on the scattered shores.'
+      ? 'Press for waves. Watch them run up the beaches.'
       : 'Press longer for bigger waves. Drag to churn the sea.';
   }
 

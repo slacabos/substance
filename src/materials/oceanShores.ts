@@ -1,6 +1,13 @@
 import { BufferGeometry, Color, Float32BufferAttribute, Mesh, Vector3 } from 'three';
 import { MeshStandardNodeMaterial } from 'three/webgpu';
-import { SHORE_SITES, shoreElevation, shoreNoise, shoreRadius, shoreSiteDistance } from '../core/oceanShores';
+import {
+  beachWidth,
+  SHORE_SITES,
+  shoreElevation,
+  shoreNoise,
+  shoreRadius,
+  shoreSiteDistance,
+} from '../core/oceanShores';
 import { shoreSurface } from '../nodes/shore';
 
 const SAND = new Color('#c9b48a');
@@ -24,10 +31,8 @@ export class OceanShores {
   private morph = Number.NaN;
 
   constructor(coarse: boolean) {
-    const segments = coarse ? 64 : 96;
-    const landRings = coarse ? 24 : 36;
     const skirtRings = 8;
-    const rings = landRings + skirtRings;
+    const detail = coarse ? 0.5 : 1;
     const positions: number[] = [];
     const directions: number[] = [];
     const elevations: number[] = [];
@@ -35,6 +40,10 @@ export class OceanShores {
     const siteOf: number[] = [];
     const dir = new Vector3();
     for (const [k, site] of SHORE_SITES.entries()) {
+      // as fine on the continent's long coast as on a small island's
+      const segments = Math.round(Math.min(360, Math.max(96, site.radius * 230)) * detail);
+      const landRings = Math.round(Math.min(140, Math.max(36, site.radius * 90)) * detail);
+      const rings = landRings + skirtRings;
       const center = positions.length / 3;
       const addVertex = () => {
         const elevation = shoreElevation(site, dir);
@@ -45,11 +54,27 @@ export class OceanShores {
       };
       dir.copy(site.center);
       addVertex();
+      // each ring holds as many vertices as its circumference needs, so the middle isn't a fan of slivers
+      const starts: number[] = [];
+      const counts: number[] = [];
+      const spacing = (2 * Math.PI * Math.sin(site.radius)) / segments;
       for (let ring = 1; ring <= rings; ring++) {
-        const radius = ring <= landRings ? ring / landRings : 1 + ((ring - landRings) / skirtRings) * 0.4;
-        for (let sector = 0; sector < segments; sector++) {
-          const angle = (sector / segments) * Math.PI * 2;
-          const arc = shoreRadius(site, angle) * radius;
+        // rings twice as close at the coast as in the middle, where the beach needs them; then an
+        // underwater skirt a fixed width out
+        const t = Math.min(1, ring / landRings);
+        const inner = (t + Math.sin((t * Math.PI) / 2)) / 2;
+        const outer = Math.max(0, ring - landRings) / skirtRings;
+        const reach = site.radius * inner + Math.min(site.radius * 0.4, 0.2) * outer;
+        const count =
+          ring >= landRings
+            ? segments
+            : Math.max(8, Math.min(segments, Math.round((2 * Math.PI * Math.sin(reach)) / spacing)));
+        starts.push(positions.length / 3);
+        counts.push(count);
+        for (let sector = 0; sector < count; sector++) {
+          const angle = (sector / count) * Math.PI * 2;
+          const coast = shoreRadius(site, angle);
+          const arc = coast * inner + Math.min(coast * 0.4, 0.2) * outer;
           dir
             .copy(site.center)
             .multiplyScalar(Math.cos(arc))
@@ -59,16 +84,23 @@ export class OceanShores {
           addVertex();
         }
       }
-      for (let sector = 0; sector < segments; sector++) {
-        indices.push(center, center + 1 + sector, center + 1 + ((sector + 1) % segments));
+      for (let sector = 0; sector < counts[0]!; sector++) {
+        indices.push(center, starts[0]! + sector, starts[0]! + ((sector + 1) % counts[0]!));
       }
+      // stitch each ring to the next, advancing whichever side's next vertex comes first round the circle
       for (let ring = 0; ring < rings - 1; ring++) {
-        for (let sector = 0; sector < segments; sector++) {
-          const next = (sector + 1) % segments;
-          const a = center + 1 + ring * segments + sector;
-          const b = a + segments;
-          const c = center + 1 + ring * segments + next;
-          indices.push(a, b, c, b, c + segments, c);
+        const [a, b] = [counts[ring]!, counts[ring + 1]!];
+        const [inner, outer] = [starts[ring]!, starts[ring + 1]!];
+        let i = 0;
+        let j = 0;
+        while (i < a || j < b) {
+          if (j >= b || (i < a && (i + 1) / a <= (j + 1) / b)) {
+            indices.push(inner + (i % a), outer + (j % b), inner + ((i + 1) % a));
+            i++;
+          } else {
+            indices.push(outer + (j % b), outer + ((j + 1) % b), inner + (i % a));
+            j++;
+          }
         }
       }
     }
@@ -90,18 +122,20 @@ export class OceanShores {
       const height = elevations[i]!;
       const ashore = -shoreSiteDistance(site, dir);
       const grain = shoreNoise(dir.x * 173, dir.y * 173, dir.z * 173);
-      // the beach, and low flat ground; then grass on gentle slopes high enough above it, rock elsewhere
-      const sand = Math.max(
-        1 - smooth(site.beach * 0.75, site.beach * 1.15 + 0.006, ashore),
+      // The beach and low flat ground are sand. Inland it's sandy too, with patches of grass where the ground
+      // has risen a little, giving way to bare rock on the highest ground and steep slopes.
+      const beach = Math.max(
+        1 - smooth(beachWidth(site, dir) * 0.75, beachWidth(site, dir) * 1.15 + 0.006, ashore),
         (1 - smooth(0.02, 0.035, height)) * (1 - smooth(0.12, 0.45, slope)),
       );
-      // grass from a little above the beach, giving way to bare rock on the highest ground and steep slopes
       const above = (height - 0.016) / site.height;
-      const grass =
-        (1 - sand) *
-        smooth(0.2, 0.5, above) *
-        (1 - smooth(0.75, 0.95, above)) *
-        (1 - smooth(0.08, 0.3, slope));
+      const patch =
+        shoreNoise(dir.x * 9 + site.seed, dir.y * 9, dir.z * 9) +
+        0.35 * shoreNoise(dir.x * 23, dir.y * 23 + site.seed, dir.z * 23);
+      const grassy = smooth(-0.3, 0.45, patch) * smooth(0.05, 0.3, above) * (1 - smooth(0.08, 0.3, slope));
+      const bare = smooth(0.55, 0.85, above) + smooth(0.15, 0.4, slope);
+      const grass = (1 - beach) * grassy * (1 - smooth(0.75, 0.95, above));
+      const sand = beach + (1 - beach) * (1 - grassy) * Math.max(0, 1 - bare);
       const wet = sand * (1 - smooth(0.0045, 0.009, height));
       terrain.set([Math.max(0, 1 - sand - grass), sand, grass, wet], i * 4);
       color
