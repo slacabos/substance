@@ -538,8 +538,8 @@ export class OceanSim {
         const shallow = h.sub(u.dt.mul(outflow).div(v.w)).add(spreadH.mul(smoothing)).add(push);
         // dug land is shallow water whatever its depth: its floor is the ground it was dug from
         const mixShallow = select(g4.y.lessThan(0), float(1), float(1).sub(smoothstep(0.008, 0.025, g4.x)));
-        // never below the bed in the shallows (surfaceFloor in core/shallowWater.ts)
-        const floor = mix(float(-SURFACE.maxHeight), g4.x.negate(), mixShallow);
+        // never below the bed (surfaceFloor in core/shallowWater.ts)
+        const floor = g4.x.negate();
         // the cap is the sea's; dry land stands higher, and water on it may too
         const ceiling = max(float(SURFACE.maxHeight), g4.x.negate().add(SURFACE.maxHeight));
         const next = clamp(mix(wave, shallow, mixShallow), floor, ceiling).toVar();

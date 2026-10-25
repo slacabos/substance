@@ -139,10 +139,12 @@ export function shoreSurface(
   // height above the still sea, as the land mesh was built (it follows the cube morph like the water)
   // (the beach as built: water in holes the hand digs is the sim's, drawn by the sea's own surface)
   const above = length(positionGeometry).sub(baseR(p)).sub(SHORE_WATERLINE);
-  // the swash runs only over the beach: below the still sea the seabed is the sea's, which draws its own water
+  // the swash runs only over the beach: below the still sea the seabed is the sea's, which draws its own water,
+  // and so is the beach wherever the sim's water stands on it (a wave the hand sent)
   const ashore = smoothstep(-SHORE_WATERLINE - 0.0005, -SHORE_WATERLINE + 0.0005, above);
+  const open = ashore.mul(float(1).sub(water));
   const swash = swashAt(p, above, surf);
-  const sw = { ...swash, cover: swash.cover.mul(ashore), foam: swash.foam.mul(ashore) };
+  const sw = { ...swash, cover: swash.cover.mul(open), foam: swash.foam.mul(open) };
   // sand turned up from underneath is damp
   // seabed the sea has drawn back from is bare wet sand, not the pale sand seen through clear water
   const bared = float(1).sub(ashore).mul(float(1).sub(water));

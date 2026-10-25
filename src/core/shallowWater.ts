@@ -57,12 +57,11 @@ export function pushRoom(push: number, h: number, depth: number): number {
 }
 
 /**
- * The lowest the surface may go: the bed, where the shallow-water equations need a water column; over the open
- * sea only the height cap, since there the depth just sets how waves travel.
+ * The lowest the surface may go: the bed. No trough reaches below the seabed, however the waves are modelled
+ * there (a big one over a shelf a couple of centimetres deep would otherwise bare sand under water).
  */
 export function surfaceFloor(depth: number): number {
-  const s = shallowWeight(depth);
-  return -(SURFACE.maxHeight * (1 - s) + depth * s);
+  return -depth;
 }
 
 /**

@@ -58,6 +58,8 @@ export { DeformMode, type DeformUniforms };
 const SHALLOW_WATER = vec3(0.16, 0.62, 0.66);
 /** How much higher water standing on the coast's sand is drawn than the sim has it, orb radii. */
 const WATER_LIFT = 0.0006;
+/** How far under the sand a draining film of water is drawn, orb radii. */
+const FILM_SINK = 0.0008;
 
 /** How far the simulated waves' vertices lean toward their crests, per unit of slope (orb radii). */
 const CREST_LEAN = 0.012;
@@ -193,10 +195,13 @@ export function createDeformMaterial(
     const lean = simGradient.mul(CREST_LEAN);
     const shift = lean.mul(min(float(1), float(CREST_SHIFT).div(max(length(lean), 1e-6))));
     // (water standing on the coast's sand rides a hair higher than the sim's, for the same reason the seabed is
-    // drawn a little deeper: the land's finer mesh would poke through a thin sheet)
+    // drawn a little deeper: the land's finer mesh would poke through a thin sheet; but a film a wave left
+    // draining on the beach sits just under the sand, which shows it as wet sand rather than a pane of water)
     const depth = sim.ground.element(vertexIndex).x.add(simHeight);
     column?.assign(depth);
-    const lift = coastal ? smoothstep(0, 0.002, depth).mul(WATER_LIFT) : float(0);
+    const lift = coastal
+      ? mix(float(-FILM_SINK), float(WATER_LIFT), smoothstep(0.0005, 0.002, depth))
+      : float(0);
     return surface.pos.add(normalize(surface.pos).mul(simHeight.add(lift))).add(shift);
   })();
 
@@ -246,8 +251,9 @@ export function createDeformMaterial(
   const thin = column ? float(1).sub(smoothstep(0.0004, 0.004, column)) : float(0);
   const shallow = shore ? max(float(1).sub(smoothstep(0.05, SHALLOWS, shore)), thin) : float(0);
   // where the water runs out it ends, by its own depth, rather than wherever its surface dips under the sand
-  // (dry ground next to water carries the water's level just under the sand: the sand there hides it)
-  if (column) material.maskNode = column.greaterThan(-0.004);
+  // (dry ground next to water carries the water's level just under the sand, however steeply the sand rises
+  // there, and the sand hides it; ground further from water sinks its surface DRY_SINK under, which this cuts)
+  if (column) material.maskNode = column.greaterThan(-0.015);
   const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms);
   material.colorNode = mix(color, SHALLOW_WATER, shallow.mul(float(1).sub(foam)).mul(0.55));
   material.roughnessNode = roughness;
