@@ -29,12 +29,13 @@ import {
 } from 'three/tsl';
 import type { StorageBufferNode } from 'three/webgpu';
 
-const SAND = new Color('#c4ab80');
-const WET_SAND = new Color('#8f7d5b');
-const WARM_SAND = new Color('#c99d6a');
-const PALE_SAND = new Color('#ddd0b0');
-const SHELF_SAND = new Color('#c9bf96');
-const DEEP = new Color('#2c4a52');
+// warm ochre sand, a little warmer and paler in drifts, much darker where it's wet
+const SAND = new Color('#d39a62');
+const WET_SAND = new Color('#7c5a45');
+const WARM_SAND = new Color('#cf8c55');
+const PALE_SAND = new Color('#ddb183');
+/** The seabed: wet sand, darkening only a little further out (the water's own absorption makes it blue). */
+const DEEP = new Color('#5e4636');
 const color = new Color();
 /** The sim's buffers the land reads the sea from (OceanSim.renderBuffers). */
 type SeaBuffers = Parameters<typeof blendedAt>[1] & {
@@ -166,15 +167,12 @@ export class OceanShores {
         1 - Math.abs(shoreNoise(dir.x * 26 + SHORE_SITES[siteOf[i]!]!.seed, dir.y * 26, dir.z * 26));
       color
         .copy(SAND)
-        .lerp(WARM_SAND, Math.max(0, drift) * 0.7)
-        .lerp(PALE_SAND, Math.max(0, -drift) * 0.6)
-        .multiplyScalar(0.86 + 0.14 * trough)
+        .lerp(WARM_SAND, Math.max(0, drift) * 0.5)
+        .lerp(PALE_SAND, Math.max(0, -drift) * 0.4)
+        .multiplyScalar(0.9 + 0.1 * trough)
         .lerp(WET_SAND, wet)
-        // below the still sea the shelf is pale sand, darkening with depth, which is what makes clear shallow
-        // water turquoise (the beach face just above it is wet sand like the rest of the shore)
-        .lerp(SHELF_SAND, 1 - smooth(-0.007, 0.0005, height))
-        .lerp(DEEP, 1 - smooth(-0.09, -0.03, height))
-        .multiplyScalar(0.92 + grain * 0.06);
+        .lerp(DEEP, 1 - smooth(-0.05, -0.005, height))
+        .multiplyScalar(0.95 + grain * 0.04);
       colors.set([color.r, color.g, color.b], i * 3);
     }
     geometry.setAttribute('terrain', new Float32BufferAttribute(terrain, 1));

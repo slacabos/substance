@@ -39,6 +39,7 @@ import {
   vec3,
   vertexIndex,
   cameraFar,
+  clamp,
   cameraNear,
   linearDepth,
   viewportLinearDepth,
@@ -48,7 +49,7 @@ import { bakeFoamLace } from '../core/foamLace';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { OCEAN_GUSTS } from '../core/oceanWind';
 import { OCEAN_DEFAULTS } from '../core/oceanTuning';
-import { SHALLOWS } from '../core/oceanShores';
+import { OCEAN_DEPTH } from '../core/oceanFFT';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
 import { LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
 import { snoise } from '../nodes/noise';
@@ -59,7 +60,14 @@ import { baseN, baseR } from '../nodes/shape';
 export { DeformMode, type DeformUniforms };
 
 /** The colour of clear water a few millimetres deep over pale rock. */
-const SHALLOW_WATER = vec3(0.16, 0.62, 0.66);
+/**
+ * What's left of light after ABSORB_DISTANCE of coastal water (linear): red goes first, so a centimetre of it
+ * over sand is turquoise and the open sea deep blue.
+ */
+const SHALLOW_ABSORB = vec3(0.3, 0.7, 0.76);
+/** The colour shallow coastal water scatters back (linear), before the deep sea's own colour takes over. */
+const SHALLOW_SCATTER = vec3(0.02, 0.2, 0.25);
+const ABSORB_DISTANCE = 0.01;
 /** How much higher water standing on the coast's sand is drawn than the sim has it, orb radii. */
 const WATER_LIFT = 0.0006;
 /** Over how much water between it and the sand behind (view distance, orb radii) the water's edge fades in. */
@@ -170,9 +178,13 @@ export function createDeformMaterial(
   const turbulence = varyingProperty('float', 'vTurbulence');
   const objA = varyingProperty('vec3', 'vObjA');
   const objB = varyingProperty('vec3', 'vObjB');
-  const shore = coastal ? varyingProperty('float', 'vShoreDistance') : undefined;
+  // the coast's values, packed in one varying (WebGPU passes at most 16 from vertex to fragment): distance to
+  // shore, the water's column, and the depth its colour goes by
+  const coast = varyingProperty('vec3', 'vCoast');
+  const shore = coastal ? coast.x : undefined;
   // how deep the sim's own water stands here: over dry ground it's negative (its surface sinks under the ground)
-  const column = coastal ? varyingProperty('float', 'vColumn') : undefined;
+  const column = coastal ? coast.y : undefined;
+  const tintDepth = coastal ? coast.z : undefined;
   material.positionNode = Fn(() => {
     const p = normalize(positionGeometry);
     const surface = oceanDeform(p, uniforms, waves, spacing, coastal);
@@ -192,7 +204,6 @@ export function createDeformMaterial(
     const { e1, e2 } = driftBasis(p);
     objA.assign(p.sub(e1.mul(drift.x)).sub(e2.mul(drift.y)));
     objB.assign(p.sub(e1.mul(drift.z)).sub(e2.mul(drift.w)));
-    shore?.assign(attribute('oceanShoreData', 'vec4').w);
 
     // The simulated waves' crests sharpened as the swell's are: each vertex shifts a little uphill, so crests
     // narrow and troughs widen. Capped well under half the mesh spacing, so neighbours can never cross.
@@ -202,7 +213,16 @@ export function createDeformMaterial(
     // deeper: the land's finer mesh would poke through a thin sheet. It's the same everywhere, so the water stays
     // one smooth surface up to its edge; a thin film fades out by the depth to the sand behind it, below)
     const depth = sim.ground.element(vertexIndex).x.add(simHeight);
-    column?.assign(depth);
+    // the depth its colour goes by: the still water's, with only some of the waves riding on it, or every surf crest
+    // would ring the shallows in bands of colour
+    if (coastal)
+      coast.assign(
+        vec3(
+          attribute('oceanShoreData', 'vec4').w,
+          depth,
+          sim.ground.element(vertexIndex).x.add(simHeight.mul(0.3)),
+        ),
+      );
     const lift = coastal ? float(WATER_LIFT) : float(0);
     // nor do crests lean near the water's edge, where a sideways shift would show as teeth along the beach
     const leaning = coastal ? smoothstep(0.004, 0.012, depth) : float(1);
@@ -251,35 +271,35 @@ export function createDeformMaterial(
   );
   const roughness = mix(rough, 0.92, foam);
   material.normalNode = normal;
-  // Over a coast's shelf the water is a few millimetres deep: clear and turquoise, the sand showing through it,
-  // turning to the open sea's deep blue only as the shelf runs out.
-  // (and clearer still where the sim's own water thins out over sand: at a wave's edge on the beach, or over a
-  // bar the sea has drawn back from)
-  const thin = column ? float(1).sub(smoothstep(0.0004, 0.004, column)) : float(0);
-  const shallow = shore ? max(float(1).sub(smoothstep(0.05, SHALLOWS, shore)), thin) : float(0);
+  // Over the coast the water is coloured by how deep it is, as real water is: light through it is absorbed red
+  // first (Beer-Lambert, the material's attenuation over the column as its thickness), so a film over the sand
+  // barely tints it, a centimetre turns it turquoise and the open sea is deep blue; only deep water shows its own
+  // body colour. Its edge needs no line: the colour just thins out with the water.
+  const depth = tintDepth ? clamp(tintDepth, 0, OCEAN_DEPTH) : float(0);
+  // how much the water's own colour shows over what's under it: light it scatters back, turquoise a centimetre
+  // or two deep, the open sea's blue deeper still
+  const body = column ? smoothstep(0.003, 0.04, depth) : float(1);
   // where the water runs out it ends, by its own depth, rather than wherever its surface dips under the sand
   // (dry ground next to water carries the water's level just under the sand, however steeply the sand rises
   // there, and the sand hides it; ground further from water sinks its surface DRY_SINK under, which this cuts)
   if (column) material.maskNode = column.greaterThan(-0.015);
   const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms);
-  // (transmitted light is tinted by the colour, so at the very edge the colour goes clear too: tinted, the sand
-  // seen through the last film of water showed as a dark line)
-  material.colorNode = mix(
-    vec3(1),
-    mix(color, SHALLOW_WATER, shallow.mul(float(1).sub(foam)).mul(0.55)),
-    max(meets, foam),
-  );
+  // (transmitted light is tinted by the colour, so over the shallows the colour is clear and the absorption alone
+  // tints it)
+  const water = column
+    ? mix(mix(SHALLOW_SCATTER, color, smoothstep(0.02, OCEAN_DEPTH, depth)), color, foam)
+    : color;
+  material.colorNode = mix(vec3(1), water, max(body.mul(meets), foam));
   material.roughnessNode = roughness;
   material.emissiveNode = oceanSunLight(normal, wave, foam, roughness, uniforms).mul(max(meets, foam));
   material.specularIntensityNode = mix(float(0.75), float(0.08), foam).mul(max(meets, foam));
   // (foam stays opaque white even at the very edge)
-  material.transmissionNode = mix(
-    mix(float(1), mix(float(0.22), float(0.85), shallow), meets),
-    float(0),
-    foam,
-  );
-  // refraction through the shallows reaches no deeper than they are, a few millimetres
-  material.thicknessNode = mix(float(0.7), float(0.004), shallow);
+  material.transmissionNode = mix(mix(float(1), mix(float(0.97), float(0.22), body), meets), float(0), foam);
+  if (coastal) {
+    material.thicknessNode = depth;
+    material.attenuationColorNode = SHALLOW_ABSORB;
+    material.attenuationDistanceNode = float(ABSORB_DISTANCE);
+  }
   return { material, uniforms };
 }
 

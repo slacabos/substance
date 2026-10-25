@@ -36,7 +36,7 @@ type Vec3 = Node<'vec3'>;
 /** Height the swash runs up a shore facing the swell, per unit of the sea's state, orb radii. */
 const SWASH_RUNUP = 0.01;
 /** The beach's wet sand (WET_SAND in materials/oceanShores.ts). */
-const WET_SAND = color('#8f7d5b');
+const WET_SAND = color('#7c5a45');
 /** How much of the key light's diffuse the land's emissive carries (1 / pi, for a Lambert surface). */
 const KEY_SHARE = 1 / Math.PI;
 /** Share of a wave's cycle the swash spends running up; the rest it drains back. */
@@ -168,13 +168,9 @@ export function shoreSurface(
   const ground = mix(attribute('color', 'vec3'), WET_SAND, bared)
     .mul(tone)
     .mul(grains.tint)
-    .mul(mix(float(1), float(0.72), soaked));
-  const sheet = mix(
-    ground,
-    mix(ground.mul(vec3(0.78, 0.96, 0.98)), vec3(0.16, 0.55, 0.58), 0.35),
-    // thin at the front, so mostly the wet sand shows; turquoise where it's deeper, like the shallows
-    smoothstep(0, 0.003, sw.depth).mul(0.85),
-  );
+    .mul(mix(float(1), float(0.62), soaked));
+  // under the run-up's thin sheet the sand is darker still, and barely tinted: it's millimetres of clear water
+  const sheet = ground.mul(mix(vec3(1), vec3(0.8, 0.88, 0.9), smoothstep(0, 0.003, sw.depth)));
   const covered = mix(ground, sheet, sw.cover);
   const albedo = mix(covered, vec3(0.92, 0.96, 0.97), sw.foam);
   const l = normalize(cameraViewMatrix.mul(vec4(light.dir, 0)).xyz);

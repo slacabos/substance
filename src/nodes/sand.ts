@@ -54,10 +54,12 @@ export interface SandLight {
 
 /** A grain, orb radii: 0.3 mm on an orb about 10 cm across. */
 const GRAIN = 0.006;
+/** How strongly each grain shows its own mineral colour: a soft speckle, sand rather than gravel. */
+const GRAIN_TINT = 0.45;
 /** How many pixels across a grain cell is drawn. */
 const CELL_PIXELS = 1.5;
 /** Share of grains with a facet that can catch the light, and how closely it must face the light to glint. */
-const GLINT_SHARE = 0.14;
+const GLINT_SHARE = 0.06;
 const GLINT_ALIGN = 0.99;
 const GLINT_STRENGTH = 2.2;
 
@@ -158,7 +160,7 @@ export function sandGrains(
     const tilt = modelViewMatrix.mul(vec4(cell.tilt.sub(p.mul(dot(cell.tilt, p))), 0)).xyz;
     const facet = normalize(surface.add(tilt.mul(0.9)));
     const glint = select(cell.glints, smoothstep(GLINT_ALIGN, 1, dot(facet, h)), float(0));
-    return { tint: mix(vec3(1), cell.tint, contrast), tilt, glint };
+    return { tint: mix(vec3(1), cell.tint, contrast.mul(GRAIN_TINT)), tilt, glint };
   };
   const a = at(exp2(lo));
   const b = at(exp2(lo.add(1)));
@@ -200,7 +202,7 @@ export function sandRelief(
     clumps,
   ).mul(smoothstep(0.02, 0.15, disturbed));
   const lumps = octave(p, 210).mul(disturbed);
-  let height = ripple.mul(0.0028).mul(combed).add(lumps.mul(0.0014)).add(crumbs.mul(0.0012));
+  let height = ripple.mul(0.0016).mul(combed).add(lumps.mul(0.0014)).add(crumbs.mul(0.0012));
   let tone = float(1).sub(ripple.mul(0.05).mul(combed));
   if (slope) {
     // grains that slid leave streaks down the slope: noise squeezed along the way down
@@ -214,10 +216,10 @@ export function sandRelief(
 }
 
 /** The colours a sand orb is made of: dry, a warmer and a paler drift, and damp. */
-const DRY = color('#b89a6a');
-const WARM = color('#c99d6a');
-const PALE = color('#ddd0b0');
-const WET = color('#7d6a4b');
+const DRY = color('#d39a62');
+const WARM = color('#cf8c55');
+const PALE = color('#ddb183');
+const WET = color('#7c5a45');
 
 /**
  * A whole orb of sand at unit direction p: faint drifts of warmer and paler sand under the grains; `wet` (0 to 1)
