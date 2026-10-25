@@ -49,10 +49,11 @@ import { OCEAN_FLUID } from '../config';
 import { FLUID, fluidGrid } from '../core/oceanFluid';
 import type { OceanField } from '../core/oceanField';
 import { LOOKUP_SIZE } from '../core/oceanLookup';
-import { shoreGroundHeight } from '../core/oceanShores';
+import { shoreGroundHeight, SURF_REACH } from '../core/oceanShores';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { cubeCell, type SurfaceBuffers } from '../nodes/oceanSurface';
 import { oceanWaveVertex, type OceanWaveFields } from '../nodes/oceanWaves';
+import { shoreDistanceAt, surfPlungeAt } from '../nodes/surf';
 import { baseR } from '../nodes/shape';
 import { FLUID_LAYER } from '../scene/fluidPass';
 
@@ -77,7 +78,7 @@ const PER_SPLASH = 24;
 /** Particles started per second per unit of sphere area where the water breaks hardest, for 32k particles. */
 const EMISSION = 30000;
 /** How much harder breaking surf throws spray than open-sea whitecaps of the same strength. */
-const SURF_SPRAY = 6;
+const SURF_SPRAY = 3;
 /** A splash is a third droplets, the rest mist (as the old spray). */
 const DROPLET_SHARE = 0.35;
 /** A particle's crowd (see `crowd`) above which it's dense spray, drawn as one surface. */
@@ -218,14 +219,22 @@ export class OceanFluid {
       // calm sea would spout from every patch of old foam.
       // (whitecaps hold up to 0.45 foam, WHITECAP in OceanSim; at full storm their crests score like breaking water)
       const whitecap = smoothstep(0.12, 0.4, here.y).mul(this.storm);
-      const open = max(select(aerated, here.y.mul(0.82).add(here.z.mul(0.3)), float(0)), whitecap);
+      // (off a coast the surf zone is all foam and churn: its spray is the surf's, below, not the open sea's)
+      const distance = sea.coastal ? shoreDistanceAt(normalize(vertex.xyz)) : float(1);
+      const offshore = sea.coastal ? smoothstep(SURF_REACH * 0.85, SURF_REACH, distance) : float(1);
+      const open = max(select(aerated, here.y.mul(0.82).add(here.z.mul(0.3)), float(0)), whitecap).mul(
+        offshore,
+      );
       const score = max(here.w, open);
       // Surf throws its spray as a wave hits: while the breaking rises (the flow's w), not for as long as it
       // stays broken, which would pour from the same spot like a tap. Far more than an open-sea whitecap.
       const surge = buffers.flow.element(i).w;
       const excess = max(
         clamp(open.sub(0.2).div(0.8), 0, 1),
-        clamp(surge.sub(0.3).div(2), 0, 1).mul(SURF_SPRAY),
+        clamp(surge.sub(0.3).div(2), 0, 1)
+          .mul(SURF_SPRAY)
+          // only where the waves plunge, on the bar and at the beach, not all through the whitewater between
+          .mul(sea.coastal ? surfPlungeAt(distance) : float(1)),
       );
       const expected = excess
         .mul((EMISSION * n) / 32768)

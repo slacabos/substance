@@ -104,14 +104,6 @@ export function blendedAt(
   return value.div(weight);
 }
 
-/** The sea's own height at unit direction d (the hand's waves, without the scripted surf: OceanSim's slope.w). */
-export function seaHeightAt(
-  d: Vec3,
-  buffers: Pick<SurfaceBuffers, 'lookup' | 'vertex' | 'neighbor'> & { slope: StorageBufferNode<'vec4'> },
-): Node<'float'> {
-  return blendedAt(d, buffers, (i) => buffers.slope.element(i).w);
-}
-
 /**
  * The surface at unit direction d: the nearest vertex from the lookup, blended with its six neighbours by
  * inverse squared distance. Returns height (with surf), foam, the current, and distance to the shore.

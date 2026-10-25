@@ -195,7 +195,7 @@ export function oceanDeform(
   const shore = attribute('oceanShoreData', 'vec4').w;
   const offshore = coastal ? smoothstep(0, SURF_FADE, shore) : float(1);
   // and the wind's waves stand no taller than the shallows let them, so no trough bares the bar or the shelf
-  const shallows = coastal ? clamp(shelfDepthAt(shore).div(OCEAN_DEPTH).mul(1.5), 0.04, 1) : float(1);
+  const shallows = coastal ? clamp(shelfDepthAt(shore).div(OCEAN_DEPTH).mul(0.6), 0.03, 1) : float(1);
   const damping = min(offshore.mul(0.82).add(0.18), shallows).toVar();
   const wave = oceanWaveVertex(p, waves, u, weather, spacing);
   const height = wave.height.mul(damping).toVar();

@@ -27,14 +27,14 @@ describe('ocean surface simulation', () => {
     const { renderer, calls } = stubRenderer();
     const sim = new OceanSim(renderer, sphere(8));
     sim.update(1 / 60, []);
-    // one step (momentum, height), then splash landings, the volume correction (clear, sum, correct), surface
-    // and slope
-    expect(calls.at(-1)).toHaveLength(2 + 6);
+    // one step (momentum, height), then splash landings, the volume correction (clear, sum, correct), surface,
+    // the level carried onto dry ground beside the water, and slope
+    expect(calls.at(-1)).toHaveLength(2 + 7);
     sim.update(1 / 20, [{ dir: new Vector3(0, 0, 1), strength: -0.55 }]);
-    expect(calls.at(-1)).toHaveLength(3 * 2 + 6);
+    expect(calls.at(-1)).toHaveLength(3 * 2 + 7);
     sim.update(0.5, []);
     // A changed substep duration first rescales the height history.
-    expect(calls.at(-1)).toHaveLength(1 + 4 * 2 + 6);
+    expect(calls.at(-1)).toHaveLength(1 + 4 * 2 + 7);
     sim.update(0, []);
     expect(calls).toHaveLength(3);
   });
@@ -43,22 +43,22 @@ describe('ocean surface simulation', () => {
     const { renderer, calls } = stubRenderer();
     const sim = new OceanSim(renderer, sphere(8));
     sim.update(0.024, []);
-    expect(calls.at(-1)).toHaveLength(1 + 2 + 6);
+    expect(calls.at(-1)).toHaveLength(1 + 2 + 7);
     expect(calls.at(-1)![0]).toBe(sim['rescaleNodes'][0]);
     expect(sim['uniforms'].stepScale.value).toBeCloseTo(0.024 / (1 / 60));
 
     sim.update(0.026, []);
-    expect(calls.at(-1)).toHaveLength(1 + 2 * 2 + 6);
+    expect(calls.at(-1)).toHaveLength(1 + 2 * 2 + 7);
     expect(calls.at(-1)![0]).toBe(sim['rescaleNodes'][1]);
     expect(sim['uniforms'].stepScale.value).toBeCloseTo(0.013 / 0.024);
 
     sim.update(0, []);
     sim.update(0.026, []);
-    expect(calls.at(-1)).toHaveLength(2 * 2 + 6);
+    expect(calls.at(-1)).toHaveLength(2 * 2 + 7);
     expect(sim['uniforms'].stepScale.value).toBe(1);
 
     sim.update(0.024, []);
-    expect(calls.at(-1)).toHaveLength(1 + 2 + 6);
+    expect(calls.at(-1)).toHaveLength(1 + 2 + 7);
     expect(sim['uniforms'].stepScale.value).toBeCloseTo(0.024 / 0.013);
   });
 

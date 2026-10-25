@@ -82,16 +82,22 @@ export function shoreNoise(x: number, y: number, z: number): number {
   return mix(plane(iz), plane(iz + 1), fz) * 2 - 1;
 }
 
+/**
+ * The shoreline's sweeps round a site, each `amplitude * cos(n * bearing + phase + seed * seedScale)` of its
+ * radius: a beach's long, smooth sweeps, a broad bay facing the starting view (bearing -pi / 2), gentle points
+ * either side, and no headlands.
+ */
+export const SHORE_SWEEPS = [
+  { n: 2, amplitude: 0.12, phase: 0, seedScale: 1 },
+  { n: 3, amplitude: 0.025, phase: 1.1 - Math.PI / 2, seedScale: -1.7 },
+  { n: 5, amplitude: 0.012, phase: 0.4 - Math.PI / 2, seedScale: 2.3 },
+] as const;
+
 export function shoreRadius(site: ShoreSite, bearing: number): number {
-  // a beach's long, smooth sweeps: a broad bay facing the starting view (bearing -pi / 2), gentle points either
-  // side, and no headlands
-  return (
-    site.radius *
-    (1 +
-      0.12 * Math.cos(bearing * 2 + site.seed) +
-      0.025 * Math.sin(bearing * 3 + 1.1 - site.seed * 1.7) +
-      0.012 * Math.sin(bearing * 5 + 0.4 + site.seed * 2.3))
-  );
+  let r = 1;
+  for (const s of SHORE_SWEEPS)
+    r += s.amplitude * Math.cos(bearing * s.n + s.phase + site.seed * s.seedScale);
+  return site.radius * r;
 }
 
 /** How wide the beach is at dir: wide sweeps of sand and narrow stretches along the same coast. */

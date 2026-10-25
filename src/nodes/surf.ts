@@ -1,8 +1,29 @@
 import type { Node, UniformNode } from 'three/webgpu';
-import { acos, clamp, dot, exp, float, max, min, normalize, sin, smoothstep, vec3 } from 'three/tsl';
+import {
+  acos,
+  atan,
+  clamp,
+  cos,
+  dot,
+  exp,
+  float,
+  max,
+  min,
+  normalize,
+  sin,
+  smoothstep,
+  vec3,
+} from 'three/tsl';
 import type { Vector3 } from 'three';
 import { OCEAN_DEPTH } from '../core/oceanFFT';
-import { SHELF, SHELF_EDGE, SHORE_WATERLINE, SURF_SET_WAVES } from '../core/oceanShores';
+import {
+  MAINLAND,
+  SHELF,
+  SHELF_EDGE,
+  SHORE_SWEEPS,
+  SHORE_WATERLINE,
+  SURF_SET_WAVES,
+} from '../core/oceanShores';
 
 type Float = Node<'float'>;
 type Vec3 = Node<'vec3'>;
@@ -71,13 +92,28 @@ export function shelfDepthAt(d: Float): Float {
   return clamp(drop.sub(SHORE_WATERLINE), 0.002, OCEAN_DEPTH);
 }
 
-/** Where the surf breaks at distance d out (surfBreakZone in core/oceanShores.ts). */
-export function surfBreakZoneAt(d: Float): Float {
+/** Where the surf plunges at distance d out: on the bar and at the beach (surfBreakZone without its whitewater). */
+export function surfPlungeAt(d: Float): Float {
   const { bar } = SHELF;
   const beach = float(1).sub(smooth(d.sub(0.012).div(0.06)));
-  const onBar = bell(d.sub(bar.at).div(bar.width)).mul(0.9);
+  return max(beach, bell(d.sub(bar.at).div(bar.width)).mul(0.9));
+}
+
+/** Where the surf breaks at distance d out (surfBreakZone in core/oceanShores.ts). */
+export function surfBreakZoneAt(d: Float): Float {
   const inside = float(1)
-    .sub(smooth(d.sub(bar.at).div(0.04)))
+    .sub(smooth(d.sub(SHELF.bar.at).div(0.04)))
     .mul(0.45);
-  return max(beach, max(onBar, inside));
+  return max(surfPlungeAt(d), inside);
+}
+
+/** Angular distance from the beach's shoreline at unit direction d (shoreSiteDistance for MAINLAND). */
+export function shoreDistanceAt(d: Vec3): Float {
+  const { center, east, north, radius, seed } = MAINLAND;
+  const c = vec3(center.x, center.y, center.z);
+  const bearing = atan(dot(d, vec3(north.x, north.y, north.z)), dot(d, vec3(east.x, east.y, east.z)));
+  let r: Float = float(1);
+  for (const s of SHORE_SWEEPS)
+    r = r.add(cos(bearing.mul(s.n).add(s.phase + seed * s.seedScale)).mul(s.amplitude));
+  return acos(clamp(dot(c, d), -1, 1)).sub(r.mul(radius));
 }

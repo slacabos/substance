@@ -104,8 +104,9 @@ const AREA_FIXED = 1e9;
 const DEEP_WATER = 0.025;
 /** How fast water running over wet sand smooths it (SandField's wash), per second. */
 const SAND_WASH = 0.4;
-/** How far under dry ground the water's surface is drawn, so it never shows through the sand. */
+/** How far under dry ground the water's surface is drawn, so it never shows through the sand; and next to water. */
 const DRY_SINK = 0.02;
+const DRY_UNDER = 0.0005;
 /** How far downwind of the continent's middle the swell's target sits, radians. */
 const SWELL_OFFSET = 0.8;
 /**
@@ -661,6 +662,32 @@ export class OceanSim {
         );
       })().compute(n);
 
+    /**
+     * Dry ground next to water: its surface is the water's level carried flat across from its wet neighbours (just
+     * under the sand here), so the water meets the beach where a level sea would, along the sand's own contours,
+     * rather than diving under the sand along the mesh's triangles. Further inland it sinks out of sight.
+     */
+    const levelDry = (final: number) =>
+      Fn(() => {
+        const i = instanceIndex;
+        If(wetIn(final)(i), () => {
+          Return();
+        });
+        const level = float(0).toVar();
+        const count = float(0).toVar();
+        Loop({ start: 0, end: 6, type: 'uint' }, ({ i: k }) => {
+          const j = this.neighbor.element(i.mul(6).add(k));
+          If(j.notEqual(i).and(wetIn(final)(j)), () => {
+            level.addAssign(heights[final]!.element(j).x);
+            count.addAssign(1);
+          });
+        });
+        If(count.greaterThan(0), () => {
+          const bed = heights[final]!.element(i).x;
+          this.surface.element(i).x.assign(min(level.div(count), bed.sub(DRY_UNDER)));
+        });
+      })().compute(n);
+
     const finishSlope = (final: number) =>
       Fn(() => {
         const i = instanceIndex;
@@ -768,8 +795,8 @@ export class OceanSim {
       })().compute(n);
     this.syncNodes = this.sand ? [sync(0), sync(1)] : null;
     this.finishNodes = [
-      [land(0), clearVolume, sumVolume(0), correctVolume(0), finishSurface(0), finishSlope(0)],
-      [land(1), clearVolume, sumVolume(1), correctVolume(1), finishSurface(1), finishSlope(1)],
+      [land(0), clearVolume, sumVolume(0), correctVolume(0), finishSurface(0), levelDry(0), finishSlope(0)],
+      [land(1), clearVolume, sumVolume(1), correctVolume(1), finishSurface(1), levelDry(1), finishSlope(1)],
     ];
     this.resetNodes = [
       Fn(() => {

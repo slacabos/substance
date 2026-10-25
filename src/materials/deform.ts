@@ -47,6 +47,7 @@ import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import { SHALLOWS } from '../core/oceanShores';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
 import { LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
+import { snoise } from '../nodes/noise';
 import { driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
 import { baseN, baseR } from '../nodes/shape';
@@ -55,6 +56,8 @@ export { DeformMode, type DeformUniforms };
 
 /** The colour of clear water a few millimetres deep over pale rock. */
 const SHALLOW_WATER = vec3(0.16, 0.62, 0.66);
+/** How much higher water standing on the coast's sand is drawn than the sim has it, orb radii. */
+const WATER_LIFT = 0.0006;
 
 /** How far the simulated waves' vertices lean toward their crests, per unit of slope (orb radii). */
 const CREST_LEAN = 0.012;
@@ -69,6 +72,8 @@ export interface OceanSurfaceOptions {
     surface: StorageBufferNode<'vec4'>;
     slope: StorageBufferNode<'vec4'>;
     drift: StorageBufferNode<'vec4'>;
+    /** depth (negative on land), shore distance, the shelf's lag, foam grain */
+    ground: StorageBufferNode<'vec4'>;
     driftBlend: Node<'float'>;
   };
   spacing: number;
@@ -160,6 +165,8 @@ export function createDeformMaterial(
   const objA = varyingProperty('vec3', 'vObjA');
   const objB = varyingProperty('vec3', 'vObjB');
   const shore = coastal ? varyingProperty('float', 'vShoreDistance') : undefined;
+  // how deep the sim's own water stands here: over dry ground it's negative (its surface sinks under the ground)
+  const column = coastal ? varyingProperty('float', 'vColumn') : undefined;
   material.positionNode = Fn(() => {
     const p = normalize(positionGeometry);
     const surface = oceanDeform(p, uniforms, waves, spacing, coastal);
@@ -180,11 +187,17 @@ export function createDeformMaterial(
     objA.assign(p.sub(e1.mul(drift.x)).sub(e2.mul(drift.y)));
     objB.assign(p.sub(e1.mul(drift.z)).sub(e2.mul(drift.w)));
     shore?.assign(attribute('oceanShoreData', 'vec4').w);
+
     // The simulated waves' crests sharpened as the swell's are: each vertex shifts a little uphill, so crests
     // narrow and troughs widen. Capped well under half the mesh spacing, so neighbours can never cross.
     const lean = simGradient.mul(CREST_LEAN);
     const shift = lean.mul(min(float(1), float(CREST_SHIFT).div(max(length(lean), 1e-6))));
-    return surface.pos.add(normalize(surface.pos).mul(simHeight)).add(shift);
+    // (water standing on the coast's sand rides a hair higher than the sim's, for the same reason the seabed is
+    // drawn a little deeper: the land's finer mesh would poke through a thin sheet)
+    const depth = sim.ground.element(vertexIndex).x.add(simHeight);
+    column?.assign(depth);
+    const lift = coastal ? smoothstep(0, 0.002, depth).mul(WATER_LIFT) : float(0);
+    return surface.pos.add(normalize(surface.pos).mul(simHeight.add(lift))).add(shift);
   })();
 
   // Per pixel: the full-resolution wave slopes, crests where the surface bunches up, and roughness for the
@@ -196,7 +209,7 @@ export function createDeformMaterial(
     float(1).sub(smoothstep(0.3, 0.85, surface.jacobian)),
     smoothstep(0.6, 1.05, surface.foam),
   );
-  const foam = oceanFoam(
+  const seaFoam = oceanFoam(
     { a: objA, b: objB, blend: sim.driftBlend },
     foamLaceTexture(),
     breaking,
@@ -205,6 +218,15 @@ export function createDeformMaterial(
     uniforms,
     shore,
   );
+  // where the sim's water thins out over sand its front is a band of bubbles, as a wave's run-up is: a broken,
+  // ragged line rather than the mesh's own edge
+  const edge = column
+    ? float(1)
+        .sub(smoothstep(0.0002, 0.0025, column))
+        .mul(smoothstep(-0.35, 0.25, snoise(p.mul(380)).add(snoise(p.mul(1100)).mul(0.5))))
+        .mul(0.9)
+    : float(0);
+  const foam = max(seaFoam, edge);
   const base = materialRoughness.add(turbulence.mul(0.1));
   // GGX alpha^2 grows by twice the hidden slope variance
   const rough = pow(pow(base, 4).add(surface.lostVariance.mul(damping).mul(damping).mul(2)), 0.25);
@@ -219,7 +241,13 @@ export function createDeformMaterial(
   material.normalNode = normal;
   // Over a coast's shelf the water is a few millimetres deep: clear and turquoise, the sand showing through it,
   // turning to the open sea's deep blue only as the shelf runs out.
-  const shallow = shore ? float(1).sub(smoothstep(0.05, SHALLOWS, shore)) : float(0);
+  // (and clearer still where the sim's own water thins out over sand: at a wave's edge on the beach, or over a
+  // bar the sea has drawn back from)
+  const thin = column ? float(1).sub(smoothstep(0.0004, 0.004, column)) : float(0);
+  const shallow = shore ? max(float(1).sub(smoothstep(0.05, SHALLOWS, shore)), thin) : float(0);
+  // where the water runs out it ends, by its own depth, rather than wherever its surface dips under the sand
+  // (dry ground next to water carries the water's level just under the sand: the sand there hides it)
+  if (column) material.maskNode = column.greaterThan(-0.004);
   const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms);
   material.colorNode = mix(color, SHALLOW_WATER, shallow.mul(float(1).sub(foam)).mul(0.55));
   material.roughnessNode = roughness;

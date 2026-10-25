@@ -12,9 +12,8 @@ import {
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { shoreSurface } from '../nodes/shore';
 import type { SurfInputs } from '../nodes/surf';
-import { blendedAt, seaHeightAt } from '../nodes/oceanSurface';
+import { blendedAt } from '../nodes/oceanSurface';
 import {
-  attribute,
   float,
   Fn,
   length,
@@ -22,6 +21,7 @@ import {
   normalLocal,
   positionGeometry,
   positionLocal,
+  smoothstep,
   uniform,
   varyingProperty,
   vec3,
@@ -36,7 +36,12 @@ const SHELF_SAND = new Color('#c9bf96');
 const DEEP = new Color('#2c4a52');
 const color = new Color();
 /** The sim's buffers the land reads the sea from (OceanSim.renderBuffers). */
-type SeaBuffers = Parameters<typeof seaHeightAt>[1] & { slope: StorageBufferNode<'vec4'> };
+type SeaBuffers = Parameters<typeof blendedAt>[1] & {
+  surface: StorageBufferNode<'vec4'>;
+  ground: StorageBufferNode<'vec4'>;
+};
+/** How much deeper the seabed is drawn than the sim's, orb radii. */
+const SEABED_DROP = 0.0015;
 /** How bright the land's key light (SAND_KEY_LIGHT) is in its strongest channel. */
 const KEY_STRENGTH = 1.4;
 const UP = new Vector3(0, 1, 0);
@@ -78,7 +83,10 @@ export class OceanShores {
       const rings = landRings + skirtRings;
       const center = positions.length / 3;
       const addVertex = () => {
-        const elevation = shoreElevation(site, dir);
+        // the seabed drawn a little deeper than the sim's: this mesh is finer, and a bar's crest or the beach's
+        // foot between the sim's vertices would otherwise poke up through a thin sheet of water
+        const ground = shoreElevation(site, dir);
+        const elevation = ground - SEABED_DROP * smooth(0, 0.003, -ground);
         directions.push(dir.x, dir.y, dir.z);
         siteOf.push(k);
         elevations.push(elevation);
@@ -190,17 +198,24 @@ export class OceanShores {
     geometry.setAttribute('swash', new Float32BufferAttribute(swash, 4));
     geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
     const material = new MeshStandardNodeMaterial();
-    // the sea's own height at each vertex's foot on the shoreline, so the hand's waves run up the beach
-    const seaAtFoot = varyingProperty('float', 'vSeaAtFoot');
-    // and how far the sand has been dug or piled here (the sim's sand bed, blended onto this finer mesh)
+    // whether the sim's own water stands here (the sea, or a wave the hand sent up the beach), and how wet it has
+    // left the sand
+    const water = varyingProperty('float', 'vWater');
+    const soaked = varyingProperty('float', 'vSoaked');
+    // how far the sand has been dug or piled here (the sim's sand bed, blended onto this finer mesh)
     const dug = varyingProperty('float', 'vDug');
     // where the digging left it steep, and the way down
     const steep = varyingProperty('float', 'vSteep');
     const down = varyingProperty('vec3', 'vDown');
     material.positionNode = Fn(() => {
-      const swashFoot = attribute('swash', 'vec4');
       const p = normalize(positionGeometry);
-      seaAtFoot.assign(seaHeightAt(normalize(p.add(swashFoot.xyz)), sea));
+      // the column: the sea's drawn height (with the surf) over the ground's depth (ground.x, negative on land)
+      water.assign(
+        blendedAt(p, sea, (i) =>
+          smoothstep(0.0002, 0.0008, sea.ground.element(i).x.add(sea.surface.element(i).x)),
+        ),
+      );
+      soaked.assign(sand ? blendedAt(p, sea, (i) => sand.bed.element(i).y) : float(0));
       const change = sand ? blendedAt(p, sea, (i) => sand.bed.element(i).x) : float(0);
       dug.assign(change);
       if (sand) {
@@ -222,7 +237,8 @@ export class OceanShores {
     })();
     const surface = shoreSurface(
       surf,
-      seaAtFoot,
+      water,
+      soaked,
       { dir: vec3(SAND_KEY_LIGHT.x, SAND_KEY_LIGHT.y, SAND_KEY_LIGHT.z), color: this.keyColor },
       dug,
       { steep, down },
