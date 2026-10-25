@@ -142,6 +142,7 @@ export class OceanSim {
   private readonly renderer: WebGPURenderer;
   private readonly uniforms = {
     dt: uniform(STEP),
+    stepScale: uniform(1),
     frameDt: uniform(STEP),
     time: uniform(0),
     wind: uniform(OCEAN_DEFAULTS.windSpeed),
@@ -195,6 +196,7 @@ export class OceanSim {
   private readonly vertex: Vec4Buffer;
   private readonly neighbor: StorageBufferNode<'uint'>;
   private readonly stepNodes: [ComputeNode[], ComputeNode[]];
+  private readonly rescaleNodes: [ComputeNode, ComputeNode];
   private readonly finishNodes: [ComputeNode[], ComputeNode[]];
   private readonly resetNodes: ComputeNode[];
   private parity = 0;
@@ -298,6 +300,14 @@ export class OceanSim {
     this.landings = instancedArray(n * 2, 'int').toAtomic() as StorageBufferNode<'int'>;
 
     const u = this.uniforms;
+    // Height history represents a velocity over the last substep. Rebase it once before stepping with a
+    // different duration, including neighbours' histories used by viscosity.
+    const rescaleHistory = (from: number) =>
+      Fn(() => {
+        const state = heights[from]!.element(instanceIndex);
+        state.y.assign(state.x.sub(state.x.sub(state.y).mul(u.stepScale)));
+      })().compute(n);
+    this.rescaleNodes = [rescaleHistory(0), rescaleHistory(1)];
     const events = uniformArray(this.events, 'vec4') as UniformArrayNode<'vec4'>;
     const eventShapes = uniformArray(this.eventShapes, 'vec4') as UniformArrayNode<'vec4'>;
     const wetAt = (j: Node<'uint'>) => ground.element(j).x.greaterThan(0);
@@ -763,8 +773,11 @@ export class OceanSim {
   update(dt: number, forces: readonly OceanForce[], time = 0): void {
     if (dt <= 0) return;
     const steps = Math.min(MAX_STEPS, Math.max(1, Math.round(dt / STEP)));
+    const stepDt = dt / steps;
+    const stepScale = stepDt / this.uniforms.dt.value;
     this.uniforms.frameDt.value = dt;
-    this.uniforms.dt.value = dt / steps;
+    this.uniforms.dt.value = stepDt;
+    this.uniforms.stepScale.value = stepScale;
     this.uniforms.time.value = time;
     this.updateSwell(dt);
     // a drift restarts as its weight reaches 0: the first at whole periods, the second half a period later
@@ -787,6 +800,7 @@ export class OceanSim {
     }
     this.uniforms.pushMean.value = this.pushMean(dt);
     const passes: ComputeNode[] = [];
+    if (stepScale !== 1) passes.push(this.rescaleNodes[this.parity]!);
     for (let s = 0; s < steps; s++) {
       passes.push(...this.stepNodes[this.parity]!);
       this.parity = 1 - this.parity;

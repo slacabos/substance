@@ -87,6 +87,8 @@ export interface SurfaceState {
   /** Height now and a step ago, per vertex. */
   h: Float32Array;
   hPrev: Float32Array;
+  /** Duration between hPrev and h; before the first step, the supplied dt is assumed. */
+  previousDt?: number;
   /** Tangential current, three per vertex. */
   u: Float32Array;
 }
@@ -126,9 +128,11 @@ export function stepSurface(
   dt: number,
   accel?: ArrayLike<number>,
 ): void {
+  if (dt <= 0) return;
   const { positions: p, neighbors } = mesh;
   const { depth, wet, kernel } = field;
   const { h, hPrev, u } = state;
+  const stepScale = dt / (state.previousDt ?? dt);
   const count = h.length;
   const g = SURFACE.gravity;
   const nextH = new Float32Array(count);
@@ -196,7 +200,9 @@ export function stepSurface(
       wetNeighbours++;
     }
     const rise = h[i]! - hPrev[i]!;
-    const eased = wetNeighbours ? rise + SURFACE.viscosity * (neighbourRise / wetNeighbours - rise) : rise;
+    // Preserve vertical velocity when this step has a different duration from the stored history.
+    const eased =
+      (wetNeighbours ? rise + SURFACE.viscosity * (neighbourRise / wetNeighbours - rise) : rise) * stepScale;
     const previous = h[i]! - eased;
     const wave = (2 * h[i]! - previous * (1 - a) - g * dt * dt * operator + push) / (1 + a);
 
@@ -226,6 +232,7 @@ export function stepSurface(
   hPrev.set(h);
   h.set(nextH);
   u.set(nextU);
+  state.previousDt = dt;
 }
 
 /** Total water above or below rest, sum of height times area. */

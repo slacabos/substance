@@ -23,7 +23,7 @@ const sphere = (detail: number) => {
 };
 
 describe('ocean surface simulation', () => {
-  it('steps at a fixed 60 Hz, more steps for a longer frame, and finishes once per frame', () => {
+  it('substeps longer frames and finishes once per frame', () => {
     const { renderer, calls } = stubRenderer();
     const sim = new OceanSim(renderer, sphere(8));
     sim.update(1 / 60, []);
@@ -33,9 +33,33 @@ describe('ocean surface simulation', () => {
     sim.update(1 / 20, [{ dir: new Vector3(0, 0, 1), strength: -0.55 }]);
     expect(calls.at(-1)).toHaveLength(3 * 2 + 6);
     sim.update(0.5, []);
-    expect(calls.at(-1)).toHaveLength(4 * 2 + 6);
+    // A changed substep duration first rescales the height history.
+    expect(calls.at(-1)).toHaveLength(1 + 4 * 2 + 6);
     sim.update(0, []);
     expect(calls).toHaveLength(3);
+  });
+
+  it('rescales history once when the frame changes from one 24 ms step to two 13 ms steps', () => {
+    const { renderer, calls } = stubRenderer();
+    const sim = new OceanSim(renderer, sphere(8));
+    sim.update(0.024, []);
+    expect(calls.at(-1)).toHaveLength(1 + 2 + 6);
+    expect(calls.at(-1)![0]).toBe(sim['rescaleNodes'][0]);
+    expect(sim['uniforms'].stepScale.value).toBeCloseTo(0.024 / (1 / 60));
+
+    sim.update(0.026, []);
+    expect(calls.at(-1)).toHaveLength(1 + 2 * 2 + 6);
+    expect(calls.at(-1)![0]).toBe(sim['rescaleNodes'][1]);
+    expect(sim['uniforms'].stepScale.value).toBeCloseTo(0.013 / 0.024);
+
+    sim.update(0, []);
+    sim.update(0.026, []);
+    expect(calls.at(-1)).toHaveLength(2 * 2 + 6);
+    expect(sim['uniforms'].stepScale.value).toBe(1);
+
+    sim.update(0.024, []);
+    expect(calls.at(-1)).toHaveLength(1 + 2 + 6);
+    expect(sim['uniforms'].stepScale.value).toBeCloseTo(0.024 / 0.013);
   });
 
   it('takes presses and resets without reading anything back', () => {

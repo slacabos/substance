@@ -50,6 +50,20 @@ const deep = field(OCEAN_DEPTH);
 const north = [0, 0, 1];
 
 describe('interactive sea surface', () => {
+  it('preserves vertical velocity across changing substep durations, apart from physical damping', () => {
+    const state = createSurfaceState(count);
+    let velocity = 0.01;
+    state.hPrev.fill(-velocity * 0.024);
+    for (const stepDt of [0.024, 0.013, 0.013, 0.024, 1 / 120, 0.024]) {
+      stepSurface(mesh, deep, state, 0);
+      stepSurface(mesh, deep, state, stepDt);
+      const damping = (SURFACE.damping * stepDt) / 2;
+      velocity *= (1 - damping) / (1 + damping);
+      for (let i = 0; i < count; i++)
+        expect((state.h[i]! - state.hPrev[i]!) / stepDt).toBeCloseTo(velocity, 6);
+    }
+  });
+
   it('stays flat when left alone and bounded under rough forcing', () => {
     const state = createSurfaceState(count);
     for (let i = 0; i < 60; i++) stepSurface(mesh, deep, state, dt);
