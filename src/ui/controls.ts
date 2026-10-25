@@ -8,6 +8,7 @@ const MATERIAL_KEYS: Record<string, MaterialId> = {
   '3': 'slime',
   '4': 'fur',
   '5': 'coast',
+  '6': 'sand',
   '7': 'fluff',
 };
 const SHAPE_KEYS: Record<string, ShapeId> = { o: 'orb', c: 'cube' };

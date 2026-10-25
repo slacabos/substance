@@ -4,27 +4,22 @@ import {
   attribute,
   clamp,
   cos,
-  cross,
-  dot,
   float,
   fract,
-  fwidth,
   length,
   max,
   min,
   mix,
   normalize,
-  normalView,
   positionGeometry,
-  positionView,
   select,
-  sign,
   sin,
   smoothstep,
   vec3,
 } from 'three/tsl';
 import { SHORE_WATERLINE, shelfLag } from '../core/oceanShores';
 import { snoise } from './noise';
+import { bumped, sandGrain } from './sand';
 import { baseR } from './shape';
 import { surfWave, type SurfInputs } from './surf';
 
@@ -34,41 +29,6 @@ type Vec3 = Node<'vec3'>;
 // Close-up detail for the coast's sand (materials/oceanShores.ts), which its vertices are far too coarse to carry:
 // grain, wind ripples and a bump, darker and glossy where the per-vertex `terrain` attribute says the sand is wet,
 // with the swash running over it.
-
-/** How far the bump raises and lowers the surface, orb radii. */
-const BUMP = 0.0012;
-
-/** Simplex noise at frequency f, fading to nothing once its features shrink below a couple of pixels. */
-function octave(p: Vec3, f: number): Float {
-  const at = p.mul(f);
-  const pixels = length(fwidth(at));
-  return snoise(at).mul(float(1).sub(smoothstep(0.35, 0.7, pixels)));
-}
-
-/**
- * Parallel bands across p, `f` to the radian along `axis`, bent by `warp`: 0 to 1, flattening to 0.5 once they
- * get finer than a couple of pixels.
- */
-function bands(p: Vec3, axis: Vec3, f: number, warp: Float): Float {
-  const phase = dot(p, axis).mul(f).add(warp);
-  const pixels = fwidth(phase).div(Math.PI * 2);
-  return sin(phase)
-    .mul(float(1).sub(smoothstep(0.25, 0.5, pixels)))
-    .mul(0.5)
-    .add(0.5);
-}
-
-/** A normal tilted by a height field `h` (orb radii) from its screen-space derivatives (Mikkelsen 2010). */
-function bumped(h: Float): Vec3 {
-  const dpx = positionView.dFdx();
-  const dpy = positionView.dFdy();
-  const n = normalView;
-  const r1 = cross(dpy, n);
-  const r2 = cross(n, dpx);
-  const det = dot(dpx, r1);
-  const grad = r1.mul(h.dFdx()).add(r2.mul(h.dFdy())).mul(sign(det));
-  return normalize(n.mul(abs(det)).sub(grad));
-}
 
 /** Height the swash runs up a shore facing the swell, per unit of the sea's state, orb radii. */
 const SWASH_RUNUP = 0.009;
@@ -89,8 +49,12 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs, sea: Float) {
   const foot = normalize(p.add(swash.xyz));
   const seaward = normalize(swash.xyz.add(p.cross(vec3(0, 0, 1)).mul(1e-5)));
   const wave = surfWave(foot, float(0), float(shelfLag(0)), swash.w, seaward, surf);
-  // the cycle from the moment a crest reaches the shoreline
-  const cycle = fract(wave.phase.sub(Math.PI / 2).div(Math.PI * 2));
+  // Phase falls with time, so the cycle advances as it moves on from a crest at the shoreline.
+  const cycle = fract(
+    float(Math.PI / 2)
+      .sub(wave.phase)
+      .div(Math.PI * 2),
+  );
   const reach = select(
     cycle.lessThan(UPRUSH),
     sin(cycle.div(UPRUSH).mul(Math.PI / 2)),
@@ -158,14 +122,9 @@ export function shoreSurface(surf: SurfInputs, sea: Float): { color: Vec3; rough
   const p = normalize(positionGeometry);
 
   // sand: fine grain, and faint ripples the wind combed across it
-  const grain = octave(p, 900);
-  const ripple = bands(p, vec3(0.8, 0.1, -0.59), 1400, octave(p, 60).mul(4));
-  const tone = grain.mul(0.06).add(0.97).sub(ripple.mul(0.04));
-  const height = grain
-    .mul(0.25)
-    .add(ripple.mul(0.35))
-    .mul(float(1).sub(wet.mul(0.7)))
-    .mul(BUMP);
+  const grain = sandGrain(p);
+  const tone = grain.tone;
+  const height = grain.height.mul(float(1).sub(wet.mul(0.7)));
   // height above the still sea, as the land mesh was built (it follows the cube morph like the water)
   const above = length(positionGeometry).sub(baseR(p)).sub(SHORE_WATERLINE);
   const sw = swashAt(p, above, surf, sea);

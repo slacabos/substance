@@ -35,8 +35,11 @@ describe('scene query strings', () => {
     expect(parseScene(sceneQuery({ ...DEFAULT_SCENE, material: 'coast' })).material).toBe('coast');
   });
 
-  it.each(['fur', 'fluff'] as const)('keeps %s independently selectable in shared URLs', (material) => {
-    const scene = { material, shape: 'cube', setting: 'studio', spin: false } as const;
-    expect(parseScene(sceneQuery(scene))).toEqual(scene);
-  });
+  it.each(['fur', 'sand', 'fluff'] as const)(
+    'keeps %s independently selectable in shared URLs',
+    (material) => {
+      const scene = { material, shape: 'cube', setting: 'studio', spin: false } as const;
+      expect(parseScene(sceneQuery(scene))).toEqual(scene);
+    },
+  );
 });
