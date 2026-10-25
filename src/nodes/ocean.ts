@@ -182,7 +182,7 @@ export function threadsAt(obj: Vec3, along: Vec3, amount: Float, fresh: Float): 
   // (and broken here and there, so it's torn lace rather than a maze of unbroken lines)
   const holes = snoise(m.mul(0.9));
   const threads = lines.mul(smoothstep(-0.7, -0.1, holes.add(kind.mul(0.3))));
-  const held = smoothstep(0, 0.4, clumps.mul(0.7).add(amount.mul(1.6)).sub(0.25));
+  const held = smoothstep(0, 0.4, clumps.mul(0.6).add(amount.mul(2)).sub(0.15));
   // a wave's front, just broken, is thick white water torn by small holes, its edge torn at two scales (the finer
   // the lace's own) so it frays into threads and never shows the triangles the breaking is interpolated across
   const torn = clumps.mul(0.14).add(holes.mul(0.12)).add(threads.mul(0.12));
