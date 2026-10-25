@@ -217,11 +217,11 @@ export function createDeformMaterial(
     const { e1, e2 } = driftBasis(p);
     if (coastal) {
       // the way the surf's foam is dragged: up and down the beach, as the waves and the backwash run (the shore's
-      // normal), or with the current where that runs fast
+      // normal), or with the current where that runs fast (a rip; the wind's slow drift doesn't count)
       const flow = sim.flow.element(vertexIndex).xyz;
       const seaward = attribute('oceanShoreData', 'vec4').xyz;
       const speed = length(flow);
-      const drag = mix(seaward, flow.div(max(speed, 1e-6)), smoothstep(0.02, 0.08, speed));
+      const drag = mix(seaward, flow.div(max(speed, 1e-6)), smoothstep(0.2, 0.5, speed));
       current.assign(vec2(dot(drag, e1), dot(drag, e2)));
     }
     objA.assign(p.sub(e1.mul(drift.x)).sub(e2.mul(drift.y)));

@@ -162,8 +162,11 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float, fresh:
     // squeezed along the current (more in some places than others), and bent so the streaks curl and fork
     const stretch = float(THREAD_STRETCH).sub(kind.mul(0.25));
     const squeezed = q.sub(along.mul(dot(q, along).mul(stretch)));
-    const bend = snoise(q.mul(0.13));
-    const bent = squeezed.add(vec3(bend, bend.negate(), snoise(q.mul(0.13).add(5.2))).mul(1.6));
+    // warped hard by a slower noise, so the lines are drawn out into marbled veins, as foam stirred by water is,
+    // rather than the even squiggles of one noise
+    const w = squeezed.mul(0.32);
+    const warp = vec3(snoise(w), snoise(w.add(5.2)), snoise(w.add(9.1)));
+    const bent = squeezed.add(warp.mul(float(2.6).add(kind.mul(1.2))));
     const ridge = (k: number) => {
       const p = bent.mul(k).add(k * 3.1);
       const r = float(1).sub(abs(snoise(p)));
@@ -200,10 +203,11 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float, fresh:
     const edge = fwidth(r).add(0.01);
     return smoothstep(float(0.93).sub(edge), float(0.93).add(edge), r);
   };
-  const trailing = smoothstep(0.02, 0.08, amount)
-    .mul(float(1).sub(smoothstep(0.25, 0.55, amount)))
-    .mul(smoothstep(-0.3, 0.3, clumps.add(0.2)));
-  const streaks = streak(middle).mul(trailing).mul(0.8);
+  // (in patches, where a wave's foam was left behind, not over the whole surf zone)
+  const trailing = smoothstep(0.02, 0.06, amount)
+    .mul(float(1).sub(smoothstep(0.18, 0.4, amount)))
+    .mul(smoothstep(0.05, 0.45, clumps));
+  const streaks = streak(middle).mul(trailing).mul(0.6);
   return max(max(threads.mul(held), fill.mul(0.9)).mul(smoothstep(0.03, 0.2, amount)), streaks);
 }
 
