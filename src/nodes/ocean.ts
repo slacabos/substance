@@ -148,14 +148,20 @@ const THREAD_STRETCH = 0.88;
  * Surf foam as it is from the air: threads and lace rather than blobs. Ridged noise draws connected lines; squeezed
  * along the current `along` (unit, object space), so water running one way (the backwash) drags them into long
  * parallel streaks while churned water leaves them curled into lace. `amount` (0 to 1) is how much foam the sim
- * has here: a little is a few fine threads, more is a thicker, denser web. Read between the two drifts, so the
- * pattern rides the water.
+ * has here: a little is a few fine threads, more is a thicker, denser web; `fresh` (0 to 1) how freshly the water
+ * was churned, the white front of a wave just broken. Read between the two drifts, so the pattern rides the water.
  */
-export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float {
+export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float, fresh: Float): Float {
+  // (read once, between the drifts, which glides without jumps: the restarting drift has no weight)
+  const middle = mix(drift.b, drift.a, drift.blend);
+  const m = middle.mul(THREADS);
+  // how the lace varies from place to place: fine and open here, coarse and dense there, streaked or curled
+  const kind = snoise(m.mul(0.07).add(11.3));
   const at = (obj: Vec3) => {
     const q = obj.mul(THREADS);
-    // squeezed along the current, and bent a little so the streaks curl and fork
-    const squeezed = q.sub(along.mul(dot(q, along).mul(THREAD_STRETCH)));
+    // squeezed along the current (more in some places than others), and bent so the streaks curl and fork
+    const stretch = float(THREAD_STRETCH).sub(kind.mul(0.25));
+    const squeezed = q.sub(along.mul(dot(q, along).mul(stretch)));
     const bend = snoise(q.mul(0.13));
     const bent = squeezed.add(vec3(bend, bend.negate(), snoise(q.mul(0.13).add(5.2))).mul(1.6));
     const ridge = (k: number) => {
@@ -163,24 +169,29 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float
       const r = float(1).sub(abs(snoise(p)));
       // a line of its own width, thicker where there's more foam, with soft edges a pixel wide
       const edge = fwidth(r).add(0.01);
-      const line = float(0.1).add(amount.mul(0.18));
+      const line = float(0.07).add(amount.mul(0.16)).add(kind.mul(0.08));
       return smoothstep(float(1).sub(line).sub(edge), float(1).sub(line).add(edge), r);
     };
-    return max(ridge(1), ridge(2.1).mul(0.8));
+    return max(ridge(1), ridge(2.1).mul(smoothstep(-0.6, 0.4, kind).mul(0.9)));
   };
-  // (read once, between the drifts, which glides without jumps: the restarting drift has no weight)
-  const middle = mix(drift.b, drift.a, drift.blend);
-  const threads = at(middle);
+  // (and broken here and there, so it's torn lace rather than a maze of unbroken lines)
+  const threads = at(middle).mul(smoothstep(-0.55, 0.1, snoise(middle.mul(THREADS * 1.9).add(2.2))));
   // gathered into patches with open water between, more of it covered the fresher the foam; thick foam (fresh
   // white water) thickens the threads into a dense web with holes, never a flat sheet
-  const m = middle.mul(THREADS);
   const clumps = snoise(m.mul(0.11))
     .mul(0.6)
     .add(snoise(m.mul(0.27).add(3.3)).mul(0.4));
   // (however thick, a third of it stays open: white water is always torn)
   const held = smoothstep(0, 0.3, clumps.add(amount.mul(0.9)).sub(0.55));
   // (fresh, thick foam fills in between the threads, but always with holes: lace, never a sheet)
-  const fill = smoothstep(0.5, 0.9, amount.mul(held)).mul(smoothstep(-0.2, 0.3, snoise(m.mul(0.9))));
+  // a wave's front, just broken, is thick white water torn by small holes, and its ragged edge trails threads
+  const holes = snoise(m.mul(0.9));
+  // (its edge torn by noise, so it never shows the triangles the breaking is interpolated across)
+  const torn = snoise(m.mul(0.45).add(7.7)).mul(0.2).add(holes.mul(0.08));
+  const front = smoothstep(0.12, 0.42, fresh.add(torn)).mul(
+    smoothstep(-0.6, -0.2, holes.add(clumps.mul(0.3))),
+  );
+  const fill = max(smoothstep(0.5, 0.9, amount.mul(held)).mul(smoothstep(-0.2, 0.3, holes)), front);
   // and old foam the backwash drags out to sea is drawn out into long fine streaks behind the white water
   const streak = (obj: Vec3) => {
     const q = obj.mul(THREADS * 2.2);
@@ -193,7 +204,7 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float
     .mul(float(1).sub(smoothstep(0.25, 0.55, amount)))
     .mul(smoothstep(-0.3, 0.3, clumps.add(0.2)));
   const streaks = streak(middle).mul(trailing).mul(0.8);
-  return max(max(threads.mul(held), fill.mul(0.7)).mul(smoothstep(0.03, 0.2, amount)), streaks);
+  return max(max(threads.mul(held), fill.mul(0.9)).mul(smoothstep(0.03, 0.2, amount)), streaks);
 }
 
 /** Whitecaps follow steep travelling crests; simulated foam persists and drifts after impacts. */
@@ -206,6 +217,7 @@ export function oceanFoam(
   u: DeformUniforms,
   shore?: Float,
   along?: Vec3,
+  fresh: Float = float(0),
 ): Float {
   // the two drifted patterns crossfaded, keeping the noise's contrast through the blend
   const wa = drift.blend;
@@ -225,7 +237,7 @@ export function oceanFoam(
     // the surf zone's white water: threads and streaks the waves leave and the water drags, in place of the open
     // sea's round-bubbled lace
     const zone = float(1).sub(smoothstep(SURF_FADE * 0.6, SURF_FADE * 1.3, shore));
-    foam = max(foam.mul(float(1).sub(zone.mul(0.85))), foamThreads(drift, along, simulated).mul(zone));
+    foam = max(foam.mul(float(1).sub(zone.mul(0.85))), foamThreads(drift, along, simulated, fresh).mul(zone));
     sprayFoam = sprayFoam.mul(float(1).sub(zone));
   }
   return max(clamp(foam.mul(u.uOceanFoam), 0, 1), sprayFoam);

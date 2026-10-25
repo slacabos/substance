@@ -38,8 +38,10 @@ import {
   varyingProperty,
   vec2,
   vec3,
+  vec4,
   vertexIndex,
   cameraFar,
+  cameraViewMatrix,
   clamp,
   dot,
   cameraNear,
@@ -55,6 +57,7 @@ import { OCEAN_DEPTH } from '../core/oceanFFT';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
 import { LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
 import { snoise } from '../nodes/noise';
+import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
 import { baseN, baseR } from '../nodes/shape';
@@ -70,6 +73,8 @@ const SHALLOW_ABSORB = vec3(0.3, 0.7, 0.76);
 /** The colour shallow coastal water scatters back (linear), before the deep sea's own colour takes over. */
 const SHALLOW_SCATTER = vec3(0.02, 0.2, 0.25);
 const ABSORB_DISTANCE = 0.01;
+/** How bright the coast's foam's key light is, as the land's (KEY_STRENGTH in materials/oceanShores.ts). */
+const FOAM_KEY = 1.4;
 /** How much higher water standing on the coast's sand is drawn than the sim has it, orb radii. */
 const WATER_LIFT = 0.0006;
 /** Over how much water between it and the sand behind (view distance, orb radii) the water's edge fades in. */
@@ -183,14 +188,16 @@ export function createDeformMaterial(
   const objA = varyingProperty('vec3', 'vObjA');
   const objB = varyingProperty('vec3', 'vObjB');
   // the coast's values, packed in one varying (WebGPU passes at most 16 from vertex to fragment): distance to
-  // shore, the water's column, and the depth its colour goes by
-  const coast = varyingProperty('vec3', 'vCoast');
+  // shore, the water's column, the depth its colour goes by, and the surf's breaking
+  const coast = varyingProperty('vec4', 'vCoast');
   // and which way the water runs, in the vertex's drift basis (driftBasis)
   const current = varyingProperty('vec2', 'vCurrent');
   const shore = coastal ? coast.x : undefined;
   // how deep the sim's own water stands here: over dry ground it's negative (its surface sinks under the ground)
   const column = coastal ? coast.y : undefined;
   const tintDepth = coastal ? coast.z : undefined;
+  // and how hard the surf is breaking here this moment: a wave's fresh white front
+  const impact = coastal ? coast.w : float(0);
   material.positionNode = Fn(() => {
     const p = normalize(positionGeometry);
     const surface = oceanDeform(p, uniforms, waves, spacing, coastal);
@@ -232,10 +239,11 @@ export function createDeformMaterial(
     // would ring the shallows in bands of colour
     if (coastal)
       coast.assign(
-        vec3(
+        vec4(
           attribute('oceanShoreData', 'vec4').w,
           depth,
           sim.ground.element(vertexIndex).x.add(simHeight.mul(0.3)),
+          simulated.w,
         ),
       );
     const lift = coastal ? float(WATER_LIFT) : float(0);
@@ -267,6 +275,7 @@ export function createDeformMaterial(
     uniforms,
     shore,
     coastal ? alongCurrent : undefined,
+    impact,
   );
   // Where the water meets the sand: how far the sand behind lies from it (from the depth buffer, so along the
   // sand's own contours rather than the water's triangles). Over its last couple of millimetres the water fades
@@ -312,7 +321,22 @@ export function createDeformMaterial(
     : color;
   material.colorNode = mix(vec3(1), water, max(body.mul(meets), foam));
   material.roughnessNode = roughness;
-  material.emissiveNode = oceanSunLight(normal, wave, foam, roughness, uniforms).mul(max(meets, foam));
+  // (the coast's foam takes the same steady key light as its sand, nodes/shore.ts, so white water reads white in
+  // every setting rather than turning the night sky's blue-grey beside bright sand)
+  const sun = uniforms.uSunColor as unknown as Node<'vec3'>;
+  const keyColor = sun.div(max(max(sun.x, sun.y), max(sun.z, 1e-3))).mul(FOAM_KEY);
+  const keyDir = normalize(
+    cameraViewMatrix.mul(vec4(SAND_KEY_LIGHT.x, SAND_KEY_LIGHT.y, SAND_KEY_LIGHT.z, 0)).xyz,
+  );
+  const foamKey = coastal
+    ? keyColor
+        .mul(max(dot(normal, keyDir), 0).mul(0.6).add(0.4))
+        .mul(foam)
+        .mul(1 / Math.PI)
+    : vec3(0);
+  material.emissiveNode = oceanSunLight(normal, wave, foam, roughness, uniforms)
+    .mul(max(meets, foam))
+    .add(foamKey);
   material.specularIntensityNode = mix(float(0.75), float(0.08), foam).mul(max(meets, foam));
   // (foam stays opaque white even at the very edge)
   material.transmissionNode = mix(mix(float(1), mix(float(0.97), float(0.22), body), meets), float(0), foam);
