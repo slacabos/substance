@@ -18,7 +18,7 @@ import { SAND_KEY_LIGHT, sandSurface } from '../nodes/sand';
 import { baseN, baseR } from '../nodes/shape';
 import { createDeformGeometry } from './deform';
 import { SandField } from './sandField';
-import { SandGrains } from './sandGrains';
+import { PER_THROW, SandGrains } from './sandGrains';
 import type { SettingLook } from '../scene/settings';
 import type { FrameContext, Readout, Substance } from './types';
 
@@ -33,8 +33,12 @@ const HAND = {
   press: { rate: 0.03, most: 0.03, sharpness: 220, after: 0.2 },
   /** A drag ploughs a ridge this high per radian per second of hand speed, at most `most`. */
   plough: { gain: 0.006, most: 0.008, sharpness: 160 },
-  /** A drag faster than this, radians per second, throws grains (all of a throw's at twice it). */
-  flick: { speed: 2.5 },
+  /**
+   * A drag faster than this, radians per second, throws grains (all of a throw's at twice it), off at `throwSpeed`
+   * times the hand's speed (at most `fastest`, orb radii per second), so they arc a short way off the surface; one
+   * gesture throws at most `most` grains, however long it goes on.
+   */
+  flick: { speed: 3.5, throwSpeed: 0.1, fastest: 0.6, most: 160 },
 } as const;
 
 /**
@@ -64,6 +68,8 @@ export class Sand implements Substance {
   private pressing = false;
   private held = 0;
   private pressed = 0;
+  /** Grains this gesture has thrown. */
+  private thrown = 0;
 
   constructor(renderer: WebGPURenderer, coarse: boolean) {
     const geometry = createDeformGeometry(true, oceanDetail(coarse));
@@ -125,6 +131,7 @@ export class Sand implements Substance {
     this.pressing = true;
     this.held = 0;
     this.pressed = 0;
+    this.thrown = 0;
     this.field.add({ dir: [dir.x, dir.y, dir.z], amount: HAND.tap.depth, sharpness: HAND.tap.sharpness });
   }
 
@@ -144,13 +151,14 @@ export class Sand implements Substance {
       sharpness: HAND.plough.sharpness,
       motion: [this.motion.x, this.motion.y, this.motion.z],
     });
-    // a flick throws grains along it
-    if (speed > HAND.flick.speed) {
-      const share = Math.min(1, (speed - HAND.flick.speed) / HAND.flick.speed);
-      this.grains.throw(
+    // a flick throws a little sand along it
+    const { flick } = HAND;
+    if (speed > flick.speed && this.thrown < flick.most) {
+      const share = Math.min((speed - flick.speed) / flick.speed, (flick.most - this.thrown) / PER_THROW);
+      this.thrown += this.grains.throw(
         [dir.x, dir.y, dir.z],
         [this.motion.x, this.motion.y, this.motion.z],
-        speed * 0.25,
+        Math.min(flick.fastest, speed * flick.throwSpeed),
         share,
       );
     }

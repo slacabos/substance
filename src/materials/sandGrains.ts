@@ -10,7 +10,6 @@ import {
 import {
   atomicAdd,
   cameraProjectionMatrix,
-  clamp,
   cross,
   dot,
   exp,
@@ -23,11 +22,14 @@ import {
   int,
   length,
   max,
+  min,
   modelViewMatrix,
   normalize,
   positionGeometry,
   Return,
+  screenSize,
   select,
+  smoothstep,
   storage,
   uint,
   uniform,
@@ -46,7 +48,7 @@ type Vec4Buffer = StorageBufferNode<'vec4'>;
 
 /** Throws waiting for the next update, and the most grains one throws. */
 const THROWS = 4;
-const PER_THROW = 96;
+export const PER_THROW = 32;
 /** Sand one grain carries, orb radii cubed: a flick's worth of grains is about a tap's crater of sand. */
 const GRAIN_VOLUME = 5e-7;
 /** Radial gravity on grains and air drag, as the splashes (core/oceanFluid.ts). */
@@ -54,8 +56,9 @@ const GRAVITY = 1.3;
 const DRAG = 0.3;
 /** Seconds a grain may fly before it comes down wherever it is. */
 const MOST_LIFE = 4;
-/** Seconds of motion a grain's streak shows. */
-const STREAK_TIME = 0.03;
+/** Seconds of motion a grain's streak shows, and the longest it gets for its width: a blur, not a rice grain. */
+const STREAK_TIME = 0.012;
+const MOST_STRETCH = 1.8;
 
 /**
  * Grains of sand thrown by a flick: each takes its sand from the bed under it as it leaves and gives it back where
@@ -154,10 +157,15 @@ export class SandGrains {
       p.assign(vec4(0, 0, 1, 0));
     })().compute(n);
 
-    // small streaks along their motion, in the sand's colour, fading in the last moments
+    // Specks of sand: round dots, smeared a little along their motion when fast (never longer than MOST_STRETCH
+    // times their width). Grains far finer than a pixel are drawn a pixel wide but fainter, as much as they'd cover,
+    // so a spray of them reads as a fine dust rather than a shower of rice.
     const posView = storage(pos.value, 'vec4', n).toReadOnly() as Vec4Buffer;
     const velView = storage(vel.value, 'vec4', n).toReadOnly() as Vec4Buffer;
     const corner = varyingProperty('vec2', 'vGrainCorner');
+    // how much longer than wide the speck is, and how much of its pixel it covers
+    const shape = varyingProperty('vec2', 'vGrainShape');
+    const tint = varyingProperty('vec3', 'vGrainTint');
     const material = new MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: DoubleSide });
     material.vertexNode = Fn(() => {
       const i = instanceIndex;
@@ -168,17 +176,53 @@ export class SandGrains {
       const speed = length(flow);
       const along = select(speed.greaterThan(1e-5), flow.div(max(speed, 1e-5)), vec2(1, 0));
       const across = vec2(along.y.negate(), along.x);
-      const size = g.w.mul(select(p.w.greaterThan(0), float(1), float(0)));
+      // a pixel, in view units at the grain's depth
+      const clip = cameraProjectionMatrix.mul(at);
+      const pixel = at.z
+        .negate()
+        .mul(2)
+        .div(
+          cameraProjectionMatrix
+            .mul(vec4(0, 1, at.z, 0))
+            .y.max(1e-6)
+            .mul(screenSize.y),
+        );
+      const flying = select(p.w.greaterThan(0), float(1), float(0));
+      const radius = max(g.w, pixel.mul(0.75));
+      const reach = min(radius.add(speed.mul(STREAK_TIME)), radius.mul(MOST_STRETCH));
+      shape.assign(vec2(reach.div(radius), min(float(1), g.w.div(radius)).pow(2)));
       corner.assign(positionGeometry.xy);
+      const r = hash(i.add(n * 3));
+      tint.assign(
+        select(
+          r.lessThan(0.1),
+          vec3(0.3, 0.27, 0.24),
+          select(
+            r.lessThan(0.16),
+            vec3(0.86, 0.8, 0.68),
+            vec3(0.72, 0.6, 0.42).mul(
+              hash(i.add(n * 5))
+                .mul(0.35)
+                .add(0.8),
+            ),
+          ),
+        ),
+      );
       const offset = along
-        .mul(positionGeometry.x.mul(size.add(speed.mul(STREAK_TIME))))
-        .add(across.mul(positionGeometry.y.mul(size)));
-      return cameraProjectionMatrix.mul(at.add(vec4(offset, 0, 0)));
+        .mul(positionGeometry.x.mul(reach))
+        .add(across.mul(positionGeometry.y.mul(radius)))
+        .mul(flying);
+      return clip.add(cameraProjectionMatrix.mul(vec4(offset, 0, 0)));
     })();
     material.colorNode = Fn(() => {
-      const side = float(1).sub(corner.y.mul(corner.y));
-      const alpha = side.mul(clamp(float(1).sub(corner.x.abs()), 0, 1).mul(0.6).add(0.4));
-      return vec4(vec3(0.72, 0.6, 0.42), alpha.mul(0.9));
+      // a capsule: distance from the segment along its middle, in radii
+      const stretch = shape.x;
+      const x = max(corner.x.abs().mul(stretch).sub(stretch.sub(1)), 0);
+      const d = length(vec2(x, corner.y));
+      const alpha = float(1)
+        .sub(smoothstep(0.55, 1, d))
+        .mul(shape.y);
+      return vec4(tint, alpha.mul(0.95));
     })();
     const quad = new PlaneGeometry(2, 2);
     const geometry = new InstancedBufferGeometry();
@@ -191,12 +235,14 @@ export class SandGrains {
 
   /**
    * A flick at unit direction d, along unit tangent m at `speed` (orb radii per second): `share` (0 to 1) of a
-   * throw's grains fly.
+   * throw's grains fly. Returns how many.
    */
-  throw(d: readonly number[], m: readonly number[], speed: number, share: number): void {
+  throw(d: readonly number[], m: readonly number[], speed: number, share: number): number {
     const slot = this.pending++ % THROWS;
-    this.throws[slot]!.set(d[0]!, d[1]!, d[2]!, Math.min(1, share));
+    const count = Math.min(1, share);
+    this.throws[slot]!.set(d[0]!, d[1]!, d[2]!, count);
     this.throwMotion[slot]!.set(m[0]!, m[1]!, m[2]!, speed);
+    return Math.ceil(count * PER_THROW);
   }
 
   reset(): void {
