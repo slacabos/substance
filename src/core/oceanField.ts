@@ -2,7 +2,14 @@ import { Vector3, type BufferGeometry } from 'three';
 import { OCEAN_DEPTH } from './oceanFFT';
 import { buildDirectionLookup } from './oceanLookup';
 import { oceanMesh } from './oceanMesh';
-import { shelfLag, SHORE_SITES, shoreDistance, shoreGroundHeight, shoreSiteDistance } from './oceanShores';
+import {
+  shelfLag,
+  SHORE_SITES,
+  SHORE_WATERLINE,
+  shoreDistance,
+  shoreGroundHeight,
+  shoreSiteDistance,
+} from './oceanShores';
 import { vertexAreas } from './shallowWater';
 import { buildWaveKernel, type WaveKernel } from './waveKernel';
 
@@ -12,7 +19,7 @@ export interface OceanField {
   spacing: number;
   positions: Float32Array;
   neighbors: Uint32Array;
-  /** 1 for water, 0 for land. */
+  /** 1 where the sea starts, 0 on land (which wets as water reaches it). */
   wet: Uint8Array;
   /** Angular distance from the shore (negative on land); 1 everywhere on the open ocean. */
   shoreDistance: Float32Array;
@@ -22,7 +29,7 @@ export interface OceanField {
   shoreSite: Float32Array;
   /** How far behind a crest falls crossing the shelf to here (shelfLag, core/oceanShores.ts). */
   shelfLag: Float32Array;
-  /** Still-water depth. */
+  /** Still-water depth, negative where the ground stands above the sea. */
   depth: Float32Array;
   areas: Float32Array;
   kernel: WaveKernel;
@@ -80,18 +87,14 @@ export function createOceanField(geometry: BufferGeometry, coastal: boolean): Oc
       });
       lag[i] = shelfLag(distance[i]!);
       wet[i] = distance[i]! > 0 ? 1 : 0;
-      // the seabed rises toward the bank; the open sea keeps the ocean's depth
+      // The seabed rises toward the bank and the open sea keeps the ocean's depth; land stands above the sea
+      // (negative depth), dry until water reaches it. Every triangle stays, so water can spread wherever the
+      // ground is dug below it.
+      const ground = shoreGroundHeight(dir.fromArray(positions, i * 3));
       depth[i] = wet[i]
-        ? Math.min(OCEAN_DEPTH, Math.max(0.002, -shoreGroundHeight(dir.fromArray(positions, i * 3))))
-        : 0;
+        ? Math.min(OCEAN_DEPTH, Math.max(0.002, -ground))
+        : Math.min(-SHORE_WATERLINE, -ground);
     }
-    const original = geometry.getIndex()!;
-    const kept: number[] = [];
-    for (let i = 0; i < original.count; i += 3) {
-      const [a, b, c] = [original.getX(i), original.getX(i + 1), original.getX(i + 2)];
-      if (wet[a] || wet[b] || wet[c]) kept.push(a, b, c);
-    }
-    geometry.setIndex(kept);
   }
 
   const forceGrain = new Float32Array(count);
@@ -114,7 +117,12 @@ export function createOceanField(geometry: BufferGeometry, coastal: boolean): Oc
     shelfLag: lag,
     depth,
     areas: vertexAreas(mesh),
-    kernel: buildWaveKernel(positions, neighbors, depth),
+    // land holds no waves of its own; its operator is the shallowest water's
+    kernel: buildWaveKernel(
+      positions,
+      neighbors,
+      depth.map((d) => Math.max(d, 0.002)),
+    ),
     lookup: buildDirectionLookup(positions),
     forceGrain,
     foamGrain,

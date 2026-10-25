@@ -116,8 +116,15 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs, sea: Float) {
   return { cover, depth, foam, soaked };
 }
 
-/** The shores' surface: colour, roughness, and a bumped view-space normal, with the swash on them. */
-export function shoreSurface(surf: SurfInputs, sea: Float): { color: Vec3; roughness: Float; normal: Vec3 } {
+/**
+ * The shore's sand: `sea` is the sea's own height at this point's foot on the shoreline (for the swash), `dug` how
+ * far the hand has dug (negative) or piled the sand here; dug sand is damp and darker, like the sand orb's.
+ */
+export function shoreSurface(
+  surf: SurfInputs,
+  sea: Float,
+  dug: Float = float(0),
+): { color: Vec3; roughness: Float; normal: Vec3 } {
   const wet = attribute('terrain', 'float');
   const p = normalize(positionGeometry);
 
@@ -126,9 +133,11 @@ export function shoreSurface(surf: SurfInputs, sea: Float): { color: Vec3; rough
   const tone = grain.tone;
   const height = grain.height.mul(float(1).sub(wet.mul(0.7)));
   // height above the still sea, as the land mesh was built (it follows the cube morph like the water)
+  // (the beach as built: water in holes the hand digs is the sim's, drawn by the sea's own surface)
   const above = length(positionGeometry).sub(baseR(p)).sub(SHORE_WATERLINE);
   const sw = swashAt(p, above, surf, sea);
-  const soaked = max(wet, sw.soaked);
+  // sand turned up from underneath is damp
+  const soaked = max(max(wet, sw.soaked), smoothstep(0.0005, 0.005, abs(dug)).mul(0.8));
   // wet sand is darker and glossy; under the swash, clear water over it, and white foam on top
   const ground = attribute('color', 'vec3')
     .mul(tone)

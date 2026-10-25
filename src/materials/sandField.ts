@@ -18,6 +18,7 @@ import {
   min,
   select,
   sign,
+  smoothstep,
   sqrt,
   storage,
   tan,
@@ -71,7 +72,12 @@ export class SandField {
   private readonly mean = uniform(0);
   /** 0 to 1: a shake (a hard spin) lowers the repose angle for a moment, setting slopes near it sliding. */
   private readonly shake = uniform(0);
-  /** Bed height, wetness, how disturbed it looks (1 fresh to 0 settled); ping-ponged by the relaxation. */
+  /** The starting bed, for a reset. */
+  private readonly start: Vec4Buffer;
+  /**
+   * Bed height (change from the start), wetness, how disturbed it looks (1 fresh to 0 settled), and the caller's
+   * extra; ping-ponged by the relaxation.
+   */
   private readonly beds: [Vec4Buffer, Vec4Buffer];
   /** The bed's gradient on the unit sphere, for normals. */
   private readonly slope: Vec4Buffer;
@@ -90,7 +96,17 @@ export class SandField {
   private readonly slopeNode: ComputeNode;
   private readonly resetNode: ComputeNode;
 
-  constructor(renderer: WebGPURenderer, geometry: BufferGeometry) {
+  /**
+   * `initial(i)`, if given, sets each vertex's starting [wetness, extra] (the extra is carried untouched in the
+   * bed's w, for a caller's own use); `wash` (per second) smooths sand that's wet, as water running over it would
+   * (smoothSand in core/sand.ts), 0 for none.
+   */
+  constructor(
+    renderer: WebGPURenderer,
+    geometry: BufferGeometry,
+    initial?: (i: number) => readonly [number, number],
+    wash = 0,
+  ) {
     this.renderer = renderer;
     const mesh = sandMesh(oceanMesh(geometry));
     this.mesh = mesh;
@@ -107,7 +123,18 @@ export class SandField {
     this.neighbor = neighbor;
     this.lookup = instancedArray(buildDirectionLookup(mesh.positions), 'uint') as StorageBufferNode<'uint'>;
     this.landings = instancedArray(n, 'int').toAtomic() as StorageBufferNode<'int'>;
-    this.beds = [instancedArray(n, 'vec4') as Vec4Buffer, instancedArray(n, 'vec4') as Vec4Buffer];
+    const start = new Float32Array(n * 4);
+    if (initial)
+      for (let i = 0; i < n; i++) {
+        const [wet, extra] = initial(i);
+        start[i * 4 + 1] = wet;
+        start[i * 4 + 3] = extra;
+      }
+    this.start = instancedArray(start, 'vec4') as Vec4Buffer;
+    this.beds = [
+      instancedArray(start.slice(), 'vec4') as Vec4Buffer,
+      instancedArray(start.slice(), 'vec4') as Vec4Buffer,
+    ];
     this.slope = instancedArray(n, 'vec4') as Vec4Buffer;
     const events = uniformArray(this.events, 'vec4') as UniformArrayNode<'vec4'>;
     const shapes = uniformArray(this.eventShapes, 'vec4') as UniformArrayNode<'vec4'>;
@@ -137,7 +164,7 @@ export class SandField {
       const bed = max(state.x.add(moved), -SAND.layer);
       // freshly moved sand looks it
       const disturbed = min(state.z.add(abs(moved).mul(400)), 1);
-      state.assign(vec4(bed, state.y, disturbed, 0));
+      state.assign(vec4(bed, state.y, disturbed, state.w));
     })().compute(n);
 
     // slideBetween (core/sand.ts), gathered from each end
@@ -179,11 +206,21 @@ export class SandField {
                   .mul(w.w.div(v.w.add(w.w))),
               );
             });
+            if (wash > 0) {
+              // water running over wet sand evens it out, a pair at a time
+              const both = smoothstep(0.4, 0.6, min(here.y, there.y));
+              change.addAssign(
+                drop
+                  .mul(both)
+                  .mul(this.dt.mul(wash / RELAX))
+                  .mul(w.w.div(v.w.add(w.w))),
+              );
+            }
           });
         });
         const settled = here.z.mul(exp(this.dt.mul(-1 / (SETTLE_TIME * RELAX))));
         const disturbed = min(settled.add(abs(change).mul(400)), 1);
-        this.beds[1 - from]!.element(i).assign(vec4(here.x.add(change), here.y, disturbed, 0));
+        this.beds[1 - from]!.element(i).assign(vec4(here.x.add(change), here.y, disturbed, here.w));
       })().compute(n);
     this.relaxNodes = [relax(0), relax(1)];
 
@@ -217,10 +254,15 @@ export class SandField {
 
     this.resetNode = Fn(() => {
       atomicStore(this.landings.element(instanceIndex), int(0));
-      this.beds[0].element(instanceIndex).assign(vec4(0));
-      this.beds[1].element(instanceIndex).assign(vec4(0));
+      this.beds[0].element(instanceIndex).assign(this.start.element(instanceIndex));
+      this.beds[1].element(instanceIndex).assign(this.start.element(instanceIndex));
       this.slope.element(instanceIndex).assign(vec4(0));
     })().compute(n);
+  }
+
+  /** The bed as it stands, for other passes (OceanSim's) to read. */
+  get bed(): Vec4Buffer {
+    return this.beds[0];
   }
 
   /** Read-only views for rendering, by vertex index: the bed (height, wetness, disturbance) and its gradient. */

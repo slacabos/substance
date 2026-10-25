@@ -3,8 +3,18 @@ import { MeshStandardNodeMaterial } from 'three/webgpu';
 import { SHORE_SITES, shoreElevation, shoreNoise, shoreRadius, shoreSiteDistance } from '../core/oceanShores';
 import { shoreSurface } from '../nodes/shore';
 import type { SurfInputs } from '../nodes/surf';
-import { seaHeightAt } from '../nodes/oceanSurface';
-import { attribute, Fn, normalize, positionGeometry, positionLocal, varyingProperty } from 'three/tsl';
+import { blendedAt, seaHeightAt } from '../nodes/oceanSurface';
+import {
+  attribute,
+  float,
+  Fn,
+  normalize,
+  normalLocal,
+  positionGeometry,
+  positionLocal,
+  varyingProperty,
+  vec3,
+} from 'three/tsl';
 import type { StorageBufferNode } from 'three/webgpu';
 
 const SAND = new Color('#c4ab80');
@@ -31,7 +41,12 @@ export class OceanShores {
   private readonly elevations: Float32Array;
   private morph = Number.NaN;
 
-  constructor(coarse: boolean, surf: SurfInputs, sea: SeaBuffers) {
+  constructor(
+    coarse: boolean,
+    surf: SurfInputs,
+    sea: SeaBuffers,
+    sand?: { bed: StorageBufferNode<'vec4'>; slope: StorageBufferNode<'vec4'> },
+  ) {
     const skirtRings = 8;
     const detail = coarse ? 0.5 : 1;
     const positions: number[] = [];
@@ -161,12 +176,27 @@ export class OceanShores {
     const material = new MeshStandardNodeMaterial();
     // the sea's own height at each vertex's foot on the shoreline, so the hand's waves run up the beach
     const seaAtFoot = varyingProperty('float', 'vSeaAtFoot');
+    // and how far the sand has been dug or piled here (the sim's sand bed, blended onto this finer mesh)
+    const dug = varyingProperty('float', 'vDug');
     material.positionNode = Fn(() => {
       const swashFoot = attribute('swash', 'vec4');
-      seaAtFoot.assign(seaHeightAt(normalize(normalize(positionGeometry).add(swashFoot.xyz)), sea));
-      return positionLocal;
+      const p = normalize(positionGeometry);
+      seaAtFoot.assign(seaHeightAt(normalize(p.add(swashFoot.xyz)), sea));
+      const change = sand ? blendedAt(p, sea, (i) => sand.bed.element(i).x) : float(0);
+      dug.assign(change);
+      if (sand) {
+        // the dug relief's slope, blended like the height, tilts the land's normal (a bump from the interpolated
+        // height would be flat per triangle, faceted)
+        const slope = vec3(
+          blendedAt(p, sea, (i) => sand.slope.element(i).x),
+          blendedAt(p, sea, (i) => sand.slope.element(i).y),
+          blendedAt(p, sea, (i) => sand.slope.element(i).z),
+        );
+        normalLocal.assign(normalize(normalLocal.sub(slope)));
+      }
+      return positionLocal.add(p.mul(change));
     })();
-    const surface = shoreSurface(surf, seaAtFoot);
+    const surface = shoreSurface(surf, seaAtFoot, dug);
     material.colorNode = surface.color;
     material.roughnessNode = surface.roughness;
     material.normalNode = surface.normal;

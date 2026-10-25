@@ -46,6 +46,7 @@ import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { driftBasis, windAt } from '../nodes/oceanSurface';
 import { surfWave, type SurfInputs } from '../nodes/surf';
+import { SandField } from './sandField';
 import { oceanWaveFoam, type OceanWaveFields } from '../nodes/oceanWaves';
 
 /** A push on the water: a tap or release (no motion), or a drag step (with motion along the surface). */
@@ -89,6 +90,14 @@ const MAX_STEPS = 4;
 const EVENTS = 4;
 /** Fixed-point scale for summing the sea's mean height: 1e-10 resolution, room for means up to 0.2. */
 const VOLUME_FIXED = 1e10;
+/** The same for the wet share of the orb's area. */
+const AREA_FIXED = 1e9;
+/** Still depth from which the sea always counts as wet (isWet in core/shallowWater.ts). */
+const DEEP_WATER = 0.025;
+/** How fast water running over wet sand smooths it (SandField's wash), per second. */
+const SAND_WASH = 0.4;
+/** How far under dry ground the water's surface is drawn, so it never shows through the sand. */
+const DRY_SINK = 0.02;
 /** How far downwind of the continent's middle the swell's target sits, radians. */
 const SWELL_OFFSET = 0.8;
 /**
@@ -201,6 +210,11 @@ export class OceanSim {
   private readonly resetNodes: ComputeNode[];
   private parity = 0;
   private readonly wetArea: number;
+  /** The water there should be: a mean column over the orb (sumVolume's units). */
+  private readonly water = uniform(0);
+  /** The coast's diggable sand, which sets the water's depth; null on the open ocean. */
+  readonly sand: SandField | null;
+  private readonly syncNodes: [ComputeNode, ComputeNode] | null;
 
   constructor(
     renderer: WebGPURenderer,
@@ -215,6 +229,22 @@ export class OceanSim {
     this.count = field.count;
     this.spacing = field.spacing;
     this.wetArea = field.areas.reduce((sum, area, i) => sum + (field.wet[i] ? area : 0), 0);
+    // the water the sea holds at rest, as a mean column over the whole orb
+    const restWater = field.areas.reduce((sum, area, i) => sum + Math.max(0, field.depth[i]!) * area, 0);
+    this.water.value = restWater / field.areas.reduce((sum, area) => sum + area, 0);
+    // The coast's ground is sand the hand can dig (materials/sandField.ts), damp under and near the water, washed
+    // smooth where it's wet; its bed's w carries each vertex's starting depth for the sync below.
+    this.sand = coastal
+      ? new SandField(
+          renderer,
+          geometry,
+          (i) => {
+            const depth = field.depth[i]!;
+            return [depth > 0 ? 1 : depth > -0.008 ? 0.5 : 0, depth];
+          },
+          SAND_WASH,
+        )
+      : null;
     this.uniforms.wind.value = tuning.windSpeed;
     this.uniforms.amplitude.value = tuning.amplitude;
     this.swell = shoreSwell(tuning.peakWavelength);
@@ -310,7 +340,27 @@ export class OceanSim {
     this.rescaleNodes = [rescaleHistory(0), rescaleHistory(1)];
     const events = uniformArray(this.events, 'vec4') as UniformArrayNode<'vec4'>;
     const eventShapes = uniformArray(this.eventShapes, 'vec4') as UniformArrayNode<'vec4'>;
-    const wetAt = (j: Node<'uint'>) => ground.element(j).x.greaterThan(0);
+    // Water stands at j: a column thicker than SURFACE.dryColumn, or deep water at all (isWet in
+    // core/shallowWater.ts). A pair exchanges water if either is wet and that water stands above the other's
+    // ground; a dry neighbour higher than the water is a wall.
+    // (Deep water counts only out at sea, where it started: a hole dug deep into the land is dry until filled.)
+    const wetIn = (from: number) => (j: Node<'uint'>) => {
+      const g = ground.element(j);
+      return g.x
+        .greaterThanEqual(DEEP_WATER)
+        .and(g.y.greaterThan(0))
+        .or(g.x.add(heights[from]!.element(j).x).greaterThan(SURFACE.dryColumn));
+    };
+    const linkedIn = (from: number) => (i: Node<'uint'>, j: Node<'uint'>) => {
+      const wet = wetIn(from);
+      const hi = heights[from]!.element(i).x;
+      const hj = heights[from]!.element(j).x;
+      return j.notEqual(i).and(
+        wet(i)
+          .and(wet(j).or(hi.greaterThan(hj)))
+          .or(wet(j).and(wet(i).or(hj.greaterThan(hi)))),
+      );
+    };
     /**
      * The wind's slow surface drift at vertex j, dying away against the bank. The stored current is the waves'
      * alone, so a wind that turns or drops moves no water; this is added wherever the whole flow is wanted.
@@ -357,19 +407,15 @@ export class OceanSim {
       Fn(() => {
         const i = instanceIndex;
         const out = this.current[1 - from]!.element(i);
-        const g4 = ground.element(i);
-        If(g4.x.lessThanEqual(0), () => {
-          out.assign(vec4(0));
-          Return();
-        });
+        const linked = linkedIn(from);
         const v = this.vertex.element(i);
         const q = v.xyz;
         const hi = heights[from]!.element(i).x;
-        // grad h from edge differences; a dry neighbour adds no slope
+        // grad h from edge differences; an unlinked neighbour adds no slope
         const gradient = vec3(0).toVar();
         Loop({ start: 0, end: 6, type: 'uint' }, ({ i: k }) => {
           const j = this.neighbor.element(i.mul(6).add(k));
-          If(j.notEqual(i).and(wetAt(j)), () => {
+          If(linked(i, j), () => {
             const chord = this.vertex.element(j).xyz.sub(q);
             gradient.addAssign(
               chord.mul(
@@ -388,12 +434,6 @@ export class OceanSim {
           .sub(gradient.mul(u.dt.mul(SURFACE.gravity)).div(v.w))
           .add(stirAt(q).mul(u.dt.div(u.frameDt)))
           .toVar();
-        if (coastal) {
-          // currents running into the bank turn back
-          const normal = shore.element(i).xyz;
-          const incoming = min(dot(waves, normal), 0);
-          waves.subAssign(normal.mul(incoming.mul(float(1).sub(smoothstep(0, 0.06, g4.y))).mul(1.15)));
-        }
         waves.subAssign(q.mul(dot(waves, q)));
         const speed = length(waves);
         out.assign(vec4(waves.mul(min(speed, SURFACE.maxCurrent).div(max(speed, 1e-6))), 0));
@@ -404,10 +444,8 @@ export class OceanSim {
         const i = instanceIndex;
         const out = heights[1 - from]!.element(i);
         const g4 = ground.element(i);
-        If(g4.x.lessThanEqual(0), () => {
-          out.assign(vec4(0));
-          Return();
-        });
+        const wetAt = wetIn(from);
+        const linked = linkedIn(from);
         const state = heights[from]!.element(i).toVar();
         const h = state.x;
         const v = this.vertex.element(i);
@@ -439,9 +477,9 @@ export class OceanSim {
         Loop({ start: 0, end: 6, type: 'uint' }, ({ i: k }) => {
           const j = this.neighbor.element(i.mul(6).add(k));
           const other = heights[from]!.element(j);
-          const wet = wetAt(j);
+          const wet = linked(i, j);
           sumFoam.addAssign(select(wet, other.z, state.z));
-          If(j.notEqual(i).and(wet), () => {
+          If(wet, () => {
             const chord = this.vertex.element(j).xyz.sub(q);
             const otherWaves = this.current[1 - from]!.element(j).xyz;
             rise.addAssign(other.x.sub(other.y));
@@ -474,9 +512,10 @@ export class OceanSim {
             float(0),
           ),
         );
-        const force = pushAt(q, forceGrain).mul(u.dt).mul(u.dt);
+        // the hand only moves water that's there
+        const force = select(wetAt(i), pushAt(q, forceGrain), float(0)).mul(u.dt).mul(u.dt);
         // a hand's reach, shorter over the shallows (pushRoom in core/shallowWater.ts)
-        const reach = g4.x.mul(SURFACE.handReach / OCEAN_DEPTH);
+        const reach = max(g4.x, SURFACE.dryColumn).mul(SURFACE.handReach / OCEAN_DEPTH);
         const push = force.mul(clamp(float(1).sub(h.mul(sign(force)).div(reach)), 0, 1));
         const dt2g = u.dt.mul(u.dt).mul(SURFACE.gravity);
         const wave = h
@@ -488,10 +527,13 @@ export class OceanSim {
         // conservative smoothing between neighbours (SURFACE.shallowSmoothing)
         const smoothing = float(SURFACE.shallowSmoothing * meanArea).div(v.w);
         const shallow = h.sub(u.dt.mul(outflow).div(v.w)).add(spreadH.mul(smoothing)).add(push);
-        const mixShallow = float(1).sub(smoothstep(0.008, 0.025, g4.x));
+        // dug land is shallow water whatever its depth: its floor is the ground it was dug from
+        const mixShallow = select(g4.y.lessThan(0), float(1), float(1).sub(smoothstep(0.008, 0.025, g4.x)));
         // never below the bed in the shallows (surfaceFloor in core/shallowWater.ts)
         const floor = mix(float(-SURFACE.maxHeight), g4.x.negate(), mixShallow);
-        const next = clamp(mix(wave, shallow, mixShallow), floor, SURFACE.maxHeight).toVar();
+        // the cap is the sea's; dry land stands higher, and water on it may too
+        const ceiling = max(float(SURFACE.maxHeight), g4.x.negate().add(SURFACE.maxHeight));
+        const next = clamp(mix(wave, shallow, mixShallow), floor, ceiling).toVar();
 
         // whitecaps on steep, raised crests; foam rides the current, spreads a little and fades
         const steepness = sumDelta.div(6).mul(invSpacing);
@@ -551,8 +593,9 @@ export class OceanSim {
       Fn(() => {
         const i = instanceIndex;
         const g4 = ground.element(i);
-        If(g4.x.lessThanEqual(0), () => {
-          this.surface.element(i).assign(vec4(0));
+        // dry ground: the water's surface sinks out of sight under it
+        If(wetIn(final)(i).not(), () => {
+          this.surface.element(i).assign(vec4(heights[final]!.element(i).x.sub(DRY_SINK), 0, 0, 0));
           Return();
         });
         const q = this.vertex.element(i).xyz;
@@ -613,9 +656,8 @@ export class OceanSim {
     const finishSlope = (final: number) =>
       Fn(() => {
         const i = instanceIndex;
-        const g4 = ground.element(i);
-        If(g4.x.lessThanEqual(0), () => {
-          this.slope.element(i).assign(vec4(0));
+        If(wetIn(final)(i).not(), () => {
+          this.slope.element(i).assign(vec4(0, 0, 0, heights[final]!.element(i).x));
           Return();
         });
         const q = this.vertex.element(i).xyz;
@@ -623,7 +665,7 @@ export class OceanSim {
         const gradient = vec3(0).toVar();
         Loop({ start: 0, end: 6, type: 'uint' }, ({ i: k }) => {
           const j = this.neighbor.element(i.mul(6).add(k));
-          If(j.notEqual(i).and(wetAt(j)), () => {
+          If(j.notEqual(i).and(wetIn(final)(j)), () => {
             const chord = this.vertex.element(j).xyz.sub(q);
             const tangent = chord.sub(q.mul(dot(chord, q)));
             gradient.addAssign(
@@ -647,30 +689,36 @@ export class OceanSim {
       [momentum(0), heightStep(0)],
       [momentum(1), heightStep(1)],
     ];
-    // Water is kept exactly: once a frame the sea's mean height (area-weighted, in fixed point so it can be
-    // summed atomically) is taken back off everywhere. What it corrects is small (pushes fading near the bed,
-    // the bed itself, where the shallows hand over to iWave), but on a closed sea it would otherwise add up.
-    const volume = instancedArray(1, 'int').toAtomic();
-    const volumeScale = VOLUME_FIXED / this.wetArea;
+    // Water is kept exactly: once a frame the water there is (each wet column times its area, in fixed point so
+    // it can be summed atomically) is compared with what there should be, and the difference spread over the wet
+    // area. What it corrects is small (pushes fading near the bed, the floor, where the shallows hand over to
+    // iWave), but on a closed sea it would otherwise add up.
+    const volume = instancedArray(2, 'int').toAtomic();
+    const totalArea = field.areas.reduce((sum, area) => sum + area, 0);
     const clearVolume = Fn(() => {
       atomicStore(volume.element(0), int(0));
+      atomicStore(volume.element(1), int(0));
     })().compute(1);
     const sumVolume = (final: number) =>
       Fn(() => {
         const i = instanceIndex;
-        If(ground.element(i).x.greaterThan(0), () => {
-          const share = heights[final]!.element(i).x.mul(this.vertex.element(i).w).mul(volumeScale);
-          atomicAdd(volume.element(0), int(round(share)));
+        If(wetIn(final)(i), () => {
+          const share = this.vertex.element(i).w.div(totalArea);
+          const column = ground.element(i).x.add(heights[final]!.element(i).x);
+          atomicAdd(volume.element(0), int(round(column.mul(share).mul(VOLUME_FIXED))));
+          atomicAdd(volume.element(1), int(round(share.mul(AREA_FIXED))));
         });
       })().compute(n);
     const correctVolume = (final: number) =>
       Fn(() => {
         const i = instanceIndex;
-        If(ground.element(i).x.greaterThan(0), () => {
-          const mean = float(atomicLoad(volume.element(0))).div(VOLUME_FIXED);
+        If(wetIn(final)(i), () => {
+          const water = float(atomicLoad(volume.element(0))).div(VOLUME_FIXED);
+          const wetShare = max(float(atomicLoad(volume.element(1))).div(AREA_FIXED), 1e-6);
+          const excess = water.sub(this.water).div(wetShare);
           const state = heights[final]!.element(i);
-          state.x.subAssign(mean);
-          state.y.subAssign(mean);
+          state.x.subAssign(excess);
+          state.y.subAssign(excess);
         });
       })().compute(n);
     // Splash water: what the fluid took from each vertex as spray or brought back as it landed, raising or
@@ -682,7 +730,7 @@ export class OceanSim {
         const foam = atomicLoad(this.landings.element(i.mul(2).add(1))).toVar();
         atomicStore(this.landings.element(i.mul(2)), int(0));
         atomicStore(this.landings.element(i.mul(2).add(1)), int(0));
-        If(ground.element(i).x.lessThanEqual(0), () => {
+        If(wetIn(final)(i).not(), () => {
           Return();
         });
         const state = heights[final]!.element(i);
@@ -691,6 +739,26 @@ export class OceanSim {
         state.z.assign(clamp(state.z.add(landed), 0, 1));
         state.w.assign(clamp(state.w.add(landed.mul(0.35)), 0, 1));
       })().compute(n);
+    // The sand sets the depth. Where water stands, the surface keeps its column (sand dug out from under it
+    // leaves a dip that fills from round about); on dry ground the surface is the ground.
+    const sandBed = this.sand?.bed;
+    const sync = (final: number) =>
+      Fn(() => {
+        if (!sandBed) return;
+        const i = instanceIndex;
+        const bed = sandBed.element(i);
+        const depth = bed.w.sub(bed.x);
+        const g4 = ground.element(i);
+        const state = heights[final]!.element(i);
+        // dry ground is wet or not by its own height, as it now stands
+        const wet = wetIn(final)(i).and(state.x.greaterThan(g4.x.negate().add(SURFACE.dryColumn)));
+        // where water stands, digging deepens it: the surface stays and the ground falls away under it
+        const shift = select(wet, float(0), depth.negate().sub(state.x));
+        state.x.addAssign(shift);
+        state.y.addAssign(shift);
+        g4.x.assign(depth);
+      })().compute(n);
+    this.syncNodes = this.sand ? [sync(0), sync(1)] : null;
     this.finishNodes = [
       [land(0), clearVolume, sumVolume(0), correctVolume(0), finishSurface(0), finishSlope(0)],
       [land(1), clearVolume, sumVolume(1), correctVolume(1), finishSurface(1), finishSlope(1)],
@@ -800,6 +868,10 @@ export class OceanSim {
     }
     this.uniforms.pushMean.value = this.pushMean(dt);
     const passes: ComputeNode[] = [];
+    if (this.sand && this.syncNodes) {
+      this.sand.update(dt);
+      passes.push(this.syncNodes[this.parity]!);
+    }
     if (stepScale !== 1) passes.push(this.rescaleNodes[this.parity]!);
     for (let s = 0; s < steps; s++) {
       passes.push(...this.stepNodes[this.parity]!);

@@ -43,6 +43,11 @@ export const SURFACE = {
    * the depth), so it can't press the shallows below their bed; a push fades out as the water nears it.
    */
   handReach: 0.09,
+  /**
+   * A column thinner than this, orb radii, is dry. Ground above the sea (negative depth) is dry until water runs
+   * onto it; ground below it, dug out of a beach, fills when the sea can reach it.
+   */
+  dryColumn: 1e-4,
 } as const;
 
 /** How much of a push the water at height h over still depth `depth` still takes (see SURFACE.handReach). */
@@ -60,6 +65,17 @@ export function surfaceFloor(depth: number): number {
   return -(SURFACE.maxHeight * (1 - s) + depth * s);
 }
 
+/**
+ * Whether water stands at a vertex: a column thicker than SURFACE.dryColumn, or deep water at all (where the
+ * hand's troughs may dip below the bed, as iWave doesn't keep a column).
+ */
+export function isWet(depth: number, h: number): boolean {
+  return depth >= DEEP || depth + h > SURFACE.dryColumn;
+}
+
+/** Still depth from which water is always wet, where shallowWeight has handed it to iWave. */
+const DEEP = 0.025;
+
 /** How much of a vertex follows the shallow-water equations rather than iWave, by still-water depth. */
 export function shallowWeight(depth: number): number {
   const t = Math.min(1, Math.max(0, (depth - 0.008) / (0.025 - 0.008)));
@@ -76,7 +92,10 @@ export interface SurfaceMesh {
 export interface SurfaceField {
   /** Still-water depth per vertex. */
   depth: Float32Array;
-  /** 1 for water, 0 for land. */
+  /**
+   * 0 for a wall the water never crosses, 1 elsewhere: wherever depth + h > SURFACE.dryColumn is wet, so ground
+   * above the sea (negative depth) wets and dries as water reaches it.
+   */
   wet: Uint8Array;
   kernel: WaveKernel;
   /** Area each vertex stands for (see vertexAreas). */
@@ -141,6 +160,16 @@ export function stepSurface(
   let meanArea = 0;
   for (let i = 0; i < count; i++) meanArea += areas[i]! / count;
   const c = [0, 0, 0];
+  // Wet now: water stands on it. A pair of neighbours exchanges water if either is wet and that water stands
+  // above the other's ground (a dry neighbour higher than the water is a wall, as is a wall).
+  const wetNow = new Uint8Array(count);
+  for (let i = 0; i < count; i++) wetNow[i] = wet[i] === 1 && isWet(depth[i]!, h[i]!) ? 1 : 0;
+  const linked = (i: number, j: number) =>
+    j !== i &&
+    wet[i] === 1 &&
+    wet[j] === 1 &&
+    ((wetNow[i] === 1 && (wetNow[j] === 1 || h[i]! > h[j]!)) ||
+      (wetNow[j] === 1 && (wetNow[i] === 1 || h[j]! > h[i]!)));
 
   // Chord from i to j: unit direction into c, length returned. Its face in the dual hexagon is length/sqrt 3
   // long; using the chord (the same from both ends) is what makes each edge's flux cancel exactly.
@@ -151,14 +180,14 @@ export function stepSurface(
     return length;
   };
 
-  // momentum: u += dt (-g grad h - drag u); dry neighbours add no slope
+  // momentum: u += dt (-g grad h - drag u); unlinked neighbours add no slope
   const drag = Math.exp(-SURFACE.drag * dt);
   for (let i = 0; i < count; i++) {
     if (!wet[i]) continue;
     const gradient = [0, 0, 0];
     for (let k = 0; k < 6; k++) {
       const j = neighbors[i * 6 + k]!;
-      if (j === i || !wet[j]) continue;
+      if (!linked(i, j)) continue;
       const face = chord(i, j) / Math.sqrt(3);
       for (let d = 0; d < 3; d++) gradient[d]! += ((h[j]! - h[i]!) / 2) * c[d]! * face;
     }
@@ -186,16 +215,17 @@ export function stepSurface(
     let operator = 0;
     for (let s = 0; s < WAVE_SLOTS; s++) {
       const j = kernel.indices[i * WAVE_SLOTS + s]!;
-      operator += kernel.weights[i * WAVE_SLOTS + s]! * (wet[j] ? h[j]! : h[i]!);
+      operator += kernel.weights[i * WAVE_SLOTS + s]! * (wetNow[j] ? h[j]! : h[i]!);
     }
-    const force = (accel?.[i] ?? 0) * dt * dt;
-    const push = force * pushRoom(force, h[i]!, depth[i]!);
+    // the hand only moves water that's there
+    const force = wetNow[i] ? (accel?.[i] ?? 0) * dt * dt : 0;
+    const push = force * pushRoom(force, h[i]!, Math.max(depth[i]!, SURFACE.dryColumn));
     // last step's rise, eased toward the neighbours' (viscosity)
     let neighbourRise = 0;
     let wetNeighbours = 0;
     for (let k = 0; k < 6; k++) {
       const j = neighbors[i * 6 + k]!;
-      if (j === i || !wet[j]) continue;
+      if (!linked(i, j)) continue;
       neighbourRise += h[j]! - hPrev[j]!;
       wetNeighbours++;
     }
@@ -211,7 +241,7 @@ export function stepSurface(
     let outflow = 0;
     for (let k = 0; k < 6; k++) {
       const j = neighbors[i * 6 + k]!;
-      if (j === i || !wet[j]) continue;
+      if (!linked(i, j)) continue;
       const face = chord(i, j) / Math.sqrt(3);
       let velocity = 0;
       for (let d = 0; d < 3; d++) velocity += (nextU[i * 3 + d]! + nextU[j * 3 + d]!) * 0.5 * c[d]!;
@@ -221,7 +251,7 @@ export function stepSurface(
     let spread = 0;
     for (let k = 0; k < 6; k++) {
       const j = neighbors[i * 6 + k]!;
-      if (j !== i && wet[j]) spread += h[j]! - h[i]!;
+      if (linked(i, j)) spread += h[j]! - h[i]!;
     }
     const smoothing = (SURFACE.shallowSmoothing * meanArea) / areas[i]!;
     const shallow = h[i]! - (dt * outflow) / areas[i]! + smoothing * spread + push;
@@ -239,5 +269,13 @@ export function stepSurface(
 export function surfaceVolume(state: SurfaceState, areas: Float32Array): number {
   let sum = 0;
   for (let i = 0; i < state.h.length; i++) sum += state.h[i]! * areas[i]!;
+  return sum;
+}
+
+/** The water there is: the sum of each wet column times its area (dry ground holds none). */
+export function waterVolume(field: SurfaceField, state: SurfaceState): number {
+  let sum = 0;
+  for (let i = 0; i < state.h.length; i++)
+    if (field.wet[i]) sum += Math.max(0, field.depth[i]! + state.h[i]!) * field.areas[i]!;
   return sum;
 }

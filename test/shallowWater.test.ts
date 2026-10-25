@@ -7,6 +7,7 @@ import {
   createSurfaceState,
   stepSurface,
   surfaceVolume,
+  waterVolume,
   vertexAreas,
   type SurfaceField,
 } from '../src/core/shallowWater';
@@ -136,6 +137,47 @@ describe('interactive sea surface', () => {
     for (let i = 0; i < count; i++) if (island(i)) expect(state.h[i]).toBe(0);
     // the wave moved: it isn't still the starting bump
     expect(Math.max(...state.h)).toBeLessThan(0.0029);
+  });
+
+  it('fills a basin dug below the sea once a channel reaches it, and keeps every drop', () => {
+    // a shallow sea, land around [1, 0, 0] standing 1 cm above it, and inside it a dry basin dug 3 mm below
+    const land = [1, 0, 0];
+    const basin = (i: number) => angleTo(i, land) < 0.15;
+    const beach = field(0.004);
+    const state = createSurfaceState(count);
+    // ground at height `bed`, dry: its surface is the ground itself
+    const ground = (i: number, bed: number) => {
+      beach.depth[i] = -bed;
+      state.h[i] = bed;
+    };
+    for (let i = 0; i < count; i++) {
+      if (basin(i)) ground(i, -0.003);
+      else if (angleTo(i, land) < 0.4) ground(i, 0.01);
+    }
+    state.hPrev.set(state.h);
+    const column = (i: number) => beach.depth[i]! + state.h[i]!;
+    const held = () => Math.max(...Array.from({ length: count }, (_, i) => (basin(i) ? column(i) : 0)));
+    const before = waterVolume(beach, state);
+    for (let step = 0; step < 120; step++) stepSurface(mesh, beach, state, dt);
+    // the ridge holds the sea back
+    expect(held()).toBeLessThan(SURFACE.dryColumn * 2);
+    // dig a channel from the basin out to the sea, along the equator toward +y
+    for (let i = 0; i < count; i++) {
+      const [x, y, z] = [mesh.positions[i * 3]!, mesh.positions[i * 3 + 1]!, mesh.positions[i * 3 + 2]!];
+      if (Math.abs(z) < 0.04 && y > 0 && x > 0.85 && !basin(i) && beach.depth[i]! < 0) {
+        ground(i, -0.003);
+        state.hPrev[i] = -0.003;
+      }
+    }
+    for (let step = 0; step < 900; step++) stepSurface(mesh, beach, state, dt);
+    // water ran in, and the sea gave up what the basin took
+    expect(held()).toBeGreaterThan(0.001);
+    const after = waterVolume(beach, state);
+    expect(Math.abs(after - before)).toBeLessThan(before * 2e-3);
+    // land above the water stayed dry
+    for (let i = 0; i < count; i++)
+      if (angleTo(i, land) < 0.4 && angleTo(i, land) > 0.2 && beach.depth[i]! < 0)
+        expect(column(i)).toBeLessThan(SURFACE.dryColumn * 5);
   });
 
   it('builds a bigger wave from pushes that land before the water recovers', () => {

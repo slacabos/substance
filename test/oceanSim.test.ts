@@ -82,27 +82,31 @@ describe('ocean surface simulation', () => {
 });
 
 describe('coastal ocean field', () => {
-  it('walls off land, shoals the sea toward the bank and drops dry triangles', () => {
+  it('stands its land above the sea, shoals the sea toward the bank, and keeps every triangle', () => {
     const geometry = sphere(18);
     const fullIndexCount = geometry.getIndex()!.count;
     const field = createOceanField(geometry, true);
-    expect(geometry.getIndex()!.count).toBeLessThan(fullIndexCount);
-    // about half the orb is land
-    expect(geometry.getIndex()!.count).toBeGreaterThan(fullIndexCount * 0.4);
+    // the water may spread anywhere the sand is dug below it
+    expect(geometry.getIndex()!.count).toBe(fullIndexCount);
     const dir = new Vector3();
     let dry = 0;
     let shallow = 0;
     for (let i = 0; i < field.count; i++) {
       const distance = shoreDistance(dir.fromArray(field.positions, i * 3));
       expect(field.wet[i]).toBe(distance > 0 ? 1 : 0);
-      if (!field.wet[i]) dry++;
+      if (!field.wet[i]) {
+        dry++;
+        // land is ground above the sea: negative depth
+        expect(field.depth[i]).toBeLessThan(0);
+      }
       if (field.wet[i] && distance < 0.01) {
         shallow++;
         expect(field.depth[i]).toBeLessThan(OCEAN_DEPTH);
       }
       if (distance > 0.1) expect(field.depth[i]).toBeCloseTo(OCEAN_DEPTH, 6);
     }
-    expect(dry).toBeGreaterThan(0);
+    // about half the orb is land
+    expect(dry).toBeGreaterThan(field.count * 0.4);
     expect(shallow).toBeGreaterThan(0);
   });
 

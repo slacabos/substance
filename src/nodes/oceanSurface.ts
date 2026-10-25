@@ -79,20 +79,21 @@ export interface SurfaceBuffers {
 }
 
 /**
- * The sea's own height at unit direction d (the hand's waves, without the scripted surf: OceanSim's slope.w),
- * blended over the nearest vertex and its neighbours like sampleSurface. Four storage buffers.
+ * A per-vertex value `read(i)` at unit direction d, blended over the nearest vertex and its neighbours like
+ * sampleSurface (three storage buffers, plus whatever `read` uses).
  */
-export function seaHeightAt(
+export function blendedAt(
   d: Vec3,
-  buffers: Pick<SurfaceBuffers, 'lookup' | 'vertex' | 'neighbor'> & { slope: StorageBufferNode<'vec4'> },
+  buffers: Pick<SurfaceBuffers, 'lookup' | 'vertex' | 'neighbor'>,
+  read: (i: UInt) => Node<'float'>,
 ): Node<'float'> {
   const centre = buffers.lookup.element(cubeCell(d, LOOKUP_SIZE));
-  const height = float(0).toVar();
+  const value = float(0).toVar();
   const weight = float(0).toVar();
   const add = (i: UInt) => {
     const offset = buffers.vertex.element(i).xyz.sub(d);
     const w = float(1).div(dot(offset, offset).add(0.0002));
-    height.addAssign(buffers.slope.element(i).w.mul(w));
+    value.addAssign(read(i).mul(w));
     weight.addAssign(w);
   };
   add(centre);
@@ -100,7 +101,15 @@ export function seaHeightAt(
     const j = buffers.neighbor.element(centre.mul(6).add(k));
     If(j.notEqual(centre), () => add(j));
   });
-  return height.div(weight);
+  return value.div(weight);
+}
+
+/** The sea's own height at unit direction d (the hand's waves, without the scripted surf: OceanSim's slope.w). */
+export function seaHeightAt(
+  d: Vec3,
+  buffers: Pick<SurfaceBuffers, 'lookup' | 'vertex' | 'neighbor'> & { slope: StorageBufferNode<'vec4'> },
+): Node<'float'> {
+  return blendedAt(d, buffers, (i) => buffers.slope.element(i).w);
 }
 
 /**

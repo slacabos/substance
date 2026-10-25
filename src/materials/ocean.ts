@@ -2,6 +2,7 @@ import { Color, IcosahedronGeometry, Mesh, Vector3, type BufferGeometry, type Te
 import { MeshBasicNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import { Fn, normalize, positionGeometry } from 'three/tsl';
 import { TapRhythm } from '../core/oceanRhythm';
+import { shoreDistance } from '../core/oceanShores';
 import { OceanWeather, weatherRadius } from '../core/oceanWeather';
 import { beaufortFor, GustField, oceanWind } from '../core/oceanWind';
 import type { OceanTuning } from '../core/oceanTuning';
@@ -15,6 +16,12 @@ import { OceanSim, oceanReleaseImpulse, type OceanForce } from './oceanSim';
 import { OceanShores } from './oceanShores';
 import type { SettingLook } from '../scene/settings';
 import type { FrameContext, MaterialId, Readout, Substance } from './types';
+
+/** How the hand works the coast's sand: a tap's crater, and a drag's trench (as the sand orb's, a little smaller). */
+const SAND_HAND = {
+  tap: { depth: 0.012, sharpness: 420 },
+  plough: { gain: 0.006, most: 0.007, sharpness: 450 },
+} as const;
 
 /** A water-covered miniature orb with coherent swells and local, touch-driven rough weather. */
 export class Ocean implements Substance {
@@ -42,6 +49,8 @@ export class Ocean implements Substance {
   private readonly pressDir = new Vector3(0, 0, 1);
   private readonly pendingForces: OceanForce[] = [];
   private pressing = false;
+  /** The hand went down on the coast's sand: it digs and ploughs rather than making waves. */
+  private digging = false;
   private heldSeconds = 0;
   private pressStartedAt = 0;
   /** The live wind plus touch-made rough weather, for the readout. */
@@ -65,7 +74,9 @@ export class Ocean implements Substance {
     const deformUniforms = createDeformUniforms();
     this.sim = new OceanSim(renderer, geometry, coastal, tuning, { fields: waves, uniforms: deformUniforms });
     const simBuffers = this.sim.renderBuffers();
-    this.shores = coastal ? new OceanShores(coarse, this.sim.surf, simBuffers) : null;
+    this.shores = coastal
+      ? new OceanShores(coarse, this.sim.surf, simBuffers, this.sim.sand?.renderBuffers())
+      : null;
     const { material, uniforms } = createDeformMaterial(
       {
         color: 0xffffff,
@@ -131,6 +142,17 @@ export class Ocean implements Substance {
   }
 
   down(dir: Vector3): void {
+    this.digging = this.onSand(dir);
+    if (this.digging) {
+      // on the coast's land the hand digs the sand
+      this.lastDrag.copy(dir);
+      this.sim.sand!.add({
+        dir: [dir.x, dir.y, dir.z],
+        amount: SAND_HAND.tap.depth,
+        sharpness: SAND_HAND.tap.sharpness,
+      });
+      return;
+    }
     this.weatherField.down(dir);
     this.lastDrag.copy(dir);
     this.pressDir.copy(dir);
@@ -142,6 +164,10 @@ export class Ocean implements Substance {
     this.addForce(dir, -0.55 * this.boost);
   }
   move(dir: Vector3, dt: number): void {
+    if (this.digging) {
+      this.plough(dir, dt);
+      return;
+    }
     this.weatherField.move(dir, dt);
     this.pressDir.copy(dir);
     if (this.pressing) this.sim.setPressure(dir, this.heldSeconds);
@@ -159,6 +185,10 @@ export class Ocean implements Substance {
     }
   }
   up(): void {
+    if (this.digging) {
+      this.digging = false;
+      return;
+    }
     this.weatherField.up();
     if (this.pressing) {
       this.heldSeconds = Math.min(2, (performance.now() - this.pressStartedAt) / 1000);
@@ -222,6 +252,27 @@ export class Ocean implements Substance {
   onSettingChange(look: SettingLook): void {
     this.uniforms.uSunDir.value.copy(look.sun.direction);
     this.uniforms.uSunColor.value.copy(look.sun.color);
+  }
+
+  /** On the coast's land (a dug channel below the sea still counts: you dig it, wet or not). */
+  private onSand(dir: Vector3): boolean {
+    return this.sim.sand !== null && shoreDistance(dir) < 0;
+  }
+
+  /** A drag over the sand ploughs a trench along it (as on the sand orb, materials/sand.ts). */
+  private plough(dir: Vector3, dt: number): void {
+    const moved = this.lastDrag.angleTo(dir);
+    if (moved < 0.006) return;
+    const speed = moved / Math.max(dt, 1 / 120);
+    const motion = dir.clone().sub(this.lastDrag);
+    motion.addScaledVector(dir, -motion.dot(dir)).normalize();
+    this.sim.sand!.add({
+      dir: [dir.x, dir.y, dir.z],
+      amount: Math.min(SAND_HAND.plough.most, speed * SAND_HAND.plough.gain),
+      sharpness: SAND_HAND.plough.sharpness,
+      motion: [motion.x, motion.y, motion.z],
+    });
+    this.lastDrag.copy(dir);
   }
 
   private addForce(dir: Vector3, strength: number, motion?: Vector3): void {
