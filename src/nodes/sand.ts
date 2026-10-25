@@ -89,7 +89,7 @@ export function bands(p: Vec3, axis: Vec3, f: number, warp: Float): Float {
 function ripples(p: Vec3, axis: Vec3, f: number, warp: Float): Float {
   const phase = dot(p, axis).mul(f).add(warp);
   const s = fract(phase.div(Math.PI * 2));
-  const ramp = select(s.lessThan(0.78), s.div(0.78), float(1).sub(s).div(0.22));
+  const ramp = select(s.lessThan(0.7), s.div(0.7), float(1).sub(s).div(0.3));
   const shaped = ramp.mul(ramp).mul(float(3).sub(ramp.mul(2)));
   const pixels = fwidth(phase).div(Math.PI * 2);
   return mix(shaped, float(0.5), smoothstep(0.2, 0.45, pixels));
@@ -190,7 +190,7 @@ export function sandRelief(
   disturbed: Float = float(0),
   slope?: SandSlope,
 ): { tone: Float; damp: Float; height: Float } {
-  const warp = octave(p, 14).mul(3).add(octave(p, 45).mul(0.8));
+  const warp = octave(p, 14).mul(3).add(octave(p, 45).mul(0.3));
   const ripple = ripples(p, vec3(0.8, 0.1, -0.59), 95, warp);
   // a fresh dig throws out crumbs of damp sand from underneath, fewer the further from it
   const clumps = octave(p, 160).mul(0.5).add(0.5);
@@ -200,7 +200,7 @@ export function sandRelief(
     clumps,
   ).mul(smoothstep(0.02, 0.15, disturbed));
   const lumps = octave(p, 210).mul(disturbed);
-  let height = ripple.mul(0.0035).mul(combed).add(lumps.mul(0.0014)).add(crumbs.mul(0.0012));
+  let height = ripple.mul(0.0028).mul(combed).add(lumps.mul(0.0014)).add(crumbs.mul(0.0012));
   let tone = float(1).sub(ripple.mul(0.05).mul(combed));
   if (slope) {
     // grains that slid leave streaks down the slope: noise squeezed along the way down
