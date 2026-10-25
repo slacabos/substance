@@ -69,6 +69,13 @@ export interface DeformUniforms {
   uOceanAmplitude: UniformNode<'float', number>;
   uOceanChoppiness: UniformNode<'float', number>;
   uOceanFoam: UniformNode<'float', number>;
+  /**
+   * How much of each foam layer shows (FOAM_LAYERS in nodes/ocean.ts), on top of uOceanFoam: whitecaps where
+   * waves break, ambient foam the water churned up and carries, and the shoreline's surf foam.
+   */
+  uFoamWhitecap: UniformNode<'float', number>;
+  uFoamAmbient: UniformNode<'float', number>;
+  uFoamShore: UniformNode<'float', number>;
   /** World direction toward the sun, and its linear colour times strength. */
   uSunDir: UniformNode<'vec3', Vector3>;
   uSunColor: UniformNode<'color', Color>;

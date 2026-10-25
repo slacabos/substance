@@ -2,6 +2,7 @@ import type { Texture } from 'three';
 import type { Node } from 'three/webgpu';
 import { LACE_RANGE } from '../core/foamLace';
 import { SURF_FADE } from '../core/oceanShores';
+import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import {
   cameraViewMatrix,
   abs,
@@ -213,7 +214,27 @@ export function threadsAt(obj: Vec3, along: Vec3, amount: Float, fresh: Float): 
   return max(max(threads.mul(held), fill.mul(0.9)).mul(smoothstep(0.01, 0.1, amount)), streaks);
 }
 
-/** Whitecaps follow steep travelling crests; simulated foam persists and drifts after impacts. */
+/**
+ * The three foam layers, each with its own pattern, colour (linear) and default coverage (DeformUniforms'
+ * uFoamWhitecap, uFoamAmbient and uFoamShore scale them):
+ * - whitecaps: where the waves fold over and break, streaks along the crests; the brightest, freshest white;
+ * - ambient: foam the water churned up (taps, drags, splashes, old whitecaps) and carries on its current, white
+ *   water full of round bubbles thinning into a web; a little greyer, as thin foam lets the sea show through;
+ * - shore: the surf zone's white water, a net of cells round open water with torn white fronts where waves
+ *   break; a little warmer, carrying sand.
+ */
+export const FOAM_LAYERS = {
+  whitecap: { coverage: 1, color: [0.95, 0.98, 0.98] },
+  ambient: { coverage: 1, color: [0.86, 0.91, 0.92] },
+  shore: { coverage: 1, color: [0.94, 0.94, 0.9] },
+} as const;
+
+const layerColor = (c: readonly number[]) => vec3(c[0]!, c[1]!, c[2]!);
+
+/**
+ * All the foam at a point: each layer's coverage (0 to 1), laid over one another (each covers what the others
+ * leave open), and the colour they make together, each weighted by how much of it shows.
+ */
 export function oceanFoam(
   drift: FoamDrift,
   lace: Texture,
@@ -224,8 +245,13 @@ export function oceanFoam(
   shore?: Float,
   along?: Vec3,
   fresh: Float = float(0),
-): Float {
-  // the two drifted patterns crossfaded, keeping the noise's contrast through the blend
+): { amount: Float; color: Vec3 } {
+  // the surf zone, where the shoreline layer takes over from the open sea's two
+  const zone = shore && along ? float(1).sub(smoothstep(SURF_FADE * 0.6, SURF_FADE * 1.3, shore)) : float(0);
+  const open = float(1).sub(zone);
+
+  // whitecaps where the waves fold over, broken into streaks; the noise (the two drifted patterns crossfaded,
+  // keeping its contrast) varies how readily each spot foams
   const wa = drift.blend;
   const wb = float(1).sub(wa);
   const n = foamNoise(drift.a, u)
@@ -234,19 +260,44 @@ export function oceanFoam(
     .add(foamNoise(drift.b, u).sub(0.5).mul(wb))
     .div(sqrt(wa.mul(wa).add(wb.mul(wb))))
     .add(0.5);
-  // Whitecaps where the waves fold over, broken into streaks; the noise varies how readily each spot foams.
-  const crests = smoothstep(mix(0.3, 0.22, weather), 0.75, breaking.mul(n.mul(0.9).add(0.55)));
-  // churned foam left by the sim: taps, drags, splashes and old whitecaps
-  let sprayFoam = foamLace(drift, lace, smoothstep(0.04, 0.6, simulated), u);
-  let foam = crests;
-  if (shore && along) {
-    // the surf zone's white water: threads and streaks the waves leave and the water drags, in place of the open
-    // sea's round-bubbled lace
-    const zone = float(1).sub(smoothstep(SURF_FADE * 0.6, SURF_FADE * 1.3, shore));
-    foam = max(foam.mul(float(1).sub(zone.mul(0.85))), foamThreads(drift, along, simulated, fresh).mul(zone));
-    sprayFoam = sprayFoam.mul(float(1).sub(zone));
-  }
-  return max(clamp(foam.mul(u.uOceanFoam), 0, 1), sprayFoam);
+  const whitecap = clamp(
+    smoothstep(mix(0.3, 0.22, weather), 0.75, breaking.mul(n.mul(0.9).add(0.55)))
+      .mul(u.uOceanFoam)
+      .mul(u.uFoamWhitecap)
+      .mul(open.mul(0.85).add(0.15)),
+    0,
+    1,
+  );
+  // ambient: churned foam the sim carries
+  const ambient = clamp(
+    foamLace(drift, lace, smoothstep(0.04, 0.6, simulated), u)
+      .mul(u.uFoamAmbient)
+      .mul(open),
+    0,
+    1,
+  );
+  // shoreline: the surf's white water
+  const surf =
+    shore && along
+      ? clamp(
+          foamThreads(drift, along, simulated, fresh)
+            .mul(zone)
+            .mul(u.uOceanFoam.div(OCEAN_DEFAULTS.foam))
+            .mul(u.uFoamShore),
+          0,
+          1,
+        )
+      : float(0);
+
+  // laid over one another
+  const amount = float(1).sub(float(1).sub(whitecap).mul(float(1).sub(ambient)).mul(float(1).sub(surf)));
+  const weight = max(whitecap.add(ambient).add(surf), 1e-4);
+  const color = layerColor(FOAM_LAYERS.whitecap.color)
+    .mul(whitecap)
+    .add(layerColor(FOAM_LAYERS.ambient.color).mul(ambient))
+    .add(layerColor(FOAM_LAYERS.shore.color).mul(surf))
+    .div(weight);
+  return { amount, color };
 }
 
 /** Approximate absorption through a deep body of water, plus a blue grazing-angle glint. */
@@ -256,6 +307,7 @@ export function oceanColor(
   foam: Float,
   weather: Float,
   u: DeformUniforms,
+  foamColor: Vec3 = layerColor(FOAM_LAYERS.whitecap.color),
 ): Vec3 {
   const facing = clamp(dot(normalViewGeometry, positionViewDirection), 0, 1);
   const depth = smoothstep(0.2, 0.9, facing);
@@ -265,7 +317,7 @@ export function oceanColor(
   const water = mix(u.uDeep, u.uShallow, tint).mul(float(1).sub(weather.mul(0.05)));
   const rim = pow(float(1).sub(facing), 5).mul(0.12);
   const lit = mix(water, vec3(0.08, 0.29, 0.39), rim);
-  return mix(lit, vec3(0.93, 0.97, 0.965), foam);
+  return mix(lit, foamColor, foam);
 }
 
 /**

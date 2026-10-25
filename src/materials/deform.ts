@@ -55,7 +55,7 @@ import { OCEAN_GUSTS } from '../core/oceanWind';
 import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import { OCEAN_DEPTH } from '../core/oceanFFT';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
-import { LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
+import { FOAM_LAYERS, LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
@@ -147,6 +147,9 @@ export function createDeformUniforms(): DeformUniforms {
     uOceanAmplitude: uniform(OCEAN_DEFAULTS.amplitude),
     uOceanChoppiness: uniform(OCEAN_DEFAULTS.choppiness),
     uOceanFoam: uniform(OCEAN_DEFAULTS.foam),
+    uFoamWhitecap: uniform(FOAM_LAYERS.whitecap.coverage),
+    uFoamAmbient: uniform(FOAM_LAYERS.ambient.coverage),
+    uFoamShore: uniform(FOAM_LAYERS.shore.coverage),
     uSunDir: uniform(new Vector3(0, 1, 0)),
     uSunColor: uniform(new Color(0, 0, 0)),
   };
@@ -284,7 +287,7 @@ export function createDeformMaterial(
   // here showed as a second white strike, cut off from it)
   // and the sea's own foam thins out over the last few millimetres too, handing over to the run-up's: foam
   // piled at the very edge drew it as a white rim
-  const foam = seaFoam.mul(coastal ? smoothstep(EDGE_FADE[0], EDGE_FADE[1] * 0.7, behind) : float(1));
+  const foam = seaFoam.amount.mul(coastal ? smoothstep(EDGE_FADE[0], EDGE_FADE[1] * 0.7, behind) : float(1));
   const base = materialRoughness.add(turbulence.mul(0.1));
   // GGX alpha^2 grows by twice the hidden slope variance
   const rough = pow(pow(base, 4).add(surface.lostVariance.mul(damping).mul(damping).mul(2)), 0.25);
@@ -309,7 +312,7 @@ export function createDeformMaterial(
   // (dry ground next to water carries the water's level just under the sand, however steeply the sand rises
   // there, and the sand hides it; ground further from water sinks its surface DRY_SINK under, which this cuts)
   if (column) material.maskNode = column.greaterThan(-0.015);
-  const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms);
+  const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms, seaFoam.color);
   // (transmitted light is tinted by the colour, so over the shallows the colour is clear and the absorption alone
   // tints it)
   const water = column
