@@ -310,7 +310,8 @@ export function sampleShoreSurf(
   const height = (s * 0.32 + crest * 0.95 - 0.17) * amplitude;
   const calm = smooth((distance - 0.005) / 0.035);
   out.height = height * (height < 0 ? calm : 0.3 + 0.7 * calm);
-  out.breaking = crest * surfBreakZone(distance) * exposure * energy;
+  // (it breaks over the whole of its steep front, not just at the peak: a broad band of white water)
+  out.breaking = Math.max(0, s) ** 2 * surfBreakZone(distance) * exposure * energy;
 }
 
 /**

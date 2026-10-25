@@ -96,9 +96,11 @@ export function surfAtPoint(
     const crest = max(s, 0).pow(5);
     const wave = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(amplitude);
     height = height.add(wave.mul(select(wave.lessThan(0), calm, calm.mul(0.7).add(0.3))).mul(train.share));
+    // (it breaks over the whole of its steep front, not just at the peak, as in sampleShoreSurf)
     breaking = max(
       breaking,
-      crest
+      max(s, 0)
+        .pow(2)
         .mul(zone)
         .mul(strength)
         .mul(Math.min(1, train.share * 1.4)),

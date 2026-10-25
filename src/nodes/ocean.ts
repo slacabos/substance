@@ -165,7 +165,7 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float
       const r = float(1).sub(abs(snoise(p)));
       // a line a pixel or so wide however far away: its width set by how fast the noise changes on screen
       const width = fwidth(r).mul(1.5).add(0.02);
-      return smoothstep(float(1).sub(width.mul(2)).sub(amount.mul(0.12)), float(1).sub(width.mul(0.3)), r);
+      return smoothstep(float(1).sub(width.mul(2)).sub(amount.mul(0.1)), float(1).sub(width.mul(0.3)), r);
     };
     return max(ridge(1), ridge(2.1).mul(0.8));
   };
@@ -176,9 +176,11 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float
   const clumps = snoise(middle.mul(0.11))
     .mul(0.6)
     .add(snoise(middle.mul(0.27).add(3.3)).mul(0.4));
-  const held = smoothstep(0, 0.3, clumps.mul(0.6).add(amount.mul(2.2)).sub(0.25));
-  const solid = smoothstep(0.85, 1, amount.mul(held));
-  return max(threads.mul(held), solid.mul(mix(0.6, 1, threads))).mul(smoothstep(0.03, 0.2, amount));
+  // (however thick, a third of it stays open: white water is always torn)
+  const held = smoothstep(0, 0.3, clumps.add(amount.mul(1.5)).sub(0.45));
+  // (fresh, thick foam fills in between the threads, but always with holes: lace, never a sheet)
+  const fill = smoothstep(0.85, 1, amount.mul(held)).mul(smoothstep(0.2, 0.6, snoise(middle.mul(1.7))));
+  return max(threads.mul(held), fill.mul(0.7)).mul(smoothstep(0.03, 0.2, amount));
 }
 
 export function oceanFoam(
@@ -209,7 +211,7 @@ export function oceanFoam(
     // the surf zone's white water: threads and streaks the waves leave and the water drags, in place of the open
     // sea's round-bubbled lace
     const zone = float(1).sub(smoothstep(SURF_FADE * 0.6, SURF_FADE * 1.3, shore));
-    foam = max(foam.mul(float(1).sub(zone.mul(0.6))), foamThreads(drift, along, simulated).mul(zone));
+    foam = max(foam.mul(float(1).sub(zone.mul(0.85))), foamThreads(drift, along, simulated).mul(zone));
     sprayFoam = sprayFoam.mul(float(1).sub(zone));
   }
   return max(clamp(foam.mul(u.uOceanFoam), 0, 1), sprayFoam);
