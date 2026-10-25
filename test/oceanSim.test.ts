@@ -4,7 +4,7 @@ import type { WebGPURenderer } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 import { OCEAN_DEPTH } from '../src/core/oceanFFT';
 import { createOceanField } from '../src/core/oceanField';
-import { shoreDistance } from '../src/core/oceanShores';
+import { SHELF_EDGE, shoreDistance } from '../src/core/oceanShores';
 import { OceanSim, oceanPressLoad, oceanReleaseImpulse } from '../src/materials/oceanSim';
 
 /** Records compute dispatches instead of running them; no GPU in tests. */
@@ -103,7 +103,7 @@ describe('coastal ocean field', () => {
         shallow++;
         expect(field.depth[i]).toBeLessThan(OCEAN_DEPTH);
       }
-      if (distance > 0.1) expect(field.depth[i]).toBeCloseTo(OCEAN_DEPTH, 6);
+      if (distance > SHELF_EDGE) expect(field.depth[i]).toBeCloseTo(OCEAN_DEPTH, 6);
     }
     // about half the orb is land
     expect(dry).toBeGreaterThan(field.count * 0.4);

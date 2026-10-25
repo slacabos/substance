@@ -34,7 +34,7 @@ type Vec3 = Node<'vec3'>;
 // with the swash running over it.
 
 /** Height the swash runs up a shore facing the swell, per unit of the sea's state, orb radii. */
-const SWASH_RUNUP = 0.009;
+const SWASH_RUNUP = 0.0065;
 /** How far up the beach the hand's waves run, per unit of the sea's height at the shoreline, and at most. */
 const TAP_RUNUP = 1.5;
 const MAX_RUNUP = 0.03;
@@ -72,8 +72,8 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs, sea: Float) {
   );
   // each stretch of beach runs up its own distance: the front is ragged, not a contour line
   const ragged = snoise(foot.mul(45).add(swash.w))
-    .mul(0.22)
-    .add(snoise(foot.mul(130)).mul(0.12))
+    .mul(0.12)
+    .add(snoise(foot.mul(130)).mul(0.05))
     .add(1);
   const runup = float(SWASH_RUNUP).mul(surf.energy).mul(wave.set).mul(wave.exposure).mul(ragged);
   // a wave the hand sent runs up the beach too, as high as the sea at the shoreline lifts it (it drains as
@@ -145,7 +145,10 @@ export function shoreSurface(
   // height above the still sea, as the land mesh was built (it follows the cube morph like the water)
   // (the beach as built: water in holes the hand digs is the sim's, drawn by the sea's own surface)
   const above = length(positionGeometry).sub(baseR(p)).sub(SHORE_WATERLINE);
-  const sw = swashAt(p, above, surf, sea);
+  // the swash runs only over the beach: below the still sea the seabed is the sea's, which draws its own water
+  const ashore = smoothstep(-SHORE_WATERLINE - 0.0005, -SHORE_WATERLINE + 0.0005, above);
+  const swash = swashAt(p, above, surf, sea);
+  const sw = { ...swash, cover: swash.cover.mul(ashore), foam: swash.foam.mul(ashore) };
   // sand turned up from underneath is damp
   const soaked = max(max(wet, sw.soaked), max(smoothstep(0.0005, 0.005, abs(dug)).mul(0.8), relief.damp));
   const grains = sandGrains(
@@ -161,8 +164,8 @@ export function shoreSurface(
     .mul(mix(float(1), float(0.72), soaked));
   const water = mix(
     ground,
-    ground.mul(vec3(0.6, 0.86, 0.88)).add(vec3(0.01, 0.05, 0.06)),
-    // thin at the front, so mostly the wet sand shows; turquoise where it's deeper
+    mix(ground.mul(vec3(0.78, 0.96, 0.98)), vec3(0.16, 0.55, 0.58), 0.35),
+    // thin at the front, so mostly the wet sand shows; turquoise where it's deeper, like the shallows
     smoothstep(0, 0.003, sw.depth).mul(0.85),
   );
   const covered = mix(ground, water, sw.cover);
@@ -174,7 +177,7 @@ export function shoreSurface(
     .mul(KEY_SHARE);
   return {
     color: albedo,
-    roughness: mix(mix(float(0.88), float(0.35), soaked), float(0.08), sw.cover.mul(float(1).sub(sw.foam))),
+    roughness: mix(mix(float(0.88), float(0.35), soaked), float(0.2), sw.cover.mul(float(1).sub(sw.foam))),
     normal: grains.normal,
     emissive: key.add(grains.glint),
   };

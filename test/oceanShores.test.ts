@@ -4,6 +4,9 @@ import type { WebGPURenderer } from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 import {
   sampleShoreSurf,
+  SHELF,
+  SHELF_EDGE,
+  shelfDepth,
   shelfLag,
   SHORE_SITES,
   shoreDistance,
@@ -26,8 +29,9 @@ const sphere = (detail: number) => {
 };
 
 describe('coastal ocean', () => {
-  it('covers about half the orb with land above the largest swells, its sand shelving into the sea', () => {
-    // a continent over about half the orb, and small islands out in the other half
+  it('covers about half the orb with one beach above the largest swells, its sand shelving into the sea', () => {
+    // one stretch of land over about half the orb: a beach, not a continent and islands
+    expect(SHORE_SITES).toHaveLength(1);
     let land = 0;
     const samples = 4000;
     for (let i = 0; i < samples; i++) {
@@ -41,7 +45,7 @@ describe('coastal ocean', () => {
     const peaks = SHORE_SITES.map((site) => shoreElevation(site, site.center));
     for (const site of SHORE_SITES) expect(shoreDistance(site.center)).toBeLessThan(0);
     for (const peak of peaks) expect(peak).toBeGreaterThan(0.025);
-    expect(Math.max(...peaks)).toBeLessThan(0.15);
+    expect(Math.max(...peaks)).toBeLessThan(0.06);
     // a beach climbs gently from the waterline: no step out of the sea
     for (const site of SHORE_SITES) {
       const ashore = (d: number) => {
@@ -65,9 +69,25 @@ describe('coastal ocean', () => {
     const sim = new OceanSim({ compute: () => {} } as unknown as WebGPURenderer, sphere(6));
     const shores = new OceanShores(true, surf, sim.renderBuffers());
     const position = shores.mesh.geometry.getAttribute('position');
-    const before = position.getX(0);
+    const before = position.getY(0);
     shores.updateMorph(1);
-    expect(position.getX(0)).not.toBe(before);
+    expect(position.getY(0)).not.toBe(before);
+  });
+
+  it('shelves the seabed gently out to the open sea, over a sandbar with a trough inside it', () => {
+    const { bar } = SHELF;
+    // shallow a long way out: the shallows are what make it a beach
+    expect(shelfDepth(0.1)).toBeLessThan(0.012);
+    expect(SHELF_EDGE).toBeGreaterThan(0.4);
+    // deepening seaward everywhere but over the bar's inner flank
+    for (let d = 0.02; d < SHELF_EDGE; d += 0.005) {
+      const onBar = d > bar.at - 2 * bar.width && d < bar.at;
+      if (!onBar) expect(shelfDepth(d + 0.005)).toBeGreaterThanOrEqual(shelfDepth(d));
+    }
+    // the bar stands shallower than the trough inside it, and the water is deep enough over it to break on
+    const trough = Math.max(...[0.06, 0.08, 0.1, 0.11].map(shelfDepth));
+    expect(shelfDepth(bar.at)).toBeLessThan(trough);
+    expect(shelfDepth(bar.at)).toBeGreaterThan(0.004);
   });
 
   const swell = shoreSwell(OCEAN_DEFAULTS.peakWavelength);
@@ -111,13 +131,26 @@ describe('coastal ocean', () => {
         shoreSurfPhase(-d - 1e-4, d + 1e-4, shelfLag(d + 1e-4), 1, swell, 0) -
           shoreSurfPhase(-d, d, shelfLag(d), 1, swell, 0),
       ) / 1e-4;
-    expect(slope(0.005)).toBeGreaterThan(2 * slope(0.08));
-    expect(slope(0.08)).toBeCloseTo(swell.k, 3);
-    let breaking = 0;
-    for (let time = 0; time < 10; time += 0.05) breaking = Math.max(breaking, surfAt(0.012, time).breaking);
-    expect(breaking).toBeGreaterThan(0.9);
+    const open = SHELF_EDGE + 0.05;
+    expect(slope(0.005)).toBeGreaterThan(2 * slope(open));
+    expect(slope(open)).toBeCloseTo(swell.k, 3);
+    const most = (d: number, key: 'height' | 'breaking') => {
+      let peak = 0;
+      for (let time = 0; time < 10; time += 0.05) peak = Math.max(peak, surfAt(d, time)[key]);
+      return peak;
+    };
+    expect(most(0.012, 'breaking')).toBeGreaterThan(0.9);
+    // it breaks on the bar too, before it reaches the beach; between them it runs on as whitewater
+    expect(most(SHELF.bar.at, 'breaking')).toBeGreaterThan(0.6);
+    expect(most(SHELF.bar.at + 0.08, 'breaking')).toBeLessThan(0.2);
+    // and it never stands taller than the water lets it, so no trough bares the seabed
+    for (const d of [0.01, 0.05, SHELF.bar.at, 0.25]) {
+      let trough = 0;
+      for (let time = 0; time < 10; time += 0.05) trough = Math.min(trough, surfAt(d, time).height);
+      expect(-trough).toBeLessThan(shelfDepth(d) * 0.5);
+    }
     expect(surfAt(-0.01, 3)).toEqual({ height: 0, breaking: 0 });
-    expect(surfAt(0.2, 3)).toEqual({ height: 0, breaking: 0 });
+    expect(surfAt(0.5, 3)).toEqual({ height: 0, breaking: 0 });
   });
 
   it('breaks hardest on shores facing the swell, and keeps a steady pace however long it runs', () => {

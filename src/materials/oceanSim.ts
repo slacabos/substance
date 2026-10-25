@@ -40,12 +40,20 @@ import { FLUID } from '../core/oceanFluid';
 import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 import { OCEAN_DEPTH, OCEAN_WIND_ANGLE } from '../core/oceanFFT';
 import { WIND, windAt as windOnOrb } from '../core/oceanWind';
-import { MAINLAND, shoreSwell, SURF_REACH, SURF_SET_WAVES } from '../core/oceanShores';
+import {
+  BREAKER,
+  MAINLAND,
+  shoreSwell,
+  SURF_FADE,
+  SURF_HEIGHT,
+  SURF_REACH,
+  SURF_SET_WAVES,
+} from '../core/oceanShores';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { driftBasis, windAt } from '../nodes/oceanSurface';
-import { surfWave, type SurfInputs } from '../nodes/surf';
+import { shelfDepthAt, surfBreakZoneAt, surfWave, type SurfInputs } from '../nodes/surf';
 import { SandField } from './sandField';
 import { oceanWaveFoam, type OceanWaveFields } from '../nodes/oceanWaves';
 
@@ -574,17 +582,17 @@ export class OceanSim {
     const surfAt = (distance: Float, lag: Float, site: Float, q: Vec3, normal: Vec3) => {
       const smooth = (x: Float) => smoothstep(0, 1, x);
       const { phase, set, exposure } = surfWave(q, distance, lag, site, normal, this.surf);
-      // shelfDepth (core/oceanShores.ts)
-      const depth = clamp(smooth(distance.div(0.045)).mul(0.085).sub(0.004), 0.002, OCEAN_DEPTH);
+      const depth = shelfDepthAt(distance);
       const envelope = float(1)
-        .sub(smooth(distance.sub(0.04).div(SURF_REACH - 0.04)))
+        .sub(smooth(distance.sub(SURF_FADE).div(SURF_REACH - SURF_FADE)))
         .mul(min(float(OCEAN_DEPTH).div(depth).pow(0.25), 1.8))
         .mul(smooth(distance.div(0.025)).mul(0.35).add(0.65));
       const s = sin(phase);
       const crest = max(s, 0).pow(5);
       const strength = exposure.mul(this.surf.energy).mul(set);
-      const height = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(0.03).mul(envelope).mul(strength);
-      const breaking = crest.mul(float(1).sub(smooth(distance.sub(0.012).div(0.06)))).mul(strength);
+      const amplitude = min(envelope.mul(strength).mul(SURF_HEIGHT), depth.mul(BREAKER));
+      const height = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(amplitude);
+      const breaking = crest.mul(surfBreakZoneAt(distance)).mul(strength);
       const inside = distance.greaterThanEqual(0).and(distance.lessThanEqual(SURF_REACH));
       return { height: select(inside, height, float(0)), breaking: select(inside, breaking, float(0)) };
     };
@@ -613,7 +621,7 @@ export class OceanSim {
             oceanWeatherAt(q, waves.uniforms),
             WHITECAP.spacing,
           );
-          const offshore = coastal ? smoothstep(0, 0.1, g4.y) : float(1);
+          const offshore = coastal ? smoothstep(0, SURF_FADE, g4.y) : float(1);
           // Folding grows faster than the slopes as the wind rises, and every fold left foam: a gale whitened half
           // the sea. Taken back by the wind's gain, whitecaps cover about what Monahan measured (a few percent in a
           // strong breeze).

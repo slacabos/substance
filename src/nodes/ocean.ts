@@ -1,6 +1,7 @@
 import type { Texture } from 'three';
 import type { Node } from 'three/webgpu';
 import { LACE_RANGE } from '../core/foamLace';
+import { SURF_FADE } from '../core/oceanShores';
 import {
   cameraViewMatrix,
   abs,
@@ -164,7 +165,7 @@ export function oceanFoam(
   let foam = crests;
   if (shore) {
     const wash = smoothstep(0.1, 0.62, simulated)
-      .mul(float(1).sub(smoothstep(0.03, 0.13, shore)))
+      .mul(float(1).sub(smoothstep(0.03, SURF_FADE, shore)))
       .mul(mix(0.5, 0.9, n));
     foam = max(foam, wash);
   }

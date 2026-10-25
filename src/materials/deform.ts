@@ -44,6 +44,7 @@ import { bakeFoamLace } from '../core/foamLace';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { OCEAN_GUSTS } from '../core/oceanWind';
 import { OCEAN_DEFAULTS } from '../core/oceanTuning';
+import { SHALLOWS } from '../core/oceanShores';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
 import { LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
 import { driftBasis } from '../nodes/oceanSurface';
@@ -216,16 +217,17 @@ export function createDeformMaterial(
   );
   const roughness = mix(rough, 0.92, foam);
   material.normalNode = normal;
-  // Over a coast's shelf the water is a few millimetres deep: clear and turquoise, the bank showing through it,
-  // rather than the open sea's deep blue running into the rock like a wall.
-  const shallow = shore ? float(1).sub(smoothstep(0.004, 0.06, shore)) : float(0);
+  // Over a coast's shelf the water is a few millimetres deep: clear and turquoise, the sand showing through it,
+  // turning to the open sea's deep blue only as the shelf runs out.
+  const shallow = shore ? float(1).sub(smoothstep(0.05, SHALLOWS, shore)) : float(0);
   const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms);
   material.colorNode = mix(color, SHALLOW_WATER, shallow.mul(float(1).sub(foam)).mul(0.55));
   material.roughnessNode = roughness;
   material.emissiveNode = oceanSunLight(normal, wave, foam, roughness, uniforms);
   material.specularIntensityNode = mix(float(0.75), float(0.08), foam);
   material.transmissionNode = mix(mix(float(0.22), float(0.85), shallow), float(0), foam);
-  material.thicknessNode = mix(float(0.7), float(0.03), shallow);
+  // refraction through the shallows reaches no deeper than they are, a few millimetres
+  material.thicknessNode = mix(float(0.7), float(0.004), shallow);
   return { material, uniforms };
 }
 

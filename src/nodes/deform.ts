@@ -14,6 +14,7 @@ import {
   If,
   Loop,
   max,
+  min,
   normalize,
   select,
   sin,
@@ -21,6 +22,9 @@ import {
   vec3,
 } from 'three/tsl';
 import { MAX_IMPULSES } from '../config';
+import { OCEAN_DEPTH } from '../core/oceanFFT';
+import { SURF_FADE } from '../core/oceanShores';
+import { shelfDepthAt } from './surf';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { snoise } from './noise';
 import { oceanWaveVertex, type OceanWaveFields } from './oceanWaves';
@@ -188,11 +192,14 @@ export function oceanDeform(
   coastal: boolean,
 ): { pos: Vec3; nrm: Vec3; height: Float; weather: Float; damping: Float } {
   const weather = oceanWeatherAt(p, u).toVar();
-  const offshore = coastal ? smoothstep(0, 0.1, attribute('oceanShoreData', 'vec4').w) : float(1);
-  const damping = offshore.mul(0.82).add(0.18).toVar();
+  const shore = attribute('oceanShoreData', 'vec4').w;
+  const offshore = coastal ? smoothstep(0, SURF_FADE, shore) : float(1);
+  // and the wind's waves stand no taller than the shallows let them, so no trough bares the bar or the shelf
+  const shallows = coastal ? clamp(shelfDepthAt(shore).div(OCEAN_DEPTH).mul(1.5), 0.04, 1) : float(1);
+  const damping = min(offshore.mul(0.82).add(0.18), shallows).toVar();
   const wave = oceanWaveVertex(p, waves, u, weather, spacing);
   const height = wave.height.mul(damping).toVar();
-  const direction = normalize(p.add(wave.offset.mul(offshore)));
+  const direction = normalize(p.add(wave.offset.mul(min(offshore, shallows))));
   const radius = baseR(direction);
   const pos = direction.mul(radius.add(height));
   const nrm = normalize(baseN(p, p.mul(baseR(p))).sub(wave.gradient.mul(damping).div(radius)));

@@ -1,7 +1,14 @@
 import { BufferGeometry, Color, Float32BufferAttribute, Mesh, Vector3 } from 'three';
 import { reposeSlope } from '../core/sand';
 import { MeshStandardNodeMaterial } from 'three/webgpu';
-import { SHORE_SITES, shoreElevation, shoreNoise, shoreRadius, shoreSiteDistance } from '../core/oceanShores';
+import {
+  SHALLOWS,
+  SHORE_SITES,
+  shoreElevation,
+  shoreNoise,
+  shoreRadius,
+  shoreSiteDistance,
+} from '../core/oceanShores';
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { shoreSurface } from '../nodes/shore';
 import type { SurfInputs } from '../nodes/surf';
@@ -25,7 +32,7 @@ const SAND = new Color('#c4ab80');
 const WET_SAND = new Color('#8f7d5b');
 const WARM_SAND = new Color('#c99d6a');
 const PALE_SAND = new Color('#ddd0b0');
-const SHELF = new Color('#c9bf96');
+const SHELF_SAND = new Color('#c9bf96');
 const DEEP = new Color('#2c4a52');
 const color = new Color();
 /** The sim's buffers the land reads the sea from (OceanSim.renderBuffers). */
@@ -55,7 +62,8 @@ export class OceanShores {
     sea: SeaBuffers,
     sand?: { bed: StorageBufferNode<'vec4'>; slope: StorageBufferNode<'vec4'> },
   ) {
-    const skirtRings = 8;
+    // the seabed out over the shelf, which the clear shallows show
+    const skirtRings = coarse ? 18 : 32;
     const detail = coarse ? 0.5 : 1;
     const positions: number[] = [];
     const directions: number[] = [];
@@ -83,12 +91,12 @@ export class OceanShores {
       const counts: number[] = [];
       const spacing = (2 * Math.PI * Math.sin(site.radius)) / segments;
       for (let ring = 1; ring <= rings; ring++) {
-        // rings twice as close at the coast as in the middle, where the beach needs them; then an
-        // underwater skirt a fixed width out
+        // rings twice as close at the coast as in the middle, where the beach needs them; then the seabed out
+        // as far as the shallows show it, closer together near the beach
         const t = Math.min(1, ring / landRings);
         const inner = (t + Math.sin((t * Math.PI) / 2)) / 2;
-        const outer = Math.max(0, ring - landRings) / skirtRings;
-        const reach = site.radius * inner + Math.min(site.radius * 0.4, 0.2) * outer;
+        const outer = (Math.max(0, ring - landRings) / skirtRings) ** 1.4;
+        const reach = site.radius * inner + SHALLOWS * outer;
         const count =
           ring >= landRings
             ? segments
@@ -98,7 +106,7 @@ export class OceanShores {
         for (let sector = 0; sector < count; sector++) {
           const angle = (sector / count) * Math.PI * 2;
           const coast = shoreRadius(site, angle);
-          const arc = coast * inner + Math.min(coast * 0.4, 0.2) * outer;
+          const arc = coast * inner + SHALLOWS * outer;
           dir
             .copy(site.center)
             .multiplyScalar(Math.cos(arc))
@@ -155,8 +163,8 @@ export class OceanShores {
         .lerp(WET_SAND, wet)
         // below the waterline the shelf is pale sand, darkening with depth, which is what makes clear shallow
         // water turquoise
-        .lerp(SHELF, 1 - smooth(0.001, 0.004, height))
-        .lerp(DEEP, 1 - smooth(-0.06, -0.01, height))
+        .lerp(SHELF_SAND, 1 - smooth(0.001, 0.004, height))
+        .lerp(DEEP, 1 - smooth(-0.09, -0.03, height))
         .multiplyScalar(0.92 + grain * 0.06);
       colors.set([color.r, color.g, color.b], i * 3);
     }

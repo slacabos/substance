@@ -28,22 +28,30 @@ const makeSite = (
 };
 
 /**
- * The land, all sand: a continent covering about half the orb, its coast in view from the start, with deep bays
- * and headlands, wide beaches and dunes; and two small sandy islands out in the open half.
+ * The land, all sand: one beach round the orb at a beach's scale, not a continent's. From the starting view the
+ * dunes are at the top, the beach curves across the middle in a broad, shallow bay, and the sea is below, its
+ * shallows running far out over a sandbar.
  */
-export const SHORE_SITES: readonly ShoreSite[] = [
-  makeSite(0.9, 0.35, -0.25, 1.42, 0.04, 0.6, 0.16),
-  makeSite(-0.35, -0.3, 0.88, 0.1, 0.02, 3.4, 0.05),
-  makeSite(-0.7, 0.55, 0.3, 0.07, 0.016, 5.1, 0.05),
-];
+export const SHORE_SITES: readonly ShoreSite[] = [makeSite(0, 0.988, 0.156, 1.49, 0.022, 0, 0.26)];
 
-/** The continent, whose side of the orb the swell runs toward. */
+/** The land, whose side of the orb the swell runs toward. */
 export const MAINLAND = SHORE_SITES[0]!;
+
+/**
+ * The seabed off the beach: it shelves gently out to the open sea's depth `width` radians out, steeper near the
+ * shore than further out (a beach's concave profile), with a sandbar `bar.at` out, `bar.height` proud of the
+ * slope, which the waves break on before they reach the beach.
+ */
+export const SHELF = { width: 0.55, power: 0.8, bar: { at: 0.15, height: 0.009, width: 0.03 } } as const;
+/** How far out the water still looks shallow: clear and turquoise over pale sand, well past the shelf's edge. */
+export const SHALLOWS = 1.1;
+/** The tallest a wave can stand over the still water's depth before it breaks (a breaker index). */
+export const BREAKER = 0.5;
 
 /** Height of the waterline's sand above the still sea, and how much a beach climbs to its top. */
 export const SHORE_WATERLINE = 0.004;
 const WATERLINE = SHORE_WATERLINE;
-const BEACH_RISE = 0.012;
+const BEACH_RISE = 0.01;
 
 const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
 const smooth = (x: number): number => {
@@ -75,16 +83,14 @@ export function shoreNoise(x: number, y: number, z: number): number {
 }
 
 export function shoreRadius(site: ShoreSite, bearing: number): number {
-  // broad lobes in proportion to the site, and finer bays and headlands of their own size (but no bigger than a
-  // small island can take)
-  const fine = Math.min(site.radius, 0.3) ** 2 / 0.3;
+  // a beach's long, smooth sweeps: a broad bay facing the starting view (bearing -pi / 2), gentle points either
+  // side, and no headlands
   return (
     site.radius *
-      (1 +
-        0.17 * Math.cos(bearing * 2 + site.seed) +
-        0.095 * Math.sin(bearing * 3 - site.seed * 1.7) +
-        0.045 * Math.sin(bearing * 7 + site.seed * 2.3)) +
-    fine * (0.1 * Math.sin(bearing * 13 + site.seed * 3.1) + 0.05 * Math.sin(bearing * 29 - site.seed))
+    (1 +
+      0.12 * Math.cos(bearing * 2 + site.seed) +
+      0.025 * Math.sin(bearing * 3 + 1.1 - site.seed * 1.7) +
+      0.012 * Math.sin(bearing * 5 + 0.4 + site.seed * 2.3))
   );
 }
 
@@ -109,12 +115,23 @@ export function shoreDistance(dir: Vector3): number {
 }
 
 /**
- * The ground at dir: offshore the seabed shelves away; ashore a beach climbs gently from the waterline, then
- * dunes or rock rise toward the island's ridged heart, as high as the site allows.
+ * How far the seabed lies below the waterline's sand at distance d out (d >= 0): the shelf's slope less the bar,
+ * then on past the shelf down to the deep sea floor.
+ */
+export function shelfDrop(d: number): number {
+  const { width, power, bar } = SHELF;
+  const slope = (OCEAN_DEPTH + WATERLINE) * Math.min(1, d / width) ** power;
+  const ridge = bar.height * Math.exp(-(((d - bar.at) / bar.width) ** 2));
+  return slope - ridge + 0.035 * smooth((d - width) / 0.15);
+}
+
+/**
+ * The ground at dir: offshore the seabed shelves away over the bar; ashore a beach climbs gently from the
+ * waterline to a line of dunes, with lower dunes and rolling sand behind them.
  */
 export function shoreElevation(site: ShoreSite, dir: Vector3): number {
   const distance = shoreSiteDistance(site, dir);
-  if (distance > 0) return WATERLINE - 0.085 * smooth(distance / 0.045);
+  if (distance > 0) return WATERLINE - shelfDrop(distance);
   const beach = beachWidth(site, dir);
   const sand = WATERLINE + BEACH_RISE * smooth(-distance / beach);
   const angle = Math.acos(Math.min(1, Math.max(-1, site.center.dot(dir))));
@@ -125,24 +142,25 @@ export function shoreElevation(site: ShoreSite, dir: Vector3): number {
   const hills = 0.55 + 0.45 * shoreNoise(dir.x * 4 + site.seed, dir.y * 4, dir.z * 4);
   const ridge = 1 - Math.abs(shoreNoise(dir.x * 26 + site.seed, dir.y * 26, dir.z * 26 - site.seed));
   const dunes = ridge * ridge * (0.006 + 0.008 * inland);
-  return sand + bank * (dunes + site.height * (0.25 + 0.75 * inland * hills));
+  // the foredune: a line of dunes along the top of the beach, higher in some stretches than others
+  const along = 0.65 + 0.35 * shoreNoise(dir.x * 9 + 2.7, dir.y * 9, dir.z * 9);
+  const foredune = 0.011 * along * Math.exp(-(((-distance - beach * 1.15) / 0.035) ** 2));
+  return sand + foredune + bank * (dunes + site.height * (0.25 + 0.75 * inland * hills));
 }
 
 /** Ground height used by spray collision; distant seabed sits well below the surface. */
 export function shoreGroundHeight(dir: Vector3): number {
-  let height = -0.085;
-  for (const site of SHORE_SITES) {
-    if (shoreSiteDistance(site, dir) < 0.05) height = Math.max(height, shoreElevation(site, dir));
-  }
+  let height = -Infinity;
+  for (const site of SHORE_SITES) height = Math.max(height, shoreElevation(site, dir));
   return height;
 }
 
 /**
- * Still water over the seabed off a shore, at angular distance d (the bank's profile in shoreElevation): a
- * narrow shelf that reaches the open sea's depth a few hundredths of a radian out.
+ * Still water over the seabed off a shore, at angular distance d (shelfDrop): a few millimetres over the bar
+ * and inshore, deepening slowly to the open sea's depth at the shelf's edge.
  */
 export function shelfDepth(d: number): number {
-  return Math.min(OCEAN_DEPTH, Math.max(0.002, 0.085 * smooth(d / 0.045) - WATERLINE));
+  return Math.min(OCEAN_DEPTH, Math.max(0.002, shelfDrop(Math.max(0, d)) - WATERLINE));
 }
 
 /** Where the shelf ends and the open sea's depth begins. */
@@ -199,9 +217,21 @@ export function shoreSurfPhase(
 }
 
 /**
+ * Where the surf breaks at distance d out, 0 to 1: hardest on the bar and again at the beach, and the broken
+ * waves running on between them as whitewater.
+ */
+export function surfBreakZone(d: number): number {
+  const { bar } = SHELF;
+  const beach = 1 - smooth((d - 0.012) / 0.06);
+  const onBar = 0.9 * Math.exp(-(((d - bar.at) / bar.width) ** 2));
+  const inside = 0.45 * (1 - smooth((d - bar.at) / 0.04));
+  return Math.max(beach, onBar, inside);
+}
+
+/**
  * Surf at a point with the given phase: the swell rises as it shoals (Green's law, height going as depth to
- * the -1/4), steepens into a sharp crest, and breaks on the bank. Shores facing the swell take it all; lee
- * shores only what bends round to them. `energy` is the sea's state (1 at the tuned wind and amplitude).
+ * the -1/4), steepens into a sharp crest, and breaks on the bar and the beach. Shores facing the swell take it
+ * all; lee shores only what bends round to them. `energy` is the sea's state (1 at the tuned wind and amplitude).
  */
 export function sampleShoreSurf(
   phase: number,
@@ -216,14 +246,16 @@ export function sampleShoreSurf(
     return;
   }
   const envelope =
-    (1 - smooth((distance - 0.04) / (SURF_REACH - 0.04))) *
+    (1 - smooth((distance - SURF_FADE) / (SURF_REACH - SURF_FADE))) *
     Math.min(1.8, (OCEAN_DEPTH / shelfDepth(distance)) ** 0.25) *
     (0.65 + smooth(distance / 0.025) * 0.35);
   const exposure = 0.15 + 0.85 * smooth((facing + 0.2) / 0.8);
   const s = Math.sin(phase);
   const crest = Math.max(0, s) ** 5;
-  out.height = (s * 0.32 + crest * 0.95 - 0.17) * 0.03 * envelope * exposure * energy;
-  out.breaking = crest * (1 - smooth((distance - 0.012) / 0.06)) * exposure * energy;
+  // no taller than the water's depth lets it stand, so its trough never bares the seabed
+  const amplitude = Math.min(SURF_HEIGHT * envelope * exposure * energy, BREAKER * shelfDepth(distance));
+  out.height = (s * 0.32 + crest * 0.95 - 0.17) * amplitude;
+  out.breaking = crest * surfBreakZone(distance) * exposure * energy;
 }
 
 /**
@@ -242,5 +274,8 @@ export function surfSet(spatial: number, setClock: number, seed: number): number
   return 0.55 + 0.9 * s * s;
 }
 
-/** How far out from a shore the surf reaches before it's just the open sea's swell. */
-export const SURF_REACH = 0.12;
+/** How far out from a shore the surf reaches before it's just the open sea's swell, and where it starts to fade. */
+export const SURF_REACH = 0.4;
+export const SURF_FADE = SHELF.bar.at + 0.05;
+/** The surf's height scale, orb radii: big next to the orb, as breakers are next to a beach. */
+export const SURF_HEIGHT = 0.034;
