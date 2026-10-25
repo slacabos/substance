@@ -93,7 +93,13 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs) {
     .mul(cover);
   const draining = smoothstep(UPRUSH, UPRUSH + 0.25, cycle);
   const amount = cover.mul(mix(float(0.45), float(0.22), draining)).add(front.mul(0.5));
-  const foam = threadsAt(drift, seaward, amount, front.mul(mix(float(0.7), float(0.35), draining)));
+  // (finer than the sea's and less drawn out: a thin sheet's foam is fine lace, not long streaks)
+  const foam = threadsAt(
+    drift.mul(1.7),
+    seaward.mul(0.55),
+    amount,
+    front.mul(mix(float(0.7), float(0.35), draining)),
+  );
   // sand the run-up has reached stays dark and glossy for a while
   const soaked = float(1)
     .sub(smoothstep(runup.mul(0.7), runup.add(0.0006), height))
