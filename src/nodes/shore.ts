@@ -3,7 +3,7 @@ import {
   abs,
   attribute,
   cameraViewMatrix,
-  clamp,
+  pow,
   color,
   cos,
   dot,
@@ -22,6 +22,7 @@ import {
 } from 'three/tsl';
 import { shelfLag } from '../core/oceanShores';
 import { snoise } from './noise';
+import { threadsAt } from './ocean';
 import { bumped, sandGrains, sandRelief, type SandLight, type SandSlope } from './sand';
 import { baseR } from './shape';
 import { surfWave, type SurfInputs } from './surf';
@@ -81,36 +82,18 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs) {
   const cover = float(1)
     .sub(smoothstep(level.sub(0.0004), level, height))
     .mul(smoothstep(0.0002, 0.0006, level));
-  // bubbles drifting with the water: up the beach on the uprush, back down on the backwash
+  // The sea's own foam carried up the beach: the same threads and torn white water (threadsAt, nodes/ocean.ts),
+  // drifting with the water, up on the uprush and back down on the backwash, so the run-up reads as the sea's
+  // surf running on rather than a separate line. Thickest at the front, thinning to lace behind it as it drains.
   const drift = p.add(seaward.mul(level.mul(-6)));
-  // (soft clumps a few pixels across: finer, they'd break the front into a dotted, jagged line)
-  const bubbles = smoothstep(
-    -0.45,
-    0.55,
-    snoise(drift.mul(150))
-      .mul(0.7)
-      .add(snoise(drift.mul(380)).mul(0.3)),
-  );
-  // the foam line is wider for a bigger wave, so a hand's surge brings a broad white front
-  const band = max(level.mul(0.15), 0.0011);
+  const band = max(level.mul(0.3), 0.002);
   const front = float(1)
-    .sub(smoothstep(0, band, abs(height.sub(level))))
-    .mul(smoothstep(0.0002, 0.0008, level));
-  // as it drains it leaves lace: patches of foam over the thin water behind the front
-  const lace = smoothstep(
-    0.05,
-    0.45,
-    snoise(drift.mul(230))
-      .mul(0.7)
-      .add(snoise(drift.mul(60)).mul(0.3)),
-  );
+    .sub(smoothstep(0, band, level.sub(height)))
+    .mul(smoothstep(0.0002, 0.0008, level))
+    .mul(cover);
   const draining = smoothstep(UPRUSH, UPRUSH + 0.25, cycle);
-  const trail = cover
-    .mul(float(1).sub(smoothstep(0, 0.004, depth)))
-    .mul(draining)
-    .mul(lace)
-    .mul(0.8);
-  const foam = clamp(front.mul(0.95).add(trail), 0, 1).mul(bubbles);
+  const amount = cover.mul(mix(float(0.45), float(0.22), draining)).add(front.mul(0.5));
+  const foam = threadsAt(drift, seaward, amount, front.mul(mix(float(0.7), float(0.35), draining)));
   // sand the run-up has reached stays dark and glossy for a while
   const soaked = float(1)
     .sub(smoothstep(runup.mul(0.7), runup.add(0.0006), height))
@@ -170,7 +153,8 @@ export function shoreSurface(
     .mul(grains.tint)
     .mul(mix(float(1), float(0.62), soaked));
   // under the run-up's thin sheet the sand is darker still, and barely tinted: it's millimetres of clear water
-  const sheet = ground.mul(mix(vec3(1), vec3(0.8, 0.88, 0.9), smoothstep(0, 0.003, sw.depth)));
+  // (absorbed red first, as the sea is: at the waterline it's as tinted as the sea's own edge, so they join up)
+  const sheet = ground.mul(pow(vec3(0.3, 0.7, 0.76), vec3(sw.depth.div(0.01))));
   const covered = mix(ground, sheet, sw.cover);
   const albedo = mix(covered, vec3(0.92, 0.96, 0.97), sw.foam);
   const l = normalize(cameraViewMatrix.mul(vec4(light.dir, 0)).xyz);

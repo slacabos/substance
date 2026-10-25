@@ -56,7 +56,6 @@ import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import { OCEAN_DEPTH } from '../core/oceanFFT';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
 import { LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
-import { snoise } from '../nodes/noise';
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
@@ -279,16 +278,14 @@ export function createDeformMaterial(
   );
   // Where the water meets the sand: how far the sand behind lies from it (from the depth buffer, so along the
   // sand's own contours rather than the water's triangles). Over its last couple of millimetres the water fades
-  // to a clear film, and its front is a band of bubbles, as a wave's run-up is.
+  // to a clear film.
   const behind = coastal ? viewportLinearDepth.sub(linearDepth()).mul(cameraFar.sub(cameraNear)) : float(1);
   const meets = smoothstep(EDGE_FADE[0], EDGE_FADE[1], behind);
-  const edge = coastal
-    ? float(1)
-        .sub(smoothstep(0.0006, 0.003, behind))
-        .mul(smoothstep(-0.2, 0.6, snoise(p.mul(140)).add(snoise(p.mul(360)).mul(0.35))))
-        .mul(0.55)
-    : float(0);
-  const foam = max(seaFoam, edge);
+  // (no foam line of its own there: the run-up drawn on the sand carries the foam on up the beach, and a line
+  // here showed as a second white strike, cut off from it)
+  // and the sea's own foam thins out over the last few millimetres too, handing over to the run-up's: foam
+  // piled at the very edge drew it as a white rim
+  const foam = seaFoam.mul(coastal ? smoothstep(EDGE_FADE[0], EDGE_FADE[1] * 0.7, behind) : float(1));
   const base = materialRoughness.add(turbulence.mul(0.1));
   // GGX alpha^2 grows by twice the hidden slope variance
   const rough = pow(pow(base, 4).add(surface.lostVariance.mul(damping).mul(damping).mul(2)), 0.25);
