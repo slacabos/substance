@@ -21,6 +21,7 @@ import {
   normalLocal,
   positionGeometry,
   positionLocal,
+  select,
   smoothstep,
   uniform,
   varyingProperty,
@@ -157,7 +158,7 @@ export class OceanShores {
       dir.fromArray(this.directions, i * 3);
       const height = elevations[i]!;
       const grain = shoreNoise(dir.x * 173, dir.y * 173, dir.z * 173);
-      const wet = 1 - smooth(0.0045, 0.009, height);
+      const wet = 1 - smooth(0.002, 0.0065, height);
       terrain[i] = wet;
       // broad drifts of warmer and paler sand, and dune troughs a little darker than their crests
       const drift = shoreNoise(dir.x * 6, dir.y * 6 + 3.1, dir.z * 6);
@@ -169,9 +170,9 @@ export class OceanShores {
         .lerp(PALE_SAND, Math.max(0, -drift) * 0.6)
         .multiplyScalar(0.86 + 0.14 * trough)
         .lerp(WET_SAND, wet)
-        // below the waterline the shelf is pale sand, darkening with depth, which is what makes clear shallow
-        // water turquoise
-        .lerp(SHELF_SAND, 1 - smooth(0.001, 0.004, height))
+        // below the still sea the shelf is pale sand, darkening with depth, which is what makes clear shallow
+        // water turquoise (the beach face just above it is wet sand like the rest of the shore)
+        .lerp(SHELF_SAND, 1 - smooth(-0.007, 0.0005, height))
         .lerp(DEEP, 1 - smooth(-0.09, -0.03, height))
         .multiplyScalar(0.92 + grain * 0.06);
       colors.set([color.r, color.g, color.b], i * 3);
@@ -201,6 +202,9 @@ export class OceanShores {
     // whether the sim's own water stands here (the sea, or a wave the hand sent up the beach), and how wet it has
     // left the sand
     const water = varyingProperty('float', 'vWater');
+    // and whether it's the sim's water standing on the land itself (a wave the hand sent up the beach), not the
+    // sea lapping at the shore
+    const flooded = varyingProperty('float', 'vFlooded');
     const soaked = varyingProperty('float', 'vSoaked');
     // how far the sand has been dug or piled here (the sim's sand bed, blended onto this finer mesh)
     const dug = varyingProperty('float', 'vDug');
@@ -210,10 +214,11 @@ export class OceanShores {
     material.positionNode = Fn(() => {
       const p = normalize(positionGeometry);
       // the column: the sea's drawn height (with the surf) over the ground's depth (ground.x, negative on land)
-      water.assign(
-        blendedAt(p, sea, (i) =>
-          smoothstep(0.0002, 0.0008, sea.ground.element(i).x.add(sea.surface.element(i).x)),
-        ),
+      const column = (i: Parameters<Parameters<typeof blendedAt>[2]>[0]) =>
+        smoothstep(0.0002, 0.0008, sea.ground.element(i).x.add(sea.surface.element(i).x));
+      water.assign(blendedAt(p, sea, column));
+      flooded.assign(
+        blendedAt(p, sea, (i) => select(sea.ground.element(i).x.lessThan(0), column(i), float(0))),
       );
       soaked.assign(sand ? blendedAt(p, sea, (i) => sand.bed.element(i).y) : float(0));
       const change = sand ? blendedAt(p, sea, (i) => sand.bed.element(i).x) : float(0);
@@ -237,7 +242,7 @@ export class OceanShores {
     })();
     const surface = shoreSurface(
       surf,
-      water,
+      { water, flooded },
       soaked,
       { dir: vec3(SAND_KEY_LIGHT.x, SAND_KEY_LIGHT.y, SAND_KEY_LIGHT.z), color: this.keyColor },
       dug,

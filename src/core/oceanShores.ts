@@ -38,18 +38,18 @@ export const SHORE_SITES: readonly ShoreSite[] = [makeSite(0, 0.988, 0.156, 1.49
 export const MAINLAND = SHORE_SITES[0]!;
 
 /**
- * The seabed off the beach: it shelves gently out to the open sea's depth `width` radians out, steeper near the
- * shore than further out (a beach's concave profile), with a sandbar `bar.at` out, `bar.height` proud of the
- * slope, which the waves break on before they reach the beach.
+ * The seabed off the beach: it shelves gently out to the open sea's depth `width` radians out (as `power` of the
+ * distance: 1 is a steady slope, which meets the beach's own gentle rise without a step at the waterline), with a
+ * sandbar `bar.at` out, `bar.height` proud of the slope, which the waves break on before they reach the beach.
  */
-export const SHELF = { width: 0.55, power: 0.8, bar: { at: 0.15, height: 0.009, width: 0.03 } } as const;
+export const SHELF = { width: 0.55, power: 1, bar: { at: 0.15, height: 0.008, width: 0.03 } } as const;
 /** How far out the water still looks shallow: clear and turquoise over pale sand, well past the shelf's edge. */
 export const SHALLOWS = 1.1;
 /** The tallest a wave can stand over the still water's depth before it breaks (a breaker index). */
 export const BREAKER = 0.5;
 
 /** Height of the waterline's sand above the still sea, and how much a beach climbs to its top. */
-export const SHORE_WATERLINE = 0.004;
+export const SHORE_WATERLINE = 0.0015;
 const WATERLINE = SHORE_WATERLINE;
 const BEACH_RISE = 0.01;
 
@@ -204,22 +204,26 @@ export interface ShoreSurfSample {
 }
 
 /**
- * The surf's phase at a point off a shore. Offshore it's the swell's own, a plane wave of wavenumber k along
- * the swell's direction (`along` is the point's distance in that direction from its island's centre). On the
- * shelf the crests slow and crowd together as the water shallows; the along-shore part of the wavenumber is
- * kept (Snell's law), so crests swing round to meet the shore and break along it in turn rather than all at once.
- * `facing` is the cosine between the swell's direction and the way into the shore; `clock` is omega times time.
+ * Crests a turn round the land: the swell's slight slant to the beach, so a wave breaks along it in turn over a
+ * second or two rather than all at once (a whole number, so the phase joins up all the way round).
+ */
+export const SURF_SLANT = 2;
+
+/**
+ * The surf's phase at a point off the beach, `distance` out from it and `bearing` round the land's centre. Swell
+ * refracts until its crests run nearly parallel to the shore, so they come straight in at the beach: offshore at
+ * the open sea's k per radian of distance, and on the shelf slowing and crowding together as the water shallows
+ * (`lag`, the shelf's delay, times omega), with a slight slant along the beach (SURF_SLANT). `clock` is omega
+ * times time.
  */
 export function shoreSurfPhase(
-  along: number,
+  bearing: number,
   distance: number,
   lag: number,
-  facing: number,
   swell: { omega: number; k: number },
   clock: number,
 ): number {
-  const across = Math.max(0, SHELF_EDGE - distance);
-  return swell.k * along + swell.omega * lag - swell.k * Math.max(facing, 0.15) * across - clock;
+  return swell.omega * lag - swell.k * Math.max(0, distance - SHELF_EDGE) + SURF_SLANT * bearing - clock;
 }
 
 /**
@@ -260,7 +264,12 @@ export function sampleShoreSurf(
   const crest = Math.max(0, s) ** 5;
   // no taller than the water's depth lets it stand, so its trough never bares the seabed
   const amplitude = Math.min(SURF_HEIGHT * envelope * exposure * energy, BREAKER * shelfDepth(distance));
-  out.height = (s * 0.32 + crest * 0.95 - 0.17) * amplitude;
+  // (it flattens out toward the shoreline, troughs most: there the water would lie nearly along the beach's own
+  // slope, and its edge would wander far up and down it with every small difference between the sim's vertices,
+  // a sharp crest most of all; the swash, drawn on the sand, is the run-up and the backwash)
+  const height = (s * 0.32 + crest * 0.95 - 0.17) * amplitude;
+  const calm = smooth((distance - 0.005) / 0.035);
+  out.height = height * (height < 0 ? calm : 0.3 + 0.7 * calm);
   out.breaking = crest * surfBreakZone(distance) * exposure * energy;
 }
 

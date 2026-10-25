@@ -39,16 +39,8 @@ import { createOceanField, type OceanField } from '../core/oceanField';
 import { FLUID } from '../core/oceanFluid';
 import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 import { OCEAN_DEPTH, OCEAN_WIND_ANGLE } from '../core/oceanFFT';
-import { WIND, windAt as windOnOrb } from '../core/oceanWind';
-import {
-  BREAKER,
-  MAINLAND,
-  shoreSwell,
-  SURF_FADE,
-  SURF_HEIGHT,
-  SURF_REACH,
-  SURF_SET_WAVES,
-} from '../core/oceanShores';
+import { WIND } from '../core/oceanWind';
+import { BREAKER, shoreSwell, SURF_FADE, SURF_HEIGHT, SURF_REACH, SURF_SET_WAVES } from '../core/oceanShores';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
@@ -104,11 +96,8 @@ const AREA_FIXED = 1e9;
 const DEEP_WATER = 0.025;
 /** How fast water running over wet sand smooths it (SandField's wash), per second. */
 const SAND_WASH = 0.4;
-/** How far under dry ground the water's surface is drawn, so it never shows through the sand; and next to water. */
+/** How far under dry ground the water's surface is drawn, so it never shows through the sand. */
 const DRY_SINK = 0.02;
-const DRY_UNDER = 0.0005;
-/** How far downwind of the continent's middle the swell's target sits, radians. */
-const SWELL_OFFSET = 0.8;
 /**
  * Seconds each foam drift runs before it starts over. Foam's pattern is read at its vertex moved back by the
  * drift; a drift that ran forever would shear it into fingerprints wherever the current swirls, so two drifts,
@@ -188,12 +177,10 @@ export class OceanSim {
    * The point on the orb the swell runs toward: crests are rings around it, closing in. It sits over the
    * continent, pushed downwind, so coasts facing the open sea and the wind take the swell and the rest lie in lee.
    */
-  private readonly swellTarget = uniform(new Vector3(0, 1, 0));
   /** The swell's frequency and open-water wavenumber, its direction and strength (each easing after the wind's). */
   private readonly swell: { omega: number; k: number };
   /** The swell on the shores, for the surf here and the swash on the land (nodes/surf.ts). */
   readonly surf: SurfInputs;
-  private swellAngle = OCEAN_WIND_ANGLE;
   private swellSpeed: number = OCEAN_DEFAULTS.windSpeed;
   private readonly events = Array.from({ length: EVENTS }, () => new Vector4(0, 0, 1, 0));
   private readonly eventShapes = Array.from({ length: EVENTS }, () => new Vector4());
@@ -258,7 +245,6 @@ export class OceanSim {
     this.uniforms.amplitude.value = tuning.amplitude;
     this.swell = shoreSwell(tuning.peakWavelength);
     this.surf = {
-      target: this.swellTarget,
       clock: this.uniforms.surfClock,
       setClock: this.uniforms.setClock,
       energy: this.uniforms.surfEnergy,
@@ -309,15 +295,6 @@ export class OceanSim {
         field.shoreDistance[i]!,
         field.shelfLag[i]!,
         field.foamGrain[i]!,
-      ]),
-      'vec4',
-    ) as Vec4Buffer;
-    const shore = instancedArray(
-      pack((i) => [
-        field.shoreNormal[i * 3]!,
-        field.shoreNormal[i * 3 + 1]!,
-        field.shoreNormal[i * 3 + 2]!,
-        field.shoreSite[i]!,
       ]),
       'vec4',
     ) as Vec4Buffer;
@@ -577,12 +554,12 @@ export class OceanSim {
       })().compute(n);
 
     /**
-     * Surf: the swell running in from its own direction, slowing and crowding on the shelf and swinging round to
-     * break along the bank (shoreSurfPhase and sampleShoreSurf in core/oceanShores.ts).
+     * Surf: the swell running straight in at the beach, slowing and crowding on the shelf and breaking on the bar
+     * and the bank (shoreSurfPhase and sampleShoreSurf in core/oceanShores.ts).
      */
-    const surfAt = (distance: Float, lag: Float, site: Float, q: Vec3, normal: Vec3) => {
+    const surfAt = (distance: Float, lag: Float, q: Vec3) => {
       const smooth = (x: Float) => smoothstep(0, 1, x);
-      const { phase, set, exposure } = surfWave(q, distance, lag, site, normal, this.surf);
+      const { phase, set } = surfWave(q, distance, lag, this.surf);
       const depth = shelfDepthAt(distance);
       const envelope = float(1)
         .sub(smooth(distance.sub(SURF_FADE).div(SURF_REACH - SURF_FADE)))
@@ -590,9 +567,12 @@ export class OceanSim {
         .mul(smooth(distance.div(0.025)).mul(0.35).add(0.65));
       const s = sin(phase);
       const crest = max(s, 0).pow(5);
-      const strength = exposure.mul(this.surf.energy).mul(set);
+      const strength = this.surf.energy.mul(set);
       const amplitude = min(envelope.mul(strength).mul(SURF_HEIGHT), depth.mul(BREAKER));
-      const height = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(amplitude);
+      // (troughs flatten toward the shoreline, as in sampleShoreSurf)
+      const wave = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(amplitude);
+      const calm = smooth(distance.sub(0.005).div(0.035));
+      const height = wave.mul(select(wave.lessThan(0), calm, calm.mul(0.7).add(0.3)));
       const breaking = crest.mul(surfBreakZoneAt(distance)).mul(strength);
       const inside = distance.greaterThanEqual(0).and(distance.lessThanEqual(SURF_REACH));
       return { height: select(inside, height, float(0)), breaking: select(inside, breaking, float(0)) };
@@ -631,7 +611,7 @@ export class OceanSim {
           foam.assign(max(foam, whitecap.mul(WHITECAP.foam)));
         }
         if (coastal) {
-          const surf = surfAt(g4.y, g4.z, shore.element(i).w, q, shore.element(i).xyz);
+          const surf = surfAt(g4.y, g4.z, q);
           surfHeight.assign(surf.height);
           impact.assign(
             clamp(
@@ -663,9 +643,9 @@ export class OceanSim {
       })().compute(n);
 
     /**
-     * Dry ground next to water: its surface is the water's level carried flat across from its wet neighbours (just
-     * under the sand here), so the water meets the beach where a level sea would, along the sand's own contours,
-     * rather than diving under the sand along the mesh's triangles. Further inland it sinks out of sight.
+     * Dry ground next to water: its surface is the water's level carried flat across from its wet neighbours, so
+     * the water meets the beach where a level sea would, along the sand's own contours, rather than diving under
+     * the sand along the mesh's triangles. Further inland it sinks out of sight.
      */
     const levelDry = (final: number) =>
       Fn(() => {
@@ -675,16 +655,28 @@ export class OceanSim {
         });
         const level = float(0).toVar();
         const count = float(0).toVar();
+        // from wet vertices one and two steps away (the nearer counting double): two rings of dry ground carry the
+        // level, so wherever the water may still show above the sand it's level, and the cut-off further out
+        // (DRY_SINK) always falls under the sand
+        const take = (j: Node<'uint'>, weight: number) => {
+          If(j.notEqual(i).and(wetIn(final)(j)), () => {
+            // the surface as drawn, surf and all (finishSurface wrote it; this pass only writes dry vertices)
+            level.addAssign(this.surface.element(j).x.mul(weight));
+            count.addAssign(weight);
+          });
+        };
         Loop({ start: 0, end: 6, type: 'uint' }, ({ i: k }) => {
           const j = this.neighbor.element(i.mul(6).add(k));
-          If(j.notEqual(i).and(wetIn(final)(j)), () => {
-            level.addAssign(heights[final]!.element(j).x);
-            count.addAssign(1);
+          take(j, 2);
+          Loop({ start: 0, end: 6, type: 'uint' }, ({ i: m }) => {
+            take(this.neighbor.element(j.mul(6).add(m)), 1);
           });
         });
+        // (not clamped under the sand: ground just bared by the backwash sits a hair under the water's level, and
+        // dipping the level under it there would cut teeth into the water's edge; the sand shows wherever it's
+        // higher)
         If(count.greaterThan(0), () => {
-          const bed = heights[final]!.element(i).x;
-          this.surface.element(i).x.assign(min(level.div(count), bed.sub(DRY_UNDER)));
+          this.surface.element(i).x.assign(level.div(count));
         });
       })().compute(n);
 
@@ -848,7 +840,6 @@ export class OceanSim {
    */
   private updateSwell(dt: number): void {
     const ease = (tau: number) => 1 - Math.exp(-dt / tau);
-    this.swellAngle += (this.uniforms.windAngle.value - this.swellAngle) * ease(25);
     this.swellSpeed += (this.uniforms.wind.value - this.swellSpeed) * ease(15);
     this.uniforms.surfEnergy.value =
       this.uniforms.amplitude.value * Math.min(1.3, Math.max(0, this.swellSpeed));
@@ -856,9 +847,6 @@ export class OceanSim {
     this.uniforms.surfClock.value = (this.uniforms.surfClock.value + this.swell.omega * dt) % turn;
     this.uniforms.setClock.value =
       (this.uniforms.setClock.value + (this.swell.omega / SURF_SET_WAVES) * dt) % turn;
-    const downwind = windOnOrb(MAINLAND.center, this.swellAngle).normalize();
-    this.swellTarget.value.copy(MAINLAND.center).multiplyScalar(Math.cos(SWELL_OFFSET));
-    this.swellTarget.value.addScaledVector(downwind, Math.sin(SWELL_OFFSET)).normalize();
   }
 
   /** The live wind (core/oceanWind.ts): where it blows, and how hard. */

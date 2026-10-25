@@ -15,6 +15,7 @@ import {
   shoreSurfPhase,
   shoreSwell,
   SURF_SET_WAVES,
+  SURF_SLANT,
   surfSet,
 } from '../src/core/oceanShores';
 import { OCEAN_DEFAULTS } from '../src/core/oceanTuning';
@@ -59,7 +60,6 @@ describe('coastal ocean', () => {
     }
     expect(shoreDistance(SHORE_SITES[0]!.center.clone().negate())).toBeGreaterThan(0);
     const surf = {
-      target: uniform(new Vector3(0, 1, 0)),
       clock: uniform(0),
       setClock: uniform(0),
       energy: uniform(1),
@@ -93,23 +93,14 @@ describe('coastal ocean', () => {
   const swell = shoreSwell(OCEAN_DEFAULTS.peakWavelength);
   const surfAt = (distance: number, time: number, facing = 1) => {
     const out = { height: 0, breaking: 0 };
-    // a straight shore: moving out from it runs against the swell by `facing`
-    const phase = shoreSurfPhase(
-      -distance * facing,
-      distance,
-      shelfLag(distance),
-      facing,
-      swell,
-      swell.omega * time,
-    );
+    const phase = shoreSurfPhase(0, distance, shelfLag(distance), swell, swell.omega * time);
     sampleShoreSurf(phase, distance, facing, 1, out);
     return out;
   };
 
   it('runs swell in toward the bank, crowding it on the shelf, and breaks it there', () => {
     // a crest is a point of fixed phase; the phase falls away from the shore, so find it by bisection
-    const phaseAt = (d: number, time: number) =>
-      shoreSurfPhase(-d, d, shelfLag(d), 1, swell, swell.omega * time);
+    const phaseAt = (d: number, time: number) => shoreSurfPhase(0, d, shelfLag(d), swell, swell.omega * time);
     const crestAt = (phase: number, time: number) => {
       let [near, far] = [0, 0.1];
       for (let i = 0; i < 60; i++) {
@@ -128,8 +119,8 @@ describe('coastal ocean', () => {
     // a crest gains phase faster per unit distance near the bank than out at sea: it has slowed and shortened
     const slope = (d: number) =>
       Math.abs(
-        shoreSurfPhase(-d - 1e-4, d + 1e-4, shelfLag(d + 1e-4), 1, swell, 0) -
-          shoreSurfPhase(-d, d, shelfLag(d), 1, swell, 0),
+        shoreSurfPhase(0, d + 1e-4, shelfLag(d + 1e-4), swell, 0) -
+          shoreSurfPhase(0, d, shelfLag(d), swell, 0),
       ) / 1e-4;
     const open = SHELF_EDGE + 0.05;
     expect(slope(0.005)).toBeGreaterThan(2 * slope(open));
@@ -153,6 +144,22 @@ describe('coastal ocean', () => {
     expect(surfAt(0.5, 3)).toEqual({ height: 0, breaking: 0 });
   });
 
+  it('brings its crests straight in at the beach, nearly parallel to it, not sweeping along it', () => {
+    // along the beach a crest is late by only the slight slant: a quarter turn round the land is half a wave
+    const along = Math.abs(
+      shoreSurfPhase(Math.PI / 2, 0.05, shelfLag(0.05), swell, 0) -
+        shoreSurfPhase(0, 0.05, shelfLag(0.05), swell, 0),
+    );
+    expect(along).toBeCloseTo((SURF_SLANT * Math.PI) / 2, 6);
+    // while across it, from the bar to the beach, it's several waves
+    const across =
+      shoreSurfPhase(0, 0, shelfLag(0), swell, 0) -
+      shoreSurfPhase(0, SHELF.bar.at, shelfLag(SHELF.bar.at), swell, 0);
+    expect(across).toBeGreaterThan(2 * Math.PI);
+    // a whole number of crests round the land, so the phase joins up all the way round
+    expect(Number.isInteger(SURF_SLANT)).toBe(true);
+  });
+
   it('breaks hardest on shores facing the swell, and keeps a steady pace however long it runs', () => {
     let exposed = 0;
     let lee = 0;
@@ -164,8 +171,8 @@ describe('coastal ocean', () => {
     // the clock only ever adds omega per second, never time times a changing speed
     for (const time of [1, 100, 10000]) {
       const step =
-        shoreSurfPhase(0, 0.01, shelfLag(0.01), 1, swell, swell.omega * (time + 1)) -
-        shoreSurfPhase(0, 0.01, shelfLag(0.01), 1, swell, swell.omega * time);
+        shoreSurfPhase(0, 0.01, shelfLag(0.01), swell, swell.omega * (time + 1)) -
+        shoreSurfPhase(0, 0.01, shelfLag(0.01), swell, swell.omega * time);
       expect(step).toBeCloseTo(-swell.omega, 6);
     }
   });
@@ -177,7 +184,7 @@ describe('coastal ocean', () => {
     for (let wave = 0; wave < 4 * SURF_SET_WAVES; wave++) {
       let peak = 0;
       for (let t = wave * period; t < (wave + 1) * period; t += 0.05) {
-        const spatial = shoreSurfPhase(-0.012, 0.012, shelfLag(0.012), 1, swell, 0);
+        const spatial = shoreSurfPhase(0, 0.012, shelfLag(0.012), swell, 0);
         const out = { height: 0, breaking: 0 };
         const clock = swell.omega * t;
         sampleShoreSurf(spatial - clock, 0.012, 1, surfSet(spatial, clock / SURF_SET_WAVES, 0), out);

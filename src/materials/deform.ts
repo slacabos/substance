@@ -38,6 +38,10 @@ import {
   varyingProperty,
   vec3,
   vertexIndex,
+  cameraFar,
+  cameraNear,
+  linearDepth,
+  viewportLinearDepth,
 } from 'three/tsl';
 import { MAX_IMPULSES } from '../config';
 import { bakeFoamLace } from '../core/foamLace';
@@ -58,8 +62,8 @@ export { DeformMode, type DeformUniforms };
 const SHALLOW_WATER = vec3(0.16, 0.62, 0.66);
 /** How much higher water standing on the coast's sand is drawn than the sim has it, orb radii. */
 const WATER_LIFT = 0.0006;
-/** How far under the sand a draining film of water is drawn, orb radii. */
-const FILM_SINK = 0.0008;
+/** Over how much water between it and the sand behind (view distance, orb radii) the water's edge fades in. */
+const EDGE_FADE = [0.0002, 0.005] as const;
 
 /** How far the simulated waves' vertices lean toward their crests, per unit of slope (orb radii). */
 const CREST_LEAN = 0.012;
@@ -194,15 +198,15 @@ export function createDeformMaterial(
     // narrow and troughs widen. Capped well under half the mesh spacing, so neighbours can never cross.
     const lean = simGradient.mul(CREST_LEAN);
     const shift = lean.mul(min(float(1), float(CREST_SHIFT).div(max(length(lean), 1e-6))));
-    // (water standing on the coast's sand rides a hair higher than the sim's, for the same reason the seabed is
-    // drawn a little deeper: the land's finer mesh would poke through a thin sheet; but a film a wave left
-    // draining on the beach sits just under the sand, which shows it as wet sand rather than a pane of water)
+    // (water on the coast rides a hair higher than the sim's, for the same reason the seabed is drawn a little
+    // deeper: the land's finer mesh would poke through a thin sheet. It's the same everywhere, so the water stays
+    // one smooth surface up to its edge; a thin film fades out by the depth to the sand behind it, below)
     const depth = sim.ground.element(vertexIndex).x.add(simHeight);
     column?.assign(depth);
-    const lift = coastal
-      ? mix(float(-FILM_SINK), float(WATER_LIFT), smoothstep(0.0005, 0.002, depth))
-      : float(0);
-    return surface.pos.add(normalize(surface.pos).mul(simHeight.add(lift))).add(shift);
+    const lift = coastal ? float(WATER_LIFT) : float(0);
+    // nor do crests lean near the water's edge, where a sideways shift would show as teeth along the beach
+    const leaning = coastal ? smoothstep(0.004, 0.012, depth) : float(1);
+    return surface.pos.add(normalize(surface.pos).mul(simHeight.add(lift))).add(shift.mul(leaning));
   })();
 
   // Per pixel: the full-resolution wave slopes, crests where the surface bunches up, and roughness for the
@@ -223,13 +227,16 @@ export function createDeformMaterial(
     uniforms,
     shore,
   );
-  // where the sim's water thins out over sand its front is a band of bubbles, as a wave's run-up is: a broken,
-  // ragged line rather than the mesh's own edge
-  const edge = column
+  // Where the water meets the sand: how far the sand behind lies from it (from the depth buffer, so along the
+  // sand's own contours rather than the water's triangles). Over its last couple of millimetres the water fades
+  // to a clear film, and its front is a band of bubbles, as a wave's run-up is.
+  const behind = coastal ? viewportLinearDepth.sub(linearDepth()).mul(cameraFar.sub(cameraNear)) : float(1);
+  const meets = smoothstep(EDGE_FADE[0], EDGE_FADE[1], behind);
+  const edge = coastal
     ? float(1)
-        .sub(smoothstep(0.0002, 0.0025, column))
-        .mul(smoothstep(-0.35, 0.25, snoise(p.mul(380)).add(snoise(p.mul(1100)).mul(0.5))))
-        .mul(0.9)
+        .sub(smoothstep(0.0006, 0.003, behind))
+        .mul(smoothstep(-0.2, 0.6, snoise(p.mul(140)).add(snoise(p.mul(360)).mul(0.35))))
+        .mul(0.55)
     : float(0);
   const foam = max(seaFoam, edge);
   const base = materialRoughness.add(turbulence.mul(0.1));
@@ -255,11 +262,22 @@ export function createDeformMaterial(
   // there, and the sand hides it; ground further from water sinks its surface DRY_SINK under, which this cuts)
   if (column) material.maskNode = column.greaterThan(-0.015);
   const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms);
-  material.colorNode = mix(color, SHALLOW_WATER, shallow.mul(float(1).sub(foam)).mul(0.55));
+  // (transmitted light is tinted by the colour, so at the very edge the colour goes clear too: tinted, the sand
+  // seen through the last film of water showed as a dark line)
+  material.colorNode = mix(
+    vec3(1),
+    mix(color, SHALLOW_WATER, shallow.mul(float(1).sub(foam)).mul(0.55)),
+    max(meets, foam),
+  );
   material.roughnessNode = roughness;
-  material.emissiveNode = oceanSunLight(normal, wave, foam, roughness, uniforms);
-  material.specularIntensityNode = mix(float(0.75), float(0.08), foam);
-  material.transmissionNode = mix(mix(float(0.22), float(0.85), shallow), float(0), foam);
+  material.emissiveNode = oceanSunLight(normal, wave, foam, roughness, uniforms).mul(max(meets, foam));
+  material.specularIntensityNode = mix(float(0.75), float(0.08), foam).mul(max(meets, foam));
+  // (foam stays opaque white even at the very edge)
+  material.transmissionNode = mix(
+    mix(float(1), mix(float(0.22), float(0.85), shallow), meets),
+    float(0),
+    foam,
+  );
   // refraction through the shallows reaches no deeper than they are, a few millimetres
   material.thicknessNode = mix(float(0.7), float(0.004), shallow);
   return { material, uniforms };
