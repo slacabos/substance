@@ -1,9 +1,20 @@
 import { DirectionalLight, Mesh, Vector3 } from 'three';
 import { MeshStandardNodeMaterial, type WebGPURenderer } from 'three/webgpu';
-import { float, Fn, normalize, normalLocal, positionGeometry, varyingProperty, vertexIndex } from 'three/tsl';
+import {
+  float,
+  Fn,
+  length,
+  normalize,
+  normalLocal,
+  positionGeometry,
+  uniform,
+  varyingProperty,
+  vec3,
+  vertexIndex,
+} from 'three/tsl';
 import { oceanDetail } from '../core/oceanTuning';
-import { SAND } from '../core/sand';
-import { sandSurface } from '../nodes/sand';
+import { reposeSlope, SAND } from '../core/sand';
+import { SAND_KEY_LIGHT, sandSurface } from '../nodes/sand';
 import { baseN, baseR } from '../nodes/shape';
 import { createDeformGeometry } from './deform';
 import { SandField } from './sandField';
@@ -11,8 +22,7 @@ import { SandGrains } from './sandGrains';
 import type { SettingLook } from '../scene/settings';
 import type { FrameContext, Readout, Substance } from './types';
 
-/** Where the sand's key light comes from (world space) and how bright its strongest channel is. */
-const KEY_LIGHT = new Vector3(-0.55, 0.65, 0.52).normalize();
+/** How bright the sand's key light (SAND_KEY_LIGHT) is in its strongest channel. */
 const KEY_STRENGTH = 2.4;
 
 /** How the hand works sand. */
@@ -43,6 +53,8 @@ export class Sand implements Substance {
    */
   readonly worldObjects;
   private readonly sun = new DirectionalLight(0xffffff, 0);
+  /** The key light's colour, for the grains' glints. */
+  private readonly sunColor = uniform(new Vector3());
 
   private readonly field: SandField;
   private readonly grains: SandGrains;
@@ -61,6 +73,8 @@ export class Sand implements Substance {
     const wet = varyingProperty('float', 'vWet');
     const disturbed = varyingProperty('float', 'vDisturbed');
     const below = varyingProperty('float', 'vBelow');
+    const steep = varyingProperty('float', 'vSteep');
+    const down = varyingProperty('vec3', 'vDown');
     const material = new MeshStandardNodeMaterial();
     material.positionNode = Fn(() => {
       const p = normalize(positionGeometry);
@@ -70,14 +84,25 @@ export class Sand implements Substance {
       disturbed.assign(here.z);
       below.assign(here.x.negate());
       // the shape's normal, tilted by the bed's slope
-      normalLocal.assign(normalize(baseN(p, p.mul(radius)).sub(slope.element(vertexIndex).xyz.div(radius))));
+      const gradient = slope.element(vertexIndex).xyz;
+      normalLocal.assign(normalize(baseN(p, p.mul(radius)).sub(gradient.div(radius))));
+      steep.assign(length(gradient).div(reposeSlope(0)));
+      down.assign(gradient.negate().div(length(gradient).add(1e-6)));
       return p.mul(radius.add(here.x));
     })();
-    const surface = sandSurface(normalize(positionGeometry), wet, disturbed, below);
+    const surface = sandSurface(
+      normalize(positionGeometry),
+      wet,
+      disturbed,
+      { dir: vec3(SAND_KEY_LIGHT.x, SAND_KEY_LIGHT.y, SAND_KEY_LIGHT.z), color: this.sunColor },
+      below,
+      { steep, down },
+    );
     material.colorNode = surface.color;
     material.roughnessNode = surface.roughness;
     material.normalNode = surface.normal;
     material.metalnessNode = float(0);
+    material.emissiveNode = surface.emissive;
     // the room's soft light at reduced strength, so the sun's raking light shows the relief
     material.envMapIntensity = 0.6;
     const mesh = new Mesh(geometry, material);
@@ -144,10 +169,11 @@ export class Sand implements Substance {
   onSettingChange(look: SettingLook): void {
     // a key light from the upper left front, tinted like the setting's sun but at a steady strength: the sun
     // itself is set for water's glints and often shines from behind, where it can't rake across the near side
-    this.sun.position.copy(KEY_LIGHT).multiplyScalar(10);
+    this.sun.position.copy(SAND_KEY_LIGHT).multiplyScalar(10);
     const { r, g, b } = look.sun.color;
     this.sun.color.setRGB(r, g, b).multiplyScalar(KEY_STRENGTH / Math.max(r, g, b, 1e-3));
     this.sun.intensity = 1;
+    this.sunColor.value.set(this.sun.color.r, this.sun.color.g, this.sun.color.b);
   }
 
   onSpinJerk(_axis: Vector3, magnitude: number): void {

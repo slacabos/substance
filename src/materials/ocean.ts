@@ -252,6 +252,7 @@ export class Ocean implements Substance {
   onSettingChange(look: SettingLook): void {
     this.uniforms.uSunDir.value.copy(look.sun.direction);
     this.uniforms.uSunColor.value.copy(look.sun.color);
+    this.shores?.setLight(look.sun.color);
   }
 
   /** On the coast's land (a dug channel below the sea still counts: you dig it, wet or not). */

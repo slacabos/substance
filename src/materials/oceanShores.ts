@@ -1,6 +1,8 @@
 import { BufferGeometry, Color, Float32BufferAttribute, Mesh, Vector3 } from 'three';
+import { reposeSlope } from '../core/sand';
 import { MeshStandardNodeMaterial } from 'three/webgpu';
 import { SHORE_SITES, shoreElevation, shoreNoise, shoreRadius, shoreSiteDistance } from '../core/oceanShores';
+import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { shoreSurface } from '../nodes/shore';
 import type { SurfInputs } from '../nodes/surf';
 import { blendedAt, seaHeightAt } from '../nodes/oceanSurface';
@@ -8,10 +10,12 @@ import {
   attribute,
   float,
   Fn,
+  length,
   normalize,
   normalLocal,
   positionGeometry,
   positionLocal,
+  uniform,
   varyingProperty,
   vec3,
 } from 'three/tsl';
@@ -26,6 +30,8 @@ const DEEP = new Color('#2c4a52');
 const color = new Color();
 /** The sim's buffers the land reads the sea from (OceanSim.renderBuffers). */
 type SeaBuffers = Parameters<typeof seaHeightAt>[1] & { slope: StorageBufferNode<'vec4'> };
+/** How bright the land's key light (SAND_KEY_LIGHT) is in its strongest channel. */
+const KEY_STRENGTH = 1.4;
 const UP = new Vector3(0, 1, 0);
 const SIDE = new Vector3(1, 0, 0);
 
@@ -37,6 +43,8 @@ const smooth = (a: number, b: number, value: number): number => {
 /** Continuous raised terrain with shared vertices, a narrow wet bank and a submerged foundation. */
 export class OceanShores {
   readonly mesh: Mesh;
+  /** The key light's colour, tinted like the setting's sun (setLight). */
+  private readonly keyColor = uniform(new Vector3());
   private readonly directions: Float32Array;
   private readonly elevations: Float32Array;
   private morph = Number.NaN;
@@ -178,6 +186,9 @@ export class OceanShores {
     const seaAtFoot = varyingProperty('float', 'vSeaAtFoot');
     // and how far the sand has been dug or piled here (the sim's sand bed, blended onto this finer mesh)
     const dug = varyingProperty('float', 'vDug');
+    // where the digging left it steep, and the way down
+    const steep = varyingProperty('float', 'vSteep');
+    const down = varyingProperty('vec3', 'vDown');
     material.positionNode = Fn(() => {
       const swashFoot = attribute('swash', 'vec4');
       const p = normalize(positionGeometry);
@@ -193,16 +204,34 @@ export class OceanShores {
           blendedAt(p, sea, (i) => sand.slope.element(i).z),
         );
         normalLocal.assign(normalize(normalLocal.sub(slope)));
+        steep.assign(length(slope).div(reposeSlope(0)));
+        down.assign(slope.negate().div(length(slope).add(1e-6)));
+      } else {
+        steep.assign(0);
+        down.assign(vec3(0, 0, 1));
       }
       return positionLocal.add(p.mul(change));
     })();
-    const surface = shoreSurface(surf, seaAtFoot, dug);
+    const surface = shoreSurface(
+      surf,
+      seaAtFoot,
+      { dir: vec3(SAND_KEY_LIGHT.x, SAND_KEY_LIGHT.y, SAND_KEY_LIGHT.z), color: this.keyColor },
+      dug,
+      { steep, down },
+    );
     material.colorNode = surface.color;
     material.roughnessNode = surface.roughness;
     material.normalNode = surface.normal;
+    material.emissiveNode = surface.emissive;
     this.mesh = new Mesh(geometry, material);
     this.mesh.frustumCulled = false;
     this.updateMorph(0);
+  }
+
+  /** The setting's sun (linear colour times strength) tints the land's key light; its brightness stays steady. */
+  setLight(sun: Color): void {
+    const { r, g, b } = sun;
+    this.keyColor.value.set(r, g, b).multiplyScalar(KEY_STRENGTH / Math.max(r, g, b, 1e-3));
   }
 
   updateMorph(morph: number): void {
