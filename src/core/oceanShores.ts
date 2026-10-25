@@ -204,17 +204,35 @@ export interface ShoreSurfSample {
 }
 
 /**
- * Crests a turn round the land: the swell's slight slant to the beach, so a wave breaks along it in turn over a
- * second or two rather than all at once (a whole number, so the phase joins up all the way round).
+ * The surf is several trains of swell, not one sine: each of its own period (`ratio` of the main swell's frequency;
+ * deep-water waves of that frequency are `ratio`² as short), its own slight slant to the beach (`slant` crests a
+ * turn round the land, a whole number so the phase joins up all the way round), and its own share of the height.
+ * Where their crests fall together a big wave breaks, where they don't a small one: the waves come in all sizes,
+ * and no two along the beach alike.
  */
-export const SURF_SLANT = 2;
+export const SURF_TRAINS = [
+  { ratio: 1, slant: 2, share: 1, seed: 0 },
+  { ratio: 0.83, slant: -3, share: 0.6, seed: 1.9 },
+  { ratio: 1.21, slant: 5, share: 0.45, seed: 4.3 },
+] as const;
+export type SurfTrain = (typeof SURF_TRAINS)[number];
+export const SURF_SLANT = SURF_TRAINS[0].slant;
+const SHARES = SURF_TRAINS.reduce((sum, t) => sum + t.share, 0);
 
 /**
- * The surf's phase at a point off the beach, `distance` out from it and `bearing` round the land's centre. Swell
+ * How far a train's crests are bent along the beach at `bearing`, radians of phase: the seabed's own unevenness,
+ * which brings them in early here and late there, so a crest is a ragged line rather than a ruler.
+ */
+export function surfBend(train: SurfTrain, bearing: number): number {
+  return 0.9 * Math.sin(3 * bearing + train.seed) + 0.5 * Math.sin(7 * bearing + 2.3 * train.seed);
+}
+
+/**
+ * A train's phase at a point off the beach, `distance` out from it and `bearing` round the land's centre. Swell
  * refracts until its crests run nearly parallel to the shore, so they come straight in at the beach: offshore at
- * the open sea's k per radian of distance, and on the shelf slowing and crowding together as the water shallows
- * (`lag`, the shelf's delay, times omega), with a slight slant along the beach (SURF_SLANT). `clock` is omega
- * times time.
+ * the train's own k per radian of distance, and on the shelf slowing and crowding together as the water shallows
+ * (`lag`, the shelf's delay, times its omega), slanted and bent a little along the beach. `clock` is the train's
+ * omega times time, added up frame by frame.
  */
 export function shoreSurfPhase(
   bearing: number,
@@ -222,8 +240,30 @@ export function shoreSurfPhase(
   lag: number,
   swell: { omega: number; k: number },
   clock: number,
+  train: SurfTrain = SURF_TRAINS[0],
 ): number {
-  return swell.omega * lag - swell.k * Math.max(0, distance - SHELF_EDGE) + SURF_SLANT * bearing - clock;
+  const omega = swell.omega * train.ratio;
+  const k = swell.k * train.ratio * train.ratio;
+  return (
+    omega * lag -
+    k * Math.max(0, distance - SHELF_EDGE) +
+    train.slant * bearing +
+    surfBend(train, bearing) -
+    clock
+  );
+}
+
+/**
+ * How lopsided a wave is at distance d out, 0 to about 0.8: inside the bar it's a breaking bore, a steep foaming
+ * front with a long gentle back, rather than a sine.
+ */
+export function surfSkew(d: number): number {
+  return 0.8 * (1 - smooth((d - SHELF.bar.at - 0.02) / 0.08));
+}
+
+/** A wave's shape at `phase`: a sine, sheared by `skew` into a steep front and a long back. */
+export function surfShape(phase: number, skew: number): number {
+  return Math.sin(phase + skew * Math.sin(phase));
 }
 
 /**
@@ -260,7 +300,7 @@ export function sampleShoreSurf(
     Math.min(1.8, (OCEAN_DEPTH / shelfDepth(distance)) ** 0.25) *
     (0.65 + smooth(distance / 0.025) * 0.35);
   const exposure = 0.15 + 0.85 * smooth((facing + 0.2) / 0.8);
-  const s = Math.sin(phase);
+  const s = surfShape(phase, surfSkew(distance));
   const crest = Math.max(0, s) ** 5;
   // no taller than the water's depth lets it stand, so its trough never bares the seabed
   const amplitude = Math.min(SURF_HEIGHT * envelope * exposure * energy, BREAKER * shelfDepth(distance));
@@ -271,6 +311,34 @@ export function sampleShoreSurf(
   const calm = smooth((distance - 0.005) / 0.035);
   out.height = height * (height < 0 ? calm : 0.3 + 0.7 * calm);
   out.breaking = crest * surfBreakZone(distance) * exposure * energy;
+}
+
+/**
+ * The whole surf at a point: every train (SURF_TRAINS) sampled at its own phase and clock (`clocks`, one per train)
+ * and added up by its share. They're averaged, so the water can never stand taller than one train lets it; where
+ * their crests fall together a big wave breaks.
+ */
+export function shoreSurfAt(
+  bearing: number,
+  distance: number,
+  lag: number,
+  swell: { omega: number; k: number },
+  clocks: readonly number[],
+  energy: number,
+  out: ShoreSurfSample,
+): void {
+  const one = { height: 0, breaking: 0 };
+  let height = 0;
+  let breaking = 0;
+  SURF_TRAINS.forEach((train, t) => {
+    const phase = shoreSurfPhase(bearing, distance, lag, swell, clocks[t]!, train);
+    sampleShoreSurf(phase, distance, 1, energy, one);
+    height += one.height * train.share;
+    breaking = Math.max(breaking, one.breaking * Math.min(1, train.share * 1.4));
+  });
+  // averaged, then lifted a little: trains rarely all fall together
+  out.height = Math.max((height / SHARES) * 1.35, -BREAKER * shelfDepth(Math.max(0, distance)));
+  out.breaking = breaking;
 }
 
 /**

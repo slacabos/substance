@@ -36,10 +36,12 @@ import {
   uniform,
   uniformArray,
   varyingProperty,
+  vec2,
   vec3,
   vertexIndex,
   cameraFar,
   clamp,
+  dot,
   cameraNear,
   linearDepth,
   viewportLinearDepth,
@@ -88,6 +90,8 @@ export interface OceanSurfaceOptions {
     drift: StorageBufferNode<'vec4'>;
     /** depth (negative on land), shore distance, the shelf's lag, foam grain */
     ground: StorageBufferNode<'vec4'>;
+    /** the current (xyz), which drags the surf's foam into streaks */
+    flow: StorageBufferNode<'vec4'>;
     driftBlend: Node<'float'>;
   };
   spacing: number;
@@ -181,6 +185,8 @@ export function createDeformMaterial(
   // the coast's values, packed in one varying (WebGPU passes at most 16 from vertex to fragment): distance to
   // shore, the water's column, and the depth its colour goes by
   const coast = varyingProperty('vec3', 'vCoast');
+  // and which way the water runs, in the vertex's drift basis (driftBasis)
+  const current = varyingProperty('vec2', 'vCurrent');
   const shore = coastal ? coast.x : undefined;
   // how deep the sim's own water stands here: over dry ground it's negative (its surface sinks under the ground)
   const column = coastal ? coast.y : undefined;
@@ -202,6 +208,15 @@ export function createDeformMaterial(
     // where the foam pattern is read: this vertex moved back by each of its two drifts
     const drift = sim.drift.element(vertexIndex);
     const { e1, e2 } = driftBasis(p);
+    if (coastal) {
+      // the way the surf's foam is dragged: up and down the beach, as the waves and the backwash run (the shore's
+      // normal), or with the current where that runs fast
+      const flow = sim.flow.element(vertexIndex).xyz;
+      const seaward = attribute('oceanShoreData', 'vec4').xyz;
+      const speed = length(flow);
+      const drag = mix(seaward, flow.div(max(speed, 1e-6)), smoothstep(0.02, 0.08, speed));
+      current.assign(vec2(dot(drag, e1), dot(drag, e2)));
+    }
     objA.assign(p.sub(e1.mul(drift.x)).sub(e2.mul(drift.y)));
     objB.assign(p.sub(e1.mul(drift.z)).sub(e2.mul(drift.w)));
 
@@ -238,6 +253,11 @@ export function createDeformMaterial(
     float(1).sub(smoothstep(0.3, 0.85, surface.jacobian)),
     smoothstep(0.6, 1.05, surface.foam),
   );
+  // the way the water runs here (unit), or along the shore where it's still
+  const basis = driftBasis(p);
+  const alongCurrent = normalize(
+    basis.e1.mul(current.x).add(basis.e2.mul(current.y)).add(basis.e1.mul(1e-4)),
+  );
   const seaFoam = oceanFoam(
     { a: objA, b: objB, blend: sim.driftBlend },
     foamLaceTexture(),
@@ -246,6 +266,7 @@ export function createDeformMaterial(
     simulatedFoam,
     uniforms,
     shore,
+    coastal ? alongCurrent : undefined,
   );
   // Where the water meets the sand: how far the sand behind lies from it (from the depth buffer, so along the
   // sand's own contours rather than the water's triangles). Over its last couple of millimetres the water fades

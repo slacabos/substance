@@ -25,7 +25,6 @@ import {
   round,
   select,
   sign,
-  sin,
   smoothstep,
   storage,
   uint,
@@ -40,12 +39,12 @@ import { FLUID } from '../core/oceanFluid';
 import { OCEAN_DEFAULTS, type OceanTuning } from '../core/oceanTuning';
 import { OCEAN_DEPTH, OCEAN_WIND_ANGLE } from '../core/oceanFFT';
 import { WIND } from '../core/oceanWind';
-import { BREAKER, shoreSwell, SURF_FADE, SURF_HEIGHT, SURF_REACH, SURF_SET_WAVES } from '../core/oceanShores';
+import { shoreSwell, SURF_FADE, SURF_SET_WAVES, SURF_TRAINS } from '../core/oceanShores';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { driftBasis, windAt } from '../nodes/oceanSurface';
-import { shelfDepthAt, surfBreakZoneAt, surfWave, type SurfInputs } from '../nodes/surf';
+import { surfAtPoint, surfWave, type SurfInputs } from '../nodes/surf';
 import { SandField } from './sandField';
 import { oceanWaveFoam, type OceanWaveFields } from '../nodes/oceanWaves';
 
@@ -156,8 +155,11 @@ export class OceanSim {
     /** Where the wind blows, as OCEAN_WIND_ANGLE (core/oceanWind.ts). */
     windAngle: uniform(OCEAN_WIND_ANGLE),
     amplitude: uniform(OCEAN_DEFAULTS.amplitude),
-    /** The surf's clock: the swell's frequency times time, added up frame by frame, never time times a speed. */
-    surfClock: uniform(0),
+    /**
+     * The surf trains' clocks (SURF_TRAINS): each its frequency times time, added up frame by frame, never time
+     * times a speed.
+     */
+    surfClocks: uniform(new Vector3()),
     /** The sets' clock: the swell's frequency over SURF_SET_WAVES, added up the same way. */
     setClock: uniform(0),
     /** The swell's strength on the shores, following the wind slowly. */
@@ -245,7 +247,7 @@ export class OceanSim {
     this.uniforms.amplitude.value = tuning.amplitude;
     this.swell = shoreSwell(tuning.peakWavelength);
     this.surf = {
-      clock: this.uniforms.surfClock,
+      clocks: this.uniforms.surfClocks,
       setClock: this.uniforms.setClock,
       energy: this.uniforms.surfEnergy,
       ...this.swell,
@@ -530,8 +532,9 @@ export class OceanSim {
         const carried = state.z
           .mul(float(1).sub(travel))
           .add(upwindFoam.div(max(upwindWeight, 1e-5)).mul(travel));
+        // (the surf zone's white water lingers for seconds, a wide band between the bar and the beach)
         const fade = coastal
-          ? select(g4.y.lessThan(0.15), exp(u.dt.mul(-1.7)), exp(u.dt.mul(-0.8)))
+          ? select(g4.y.lessThan(SURF_FADE), exp(u.dt.mul(-0.7)), exp(u.dt.mul(-0.8)))
           : exp(u.dt.mul(-0.8));
         const foam = clamp(
           carried
@@ -558,24 +561,8 @@ export class OceanSim {
      * and the bank (shoreSurfPhase and sampleShoreSurf in core/oceanShores.ts).
      */
     const surfAt = (distance: Float, lag: Float, q: Vec3) => {
-      const smooth = (x: Float) => smoothstep(0, 1, x);
-      const { phase, set } = surfWave(q, distance, lag, this.surf);
-      const depth = shelfDepthAt(distance);
-      const envelope = float(1)
-        .sub(smooth(distance.sub(SURF_FADE).div(SURF_REACH - SURF_FADE)))
-        .mul(min(float(OCEAN_DEPTH).div(depth).pow(0.25), 1.8))
-        .mul(smooth(distance.div(0.025)).mul(0.35).add(0.65));
-      const s = sin(phase);
-      const crest = max(s, 0).pow(5);
-      const strength = this.surf.energy.mul(set);
-      const amplitude = min(envelope.mul(strength).mul(SURF_HEIGHT), depth.mul(BREAKER));
-      // (troughs flatten toward the shoreline, as in sampleShoreSurf)
-      const wave = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(amplitude);
-      const calm = smooth(distance.sub(0.005).div(0.035));
-      const height = wave.mul(select(wave.lessThan(0), calm, calm.mul(0.7).add(0.3)));
-      const breaking = crest.mul(surfBreakZoneAt(distance)).mul(strength);
-      const inside = distance.greaterThanEqual(0).and(distance.lessThanEqual(SURF_REACH));
-      return { height: select(inside, height, float(0)), breaking: select(inside, breaking, float(0)) };
+      const { phases, set } = surfWave(q, distance, lag, this.surf);
+      return surfAtPoint(distance, phases, this.surf.energy.mul(set));
     };
 
     const finishSurface = (final: number) =>
@@ -844,7 +831,10 @@ export class OceanSim {
     this.uniforms.surfEnergy.value =
       this.uniforms.amplitude.value * Math.min(1.3, Math.max(0, this.swellSpeed));
     const turn = 2 * Math.PI;
-    this.uniforms.surfClock.value = (this.uniforms.surfClock.value + this.swell.omega * dt) % turn;
+    const clocks = this.uniforms.surfClocks.value;
+    clocks.x = (clocks.x + this.swell.omega * SURF_TRAINS[0].ratio * dt) % turn;
+    clocks.y = (clocks.y + this.swell.omega * SURF_TRAINS[1].ratio * dt) % turn;
+    clocks.z = (clocks.z + this.swell.omega * SURF_TRAINS[2].ratio * dt) % turn;
     this.uniforms.setClock.value =
       (this.uniforms.setClock.value + (this.swell.omega / SURF_SET_WAVES) * dt) % turn;
   }

@@ -15,7 +15,9 @@ import {
   shoreSurfPhase,
   shoreSwell,
   SURF_SET_WAVES,
-  SURF_SLANT,
+  SURF_TRAINS,
+  shoreSurfAt,
+  surfBend,
   surfSet,
 } from '../src/core/oceanShores';
 import { OCEAN_DEFAULTS } from '../src/core/oceanTuning';
@@ -60,7 +62,7 @@ describe('coastal ocean', () => {
     }
     expect(shoreDistance(SHORE_SITES[0]!.center.clone().negate())).toBeGreaterThan(0);
     const surf = {
-      clock: uniform(0),
+      clocks: uniform(new Vector3()),
       setClock: uniform(0),
       energy: uniform(1),
       ...shoreSwell(OCEAN_DEFAULTS.peakWavelength),
@@ -145,19 +147,53 @@ describe('coastal ocean', () => {
   });
 
   it('brings its crests straight in at the beach, nearly parallel to it, not sweeping along it', () => {
-    // along the beach a crest is late by only the slight slant: a quarter turn round the land is half a wave
-    const along = Math.abs(
-      shoreSurfPhase(Math.PI / 2, 0.05, shelfLag(0.05), swell, 0) -
-        shoreSurfPhase(0, 0.05, shelfLag(0.05), swell, 0),
-    );
-    expect(along).toBeCloseTo((SURF_SLANT * Math.PI) / 2, 6);
-    // while across it, from the bar to the beach, it's several waves
-    const across =
-      shoreSurfPhase(0, 0, shelfLag(0), swell, 0) -
-      shoreSurfPhase(0, SHELF.bar.at, shelfLag(SHELF.bar.at), swell, 0);
-    expect(across).toBeGreaterThan(2 * Math.PI);
-    // a whole number of crests round the land, so the phase joins up all the way round
-    expect(Number.isInteger(SURF_SLANT)).toBe(true);
+    for (const train of SURF_TRAINS) {
+      // along the beach a crest is late by only its slight slant and bend: a quarter turn round the land is a
+      // few waves at most
+      const phase = (bearing: number, d: number) => shoreSurfPhase(bearing, d, shelfLag(d), swell, 0, train);
+      const along = phase(Math.PI / 2, 0.05) - phase(0, 0.05);
+      const bend = surfBend(train, Math.PI / 2) - surfBend(train, 0);
+      expect(along).toBeCloseTo((train.slant * Math.PI) / 2 + bend, 6);
+      // while across it, from the bar to the beach, it's several waves
+      expect(phase(0, 0) - phase(0, SHELF.bar.at)).toBeGreaterThan(2 * Math.PI);
+      // a whole number of crests round the land, so the phase joins up all the way round
+      expect(Number.isInteger(train.slant)).toBe(true);
+      expect(phase(2 * Math.PI, 0.05) - phase(0, 0.05)).toBeCloseTo(2 * Math.PI * train.slant, 6);
+    }
+  });
+
+  it('comes in irregular waves: not one sine, of many sizes, breaking at different times along the beach', () => {
+    const period = (2 * Math.PI) / swell.omega;
+    const out = { height: 0, breaking: 0 };
+    // the surf at a point on the bar over a minute, every trains' clock running at its own frequency
+    const at = (bearing: number, time: number) => {
+      const clocks = SURF_TRAINS.map((t) => swell.omega * t.ratio * time);
+      shoreSurfAt(bearing, SHELF.bar.at, shelfLag(SHELF.bar.at), swell, clocks, 1, out);
+      return out.height;
+    };
+    const step = 0.05;
+    const series = (bearing: number) => Array.from({ length: 1200 }, (_, k) => at(bearing, k * step));
+    const here = series(0);
+    // a single sine would repeat itself exactly a period on; this barely does
+    const lag = Math.round(period / step);
+    const mean = here.reduce((a, b) => a + b, 0) / here.length;
+    let same = 0;
+    let all = 0;
+    for (let k = 0; k + lag < here.length; k++) {
+      same += (here[k]! - mean) * (here[k + lag]! - mean);
+      all += (here[k]! - mean) ** 2;
+    }
+    expect(same / all).toBeLessThan(0.8);
+    // waves of many sizes: the crests a period apart differ a lot
+    const crests: number[] = [];
+    for (let k = 1; k + 1 < here.length; k++)
+      if (here[k]! > here[k - 1]! && here[k]! >= here[k + 1]! && here[k]! > 0) crests.push(here[k]!);
+    expect(Math.max(...crests) / Math.min(...crests)).toBeGreaterThan(1.8);
+    // and a stretch of beach a little way along breaks to its own timing
+    const there = series(0.6);
+    let both = 0;
+    for (let k = 0; k < here.length; k++) both += (here[k]! - mean) * (there[k]! - mean);
+    expect(Math.abs(both / all)).toBeLessThan(0.7);
   });
 
   it('breaks hardest on shores facing the swell, and keeps a steady pace however long it runs', () => {

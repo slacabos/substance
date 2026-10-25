@@ -1,14 +1,19 @@
+import type { Vector3 } from 'three';
 import type { Node, UniformNode } from 'three/webgpu';
-import { acos, atan, clamp, cos, dot, exp, float, max, min, sin, smoothstep, vec3 } from 'three/tsl';
+import { acos, atan, clamp, cos, dot, exp, float, max, min, select, sin, smoothstep, vec3 } from 'three/tsl';
 import { OCEAN_DEPTH } from '../core/oceanFFT';
 import {
   MAINLAND,
   SHELF,
   SHELF_EDGE,
   SHORE_SWEEPS,
-  SURF_SLANT,
   SHORE_WATERLINE,
+  SURF_FADE,
+  SURF_HEIGHT,
+  SURF_REACH,
   SURF_SET_WAVES,
+  SURF_TRAINS,
+  BREAKER,
 } from '../core/oceanShores';
 
 type Float = Node<'float'>;
@@ -16,8 +21,8 @@ type Vec3 = Node<'vec3'>;
 
 /** The swell the coast's surf and swash follow (OceanSim updates them; core/oceanShores.ts is the reference). */
 export interface SurfInputs {
-  /** The swell's frequency times time, and the sets' clock, each added up frame by frame. */
-  clock: UniformNode<'float', number>;
+  /** Each surf train's frequency times time (SURF_TRAINS), and the sets' clock, each added up frame by frame. */
+  clocks: UniformNode<'vec3', Vector3>;
   setClock: UniformNode<'float', number>;
   /** The sea's state on the shores: amplitude times the wind, eased. */
   energy: UniformNode<'float', number>;
@@ -32,25 +37,76 @@ function bearingAt(q: Vec3): Float {
 }
 
 /**
- * The swell at a point near the beach (shoreSurfPhase and surfSet in core/oceanShores.ts): `distance` out from
- * the shore and `lag` the shelf's delay there; its crests come straight in at the beach. Returns the wave's
- * phase (a crest where its sine is 1) and how big this part of a set is.
+ * The swell at a point near the beach (shoreSurfPhase, surfBend and surfSet in core/oceanShores.ts): `distance` out
+ * from the shore and `lag` the shelf's delay there; its crests come straight in at the beach. Returns each train's
+ * phase (a crest where its sine is 1; SURF_TRAINS), and how big this part of a set is.
  */
 export function surfWave(
   q: Vec3,
   distance: Float,
   lag: Float,
   surf: SurfInputs,
-): { phase: Float; set: Float } {
+): { phases: Float[]; set: Float } {
   const bearing = bearingAt(q);
-  const inward = lag.mul(surf.omega).sub(max(distance.sub(SHELF_EDGE), 0).mul(surf.k));
+  const out = max(distance.sub(SHELF_EDGE), 0);
+  const clock = [surf.clocks.x, surf.clocks.y, surf.clocks.z];
+  const phases = SURF_TRAINS.map((train, t) =>
+    lag
+      .mul(surf.omega * train.ratio)
+      .sub(out.mul(surf.k * train.ratio * train.ratio))
+      .add(bearing.mul(train.slant))
+      .add(sin(bearing.mul(3).add(train.seed)).mul(0.9))
+      .add(sin(bearing.mul(7).add(2.3 * train.seed)).mul(0.5))
+      .sub(clock[t]!),
+  );
   // sets of bigger waves riding in with the crests, a little later along the beach (a whole set a turn, so it
   // joins up all the way round)
+  const inward = lag.mul(surf.omega).sub(out.mul(surf.k));
   const lull = sin(inward.div(SURF_SET_WAVES).add(bearing).sub(surf.setClock)).mul(0.5).add(0.5);
-  return {
-    phase: inward.add(bearing.mul(SURF_SLANT)).sub(surf.clock),
-    set: lull.mul(lull).mul(0.9).add(0.55),
-  };
+  return { phases, set: lull.mul(lull).mul(0.9).add(0.55) };
+}
+
+/**
+ * The whole surf at a point (shoreSurfAt and sampleShoreSurf in core/oceanShores.ts): every train at its phase,
+ * shaped into a bore inside the bar, as tall as the shelf lets it stand, flattening toward the shoreline, and
+ * averaged by share. `strength` is the sea's state times the set.
+ */
+export function surfAtPoint(
+  distance: Float,
+  phases: Float[],
+  strength: Float,
+): { height: Float; breaking: Float } {
+  const depth = shelfDepthAt(distance);
+  const envelope = float(1)
+    .sub(smooth(distance.sub(SURF_FADE).div(SURF_REACH - SURF_FADE)))
+    .mul(min(float(OCEAN_DEPTH).div(depth).pow(0.25), 1.8))
+    .mul(smooth(distance.div(0.025)).mul(0.35).add(0.65));
+  const amplitude = min(envelope.mul(strength).mul(SURF_HEIGHT), depth.mul(BREAKER));
+  const calm = smooth(distance.sub(0.005).div(0.035));
+  const skew = float(1)
+    .sub(smooth(distance.sub(SHELF.bar.at + 0.02).div(0.08)))
+    .mul(0.8);
+  const zone = surfBreakZoneAt(distance);
+  let height: Float = float(0);
+  let breaking: Float = float(0);
+  const shares = SURF_TRAINS.reduce((sum, t) => sum + t.share, 0);
+  SURF_TRAINS.forEach((train, t) => {
+    const phase = phases[t]!;
+    const s = sin(phase.add(skew.mul(sin(phase))));
+    const crest = max(s, 0).pow(5);
+    const wave = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(amplitude);
+    height = height.add(wave.mul(select(wave.lessThan(0), calm, calm.mul(0.7).add(0.3))).mul(train.share));
+    breaking = max(
+      breaking,
+      crest
+        .mul(zone)
+        .mul(strength)
+        .mul(Math.min(1, train.share * 1.4)),
+    ) as Float;
+  });
+  const inside = distance.greaterThanEqual(0).and(distance.lessThanEqual(SURF_REACH));
+  const total = max(height.mul(1.35 / shares), depth.mul(-BREAKER));
+  return { height: select(inside, total, float(0)), breaking: select(inside, breaking, float(0)) };
 }
 
 const smooth = (x: Float) => smoothstep(0, 1, x);

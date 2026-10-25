@@ -56,7 +56,7 @@ function swashAt(p: Vec3, height: Float, surf: SurfInputs) {
   // Phase falls with time, so the cycle advances as it moves on from a crest at the shoreline.
   const cycle = fract(
     float(Math.PI / 2)
-      .sub(wave.phase)
+      .sub(wave.phases[0]!)
       .div(Math.PI * 2),
   );
   const reach = select(

@@ -26,6 +26,7 @@ import {
   vec4,
 } from 'three/tsl';
 import type { DeformUniforms } from './deform';
+import { snoise } from './noise';
 
 type Vec3 = Node<'vec3'>;
 type Float = Node<'float'>;
@@ -140,6 +141,46 @@ function foamNoise(obj: Vec3, u: DeformUniforms): Float {
 }
 
 /** Whitecaps follow steep travelling crests; simulated foam persists and drifts after impacts. */
+/** Threads per orb radius across the current, and how much longer than wide they're drawn along it. */
+const THREADS = 26;
+const THREAD_STRETCH = 0.88;
+
+/**
+ * Surf foam as it is from the air: threads and lace rather than blobs. Ridged noise draws connected lines; squeezed
+ * along the current `along` (unit, object space), so water running one way (the backwash) drags them into long
+ * parallel streaks while churned water leaves them curled into lace. `amount` (0 to 1) is how much foam the sim
+ * has here: a little is a few fine threads, more is a thicker, denser web. Read at both
+ * drifts and crossfaded, so the pattern rides the water.
+ */
+export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float {
+  const at = (obj: Vec3) => {
+    const q = obj.mul(THREADS);
+    // squeezed along the current, and bent a little so the streaks curl and fork
+    const squeezed = q.sub(along.mul(dot(q, along).mul(THREAD_STRETCH)));
+    const bent = squeezed.add(
+      vec3(snoise(q.mul(0.13)), snoise(q.mul(0.13).add(5.2)), snoise(q.mul(0.13).add(9.7))).mul(1.6),
+    );
+    const ridge = (k: number) => {
+      const p = bent.mul(k).add(k * 3.1);
+      const r = float(1).sub(abs(snoise(p)));
+      // a line a pixel or so wide however far away: its width set by how fast the noise changes on screen
+      const width = fwidth(r).mul(1.5).add(0.02);
+      return smoothstep(float(1).sub(width.mul(2)).sub(amount.mul(0.12)), float(1).sub(width.mul(0.3)), r);
+    };
+    return max(ridge(1), ridge(2.1).mul(0.8));
+  };
+  const threads = mix(at(drift.b), at(drift.a), drift.blend);
+  // gathered into patches with open water between, more of it covered the fresher the foam; thick foam (fresh
+  // white water) thickens the threads into a dense web with holes, never a flat sheet
+  const middle = mix(drift.b, drift.a, drift.blend).mul(THREADS);
+  const clumps = snoise(middle.mul(0.11))
+    .mul(0.6)
+    .add(snoise(middle.mul(0.27).add(3.3)).mul(0.4));
+  const held = smoothstep(0, 0.3, clumps.mul(0.6).add(amount.mul(2.2)).sub(0.25));
+  const solid = smoothstep(0.85, 1, amount.mul(held));
+  return max(threads.mul(held), solid.mul(mix(0.6, 1, threads))).mul(smoothstep(0.03, 0.2, amount));
+}
+
 export function oceanFoam(
   drift: FoamDrift,
   lace: Texture,
@@ -148,6 +189,7 @@ export function oceanFoam(
   simulated: Float,
   u: DeformUniforms,
   shore?: Float,
+  along?: Vec3,
 ): Float {
   // the two drifted patterns crossfaded, keeping the noise's contrast through the blend
   const wa = drift.blend;
@@ -161,13 +203,14 @@ export function oceanFoam(
   // Whitecaps where the waves fold over, broken into streaks; the noise varies how readily each spot foams.
   const crests = smoothstep(mix(0.3, 0.22, weather), 0.75, breaking.mul(n.mul(0.9).add(0.55)));
   // churned foam left by the sim: taps, drags, splashes and old whitecaps
-  const sprayFoam = foamLace(drift, lace, smoothstep(0.04, 0.6, simulated), u);
+  let sprayFoam = foamLace(drift, lace, smoothstep(0.04, 0.6, simulated), u);
   let foam = crests;
-  if (shore) {
-    const wash = smoothstep(0.1, 0.62, simulated)
-      .mul(float(1).sub(smoothstep(0.03, SURF_FADE, shore)))
-      .mul(mix(0.5, 0.9, n));
-    foam = max(foam, wash);
+  if (shore && along) {
+    // the surf zone's white water: threads and streaks the waves leave and the water drags, in place of the open
+    // sea's round-bubbled lace
+    const zone = float(1).sub(smoothstep(SURF_FADE * 0.6, SURF_FADE * 1.3, shore));
+    foam = max(foam.mul(float(1).sub(zone.mul(0.6))), foamThreads(drift, along, simulated).mul(zone));
+    sprayFoam = sprayFoam.mul(float(1).sub(zone));
   }
   return max(clamp(foam.mul(u.uOceanFoam), 0, 1), sprayFoam);
 }
