@@ -185,7 +185,7 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float, fresh:
     .mul(0.6)
     .add(snoise(m.mul(0.27).add(3.3)).mul(0.4));
   // (however thick, a third of it stays open: white water is always torn)
-  const held = smoothstep(0, 0.4, clumps.mul(0.7).add(amount.mul(1.2)).sub(0.35));
+  const held = smoothstep(0, 0.4, clumps.mul(0.7).add(amount.mul(1.6)).sub(0.25));
   // (fresh, thick foam fills in between the threads, but always with holes: lace, never a sheet)
   // a wave's front, just broken, is thick white water torn by small holes, and its ragged edge trails threads
   const holes = snoise(m.mul(0.9));
@@ -209,7 +209,7 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float, fresh:
     .mul(float(1).sub(smoothstep(0.18, 0.4, amount)))
     .mul(smoothstep(0.05, 0.45, clumps));
   const streaks = streak(middle).mul(trailing).mul(0.6);
-  return max(max(threads.mul(held), fill.mul(0.9)).mul(smoothstep(0.03, 0.2, amount)), streaks);
+  return max(max(threads.mul(held), fill.mul(0.9)).mul(smoothstep(0.01, 0.1, amount)), streaks);
 }
 
 /** Whitecaps follow steep travelling crests; simulated foam persists and drifts after impacts. */
