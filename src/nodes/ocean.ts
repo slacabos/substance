@@ -141,15 +141,15 @@ function foamNoise(obj: Vec3, u: DeformUniforms): Float {
 }
 
 /** Threads per orb radius across the current, and how much longer than wide they're drawn along it. */
-const THREADS = 26;
+const THREADS = 11;
 const THREAD_STRETCH = 0.88;
 
 /**
  * Surf foam as it is from the air: threads and lace rather than blobs. Ridged noise draws connected lines; squeezed
  * along the current `along` (unit, object space), so water running one way (the backwash) drags them into long
  * parallel streaks while churned water leaves them curled into lace. `amount` (0 to 1) is how much foam the sim
- * has here: a little is a few fine threads, more is a thicker, denser web. Read at both
- * drifts and crossfaded, so the pattern rides the water.
+ * has here: a little is a few fine threads, more is a thicker, denser web. Read between the two drifts, so the
+ * pattern rides the water.
  */
 export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float {
   const at = (obj: Vec3) => {
@@ -161,38 +161,38 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float
     const ridge = (k: number) => {
       const p = bent.mul(k).add(k * 3.1);
       const r = float(1).sub(abs(snoise(p)));
-      // a line a pixel or so wide however far away: its width set by how fast the noise changes on screen
-      const width = fwidth(r).mul(1.5).add(0.02);
-      return smoothstep(float(1).sub(width.mul(2)).sub(amount.mul(0.1)), float(1).sub(width.mul(0.3)), r);
+      // a line of its own width, thicker where there's more foam, with soft edges a pixel wide
+      const edge = fwidth(r).add(0.01);
+      const line = float(0.1).add(amount.mul(0.18));
+      return smoothstep(float(1).sub(line).sub(edge), float(1).sub(line).add(edge), r);
     };
     return max(ridge(1), ridge(2.1).mul(0.8));
   };
-  const threads = mix(at(drift.b), at(drift.a), drift.blend);
+  // (read once, between the drifts, which glides without jumps: the restarting drift has no weight)
+  const middle = mix(drift.b, drift.a, drift.blend);
+  const threads = at(middle);
   // gathered into patches with open water between, more of it covered the fresher the foam; thick foam (fresh
   // white water) thickens the threads into a dense web with holes, never a flat sheet
-  const middle = mix(drift.b, drift.a, drift.blend).mul(THREADS);
-  const clumps = snoise(middle.mul(0.11))
+  const m = middle.mul(THREADS);
+  const clumps = snoise(m.mul(0.11))
     .mul(0.6)
-    .add(snoise(middle.mul(0.27).add(3.3)).mul(0.4));
+    .add(snoise(m.mul(0.27).add(3.3)).mul(0.4));
   // (however thick, a third of it stays open: white water is always torn)
   const held = smoothstep(0, 0.3, clumps.add(amount.mul(0.9)).sub(0.55));
   // (fresh, thick foam fills in between the threads, but always with holes: lace, never a sheet)
-  const fill = smoothstep(0.85, 1, amount.mul(held)).mul(smoothstep(0.2, 0.6, snoise(middle.mul(0.7))));
+  const fill = smoothstep(0.5, 0.9, amount.mul(held)).mul(smoothstep(-0.2, 0.3, snoise(m.mul(0.9))));
   // and old foam the backwash drags out to sea is drawn out into long fine streaks behind the white water
   const streak = (obj: Vec3) => {
     const q = obj.mul(THREADS * 2.2);
     const squeezed = q.sub(along.mul(dot(q, along).mul(0.96))).add(snoise(q.mul(0.05)).mul(1.2));
     const r = float(1).sub(abs(snoise(squeezed)));
-    const width = fwidth(r).mul(1.5).add(0.02);
-    return smoothstep(float(1).sub(width.mul(1.6)), float(1).sub(width.mul(0.3)), r);
+    const edge = fwidth(r).add(0.01);
+    return smoothstep(float(0.93).sub(edge), float(0.93).add(edge), r);
   };
   const trailing = smoothstep(0.02, 0.08, amount)
     .mul(float(1).sub(smoothstep(0.25, 0.55, amount)))
     .mul(smoothstep(-0.3, 0.3, clumps.add(0.2)));
-  // (read once, between the drifts: streaks are long, so a blend that crossfades them is barely seen)
-  const streaks = streak(mix(drift.b, drift.a, drift.blend))
-    .mul(trailing)
-    .mul(0.8);
+  const streaks = streak(middle).mul(trailing).mul(0.8);
   return max(max(threads.mul(held), fill.mul(0.7)).mul(smoothstep(0.03, 0.2, amount)), streaks);
 }
 
