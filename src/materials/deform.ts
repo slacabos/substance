@@ -63,14 +63,13 @@ import { baseN, baseR } from '../nodes/shape';
 
 export { DeformMode, type DeformUniforms };
 
-/** The colour of clear water a few millimetres deep over pale rock. */
 /**
- * What's left of light after ABSORB_DISTANCE of coastal water (linear): red goes first, so a centimetre of it
- * over sand is turquoise and the open sea deep blue.
+ * What's left of light after ABSORB_DISTANCE of coastal water (linear): red goes first, but not so much that
+ * orange sand under a centimetre of it turns green; it browns, then blues as the water deepens.
  */
-const SHALLOW_ABSORB = vec3(0.3, 0.7, 0.76);
+const SHALLOW_ABSORB = vec3(0.58, 0.76, 0.86);
 /** The colour shallow coastal water scatters back (linear), before the deep sea's own colour takes over. */
-const SHALLOW_SCATTER = vec3(0.02, 0.2, 0.25);
+const SHALLOW_SCATTER = vec3(0.015, 0.13, 0.24);
 const ABSORB_DISTANCE = 0.01;
 /** How bright the coast's foam's key light is, as the land's (KEY_STRENGTH in materials/oceanShores.ts). */
 const FOAM_KEY = 1.4;

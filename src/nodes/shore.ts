@@ -160,7 +160,7 @@ export function shoreSurface(
     .mul(mix(float(1), float(0.62), soaked));
   // under the run-up's thin sheet the sand is darker still, and barely tinted: it's millimetres of clear water
   // (absorbed red first, as the sea is: at the waterline it's as tinted as the sea's own edge, so they join up)
-  const sheet = ground.mul(pow(vec3(0.3, 0.7, 0.76), vec3(sw.depth.div(0.01))));
+  const sheet = ground.mul(pow(vec3(0.58, 0.76, 0.86), vec3(sw.depth.div(0.01))));
   const covered = mix(ground, sheet, sw.cover);
   const albedo = mix(covered, vec3(0.92, 0.96, 0.97), sw.foam);
   const l = normalize(cameraViewMatrix.mul(vec4(light.dir, 0)).xyz);
