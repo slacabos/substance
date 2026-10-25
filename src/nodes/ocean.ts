@@ -185,13 +185,14 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float, fresh:
     .mul(0.6)
     .add(snoise(m.mul(0.27).add(3.3)).mul(0.4));
   // (however thick, a third of it stays open: white water is always torn)
-  const held = smoothstep(0, 0.3, clumps.add(amount.mul(0.9)).sub(0.55));
+  const held = smoothstep(0, 0.4, clumps.mul(0.7).add(amount.mul(1.2)).sub(0.35));
   // (fresh, thick foam fills in between the threads, but always with holes: lace, never a sheet)
   // a wave's front, just broken, is thick white water torn by small holes, and its ragged edge trails threads
   const holes = snoise(m.mul(0.9));
   // (its edge torn by noise, so it never shows the triangles the breaking is interpolated across)
-  const torn = snoise(m.mul(0.45).add(7.7)).mul(0.2).add(holes.mul(0.08));
-  const front = smoothstep(0.12, 0.42, fresh.add(torn)).mul(
+  // (two scales of tearing, the finer one at the lace's own size, so the edge frays into threads)
+  const torn = snoise(m.mul(0.45).add(7.7)).mul(0.16).add(holes.mul(0.1)).add(threads.mul(0.12));
+  const front = smoothstep(0.1, 0.46, fresh.add(torn)).mul(
     smoothstep(-0.6, -0.2, holes.add(clumps.mul(0.3))),
   );
   const fill = max(smoothstep(0.5, 0.9, amount.mul(held)).mul(smoothstep(-0.2, 0.3, holes)), front);
