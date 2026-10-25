@@ -140,7 +140,6 @@ function foamNoise(obj: Vec3, u: DeformUniforms): Float {
   return octave(1).mul(0.7).add(octave(2.35).mul(0.3));
 }
 
-/** Whitecaps follow steep travelling crests; simulated foam persists and drifts after impacts. */
 /** Threads per orb radius across the current, and how much longer than wide they're drawn along it. */
 const THREADS = 26;
 const THREAD_STRETCH = 0.88;
@@ -157,9 +156,8 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float
     const q = obj.mul(THREADS);
     // squeezed along the current, and bent a little so the streaks curl and fork
     const squeezed = q.sub(along.mul(dot(q, along).mul(THREAD_STRETCH)));
-    const bent = squeezed.add(
-      vec3(snoise(q.mul(0.13)), snoise(q.mul(0.13).add(5.2)), snoise(q.mul(0.13).add(9.7))).mul(1.6),
-    );
+    const bend = snoise(q.mul(0.13));
+    const bent = squeezed.add(vec3(bend, bend.negate(), snoise(q.mul(0.13).add(5.2))).mul(1.6));
     const ridge = (k: number) => {
       const p = bent.mul(k).add(k * 3.1);
       const r = float(1).sub(abs(snoise(p)));
@@ -177,12 +175,28 @@ export function foamThreads(drift: FoamDrift, along: Vec3, amount: Float): Float
     .mul(0.6)
     .add(snoise(middle.mul(0.27).add(3.3)).mul(0.4));
   // (however thick, a third of it stays open: white water is always torn)
-  const held = smoothstep(0, 0.3, clumps.add(amount.mul(1.5)).sub(0.45));
+  const held = smoothstep(0, 0.3, clumps.add(amount.mul(0.9)).sub(0.55));
   // (fresh, thick foam fills in between the threads, but always with holes: lace, never a sheet)
-  const fill = smoothstep(0.85, 1, amount.mul(held)).mul(smoothstep(0.2, 0.6, snoise(middle.mul(1.7))));
-  return max(threads.mul(held), fill.mul(0.7)).mul(smoothstep(0.03, 0.2, amount));
+  const fill = smoothstep(0.85, 1, amount.mul(held)).mul(smoothstep(0.2, 0.6, snoise(middle.mul(0.7))));
+  // and old foam the backwash drags out to sea is drawn out into long fine streaks behind the white water
+  const streak = (obj: Vec3) => {
+    const q = obj.mul(THREADS * 2.2);
+    const squeezed = q.sub(along.mul(dot(q, along).mul(0.96))).add(snoise(q.mul(0.05)).mul(1.2));
+    const r = float(1).sub(abs(snoise(squeezed)));
+    const width = fwidth(r).mul(1.5).add(0.02);
+    return smoothstep(float(1).sub(width.mul(1.6)), float(1).sub(width.mul(0.3)), r);
+  };
+  const trailing = smoothstep(0.02, 0.08, amount)
+    .mul(float(1).sub(smoothstep(0.25, 0.55, amount)))
+    .mul(smoothstep(-0.3, 0.3, clumps.add(0.2)));
+  // (read once, between the drifts: streaks are long, so a blend that crossfades them is barely seen)
+  const streaks = streak(mix(drift.b, drift.a, drift.blend))
+    .mul(trailing)
+    .mul(0.8);
+  return max(max(threads.mul(held), fill.mul(0.7)).mul(smoothstep(0.03, 0.2, amount)), streaks);
 }
 
+/** Whitecaps follow steep travelling crests; simulated foam persists and drifts after impacts. */
 export function oceanFoam(
   drift: FoamDrift,
   lace: Texture,

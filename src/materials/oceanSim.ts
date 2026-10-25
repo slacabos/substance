@@ -534,7 +534,7 @@ export class OceanSim {
           .add(upwindFoam.div(max(upwindWeight, 1e-5)).mul(travel));
         // (the surf zone's white water lingers for seconds, a wide band between the bar and the beach)
         const fade = coastal
-          ? select(g4.y.lessThan(SURF_FADE), exp(u.dt.mul(-0.7)), exp(u.dt.mul(-0.8)))
+          ? select(g4.y.lessThan(SURF_FADE), exp(u.dt.mul(-1.3)), exp(u.dt.mul(-0.8)))
           : exp(u.dt.mul(-0.8));
         const foam = clamp(
           carried
