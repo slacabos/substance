@@ -14,6 +14,7 @@ import {
   length,
   max,
   mix,
+  mx_worley_noise_vec2,
   normalize,
   normalViewGeometry,
   positionViewDirection,
@@ -142,7 +143,9 @@ function foamNoise(obj: Vec3, u: DeformUniforms): Float {
 
 /** Threads per orb radius across the current, and how much longer than wide they're drawn along it. */
 const THREADS = 11;
-const THREAD_STRETCH = 0.88;
+const THREAD_STRETCH = 0.5;
+/** How many foam cells across per thread: open patches a fifth of the surf zone across. */
+const CELL_SCALE = 0.55;
 
 /**
  * Surf foam as it is from the air: threads and lace rather than blobs. Ridged noise draws connected lines; squeezed
@@ -170,11 +173,17 @@ export function threadsAt(obj: Vec3, along: Vec3, amount: Float, fresh: Float): 
   const w = squeezed.mul(0.32);
   const warp = vec3(snoise(w), snoise(w.add(5.2)), snoise(w.add(9.1)));
   const bent = squeezed.add(warp.mul(float(2.6).add(kind.mul(1.2))));
-  const r = float(1).sub(abs(snoise(bent)));
+  // Foam from the air is a net of cells: bubbles burst and drain, leaving the foam gathered along the borders of
+  // the open patches between them, a web of filaments round open water. Drawn as the borders of Worley cells (the
+  // gap between the nearest and second-nearest cell centres), warped by the water so they curl and swirl.
+  const cells = mx_worley_noise_vec2(bent.mul(CELL_SCALE));
+  const gap = cells.y.sub(cells.x);
   // a line of its own width, thicker where there's more foam, with soft edges a pixel wide
-  const edge = fwidth(r).add(0.01);
-  const line = float(0.08).add(amount.mul(0.18)).add(kind.mul(0.08));
-  const lines = smoothstep(float(1).sub(line).sub(edge), float(1).sub(line).add(edge), r);
+  const edge = fwidth(gap).add(0.01);
+  // (and its width varies along it, where foam has gathered thicker)
+  const gather = max(snoise(m.mul(0.9).add(4.4)), 0);
+  const line = float(0.02).add(amount.mul(0.07)).add(kind.mul(0.02)).add(gather.mul(0.05));
+  const lines = float(1).sub(smoothstep(line.sub(edge), line.add(edge), gap));
   // gathered into patches with open water between, more of it covered the fresher the foam
   const clumps = snoise(m.mul(0.11))
     .mul(0.6)
