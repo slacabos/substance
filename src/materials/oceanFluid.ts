@@ -78,7 +78,10 @@ const PER_SPLASH = 24;
 /** Particles started per second per unit of sphere area where the water breaks hardest, for 32k particles. */
 const EMISSION = 30000;
 /** How much harder breaking surf throws spray than open-sea whitecaps of the same strength. */
-const SURF_SPRAY = 3;
+const SURF_SPRAY = 1.5;
+/** How hard, and how big, the coast's surf throws its spray, of the open sea's. */
+const COAST_TOSS = 0.55;
+const COAST_DROP = 0.65;
 /** A splash is a third droplets, the rest mist (as the old spray). */
 const DROPLET_SHARE = 0.35;
 /** A particle's crowd (see `crowd`) above which it's dense spray, drawn as one surface. */
@@ -184,15 +187,17 @@ export class OceanFluid {
         .mul(strength);
       const p = d.mul(origin.add(random(seed, 3).mul(0.01))).add(ring.mul(spread));
       // thrown clear of the water around it (the old spray started 3.5 cm up; these start at the surface)
-      const up = select(mist, float(0.32), float(0.48)).mul(strength).add(random(seed, 4).mul(0.2));
-      const outward = random(seed, 5).mul(0.16).add(0.12).mul(strength);
+      // (on a beach the surf's spray is low: a breaker a few centimetres high throws it a little way)
+      const toss = sea.coastal ? COAST_TOSS : 1;
+      const up = select(mist, float(0.32), float(0.48)).mul(strength).add(random(seed, 4).mul(0.2)).mul(toss);
+      const outward = random(seed, 5).mul(0.16).add(0.12).mul(strength).mul(toss);
       const v = d.mul(up).add(travel).add(ring.mul(outward));
       // mostly tiny: a droplet a few millimetres across is metres on a sea this size
       const size = select(
         mist,
         random(seed, 6).mul(0.0015).add(0.001),
         random(seed, 6).pow(4).mul(0.004).add(0.0012),
-      );
+      ).mul(sea.coastal ? COAST_DROP : 1);
       const life = select(mist, random(seed, 7).mul(0.55).add(0.28), float(6));
       pos.element(slot).assign(vec4(p, 1));
       vel.element(slot).assign(vec4(v, life));
@@ -525,7 +530,8 @@ export class OceanFluid {
       const alpha = side
         .mul(mix(float(0.25), float(1), head))
         .mul(float(1).sub(smoothstep(0.7, 1, corner.x.abs())));
-      return vec4(0.86, 0.95, 1, alpha.mul(weight));
+      // (white spray, not sky-blue: a lone droplet is too small to show the sky it reflects)
+      return vec4(0.93, 0.95, 0.96, alpha.mul(weight).mul(0.8));
     })();
     this.streaks = new Mesh(quad(), streak);
     this.streaks.frustumCulled = false;
