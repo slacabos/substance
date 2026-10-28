@@ -195,8 +195,10 @@ export function threadsAt(obj: Vec3, along: Vec3, amount: Float, fresh: Float): 
   const held = smoothstep(0, 0.4, clumps.mul(0.6).add(amount.mul(2)).sub(0.15));
   // a wave's front, just broken, is thick white water torn by small holes, its edge torn at two scales (the finer
   // the lace's own) so it frays into threads and never shows the triangles the breaking is interpolated across
-  const torn = clumps.mul(0.14).add(holes.mul(0.12)).add(threads.mul(0.12));
-  const front = smoothstep(0.1, 0.46, fresh.add(torn)).mul(
+  // (torn hard: the breaking is interpolated linearly across the sim's triangles, and a cut through that alone
+  // shows their edges as a sawtooth; the noise has to be what decides where the white ends)
+  const torn = clumps.mul(0.3).add(holes.mul(0.22)).add(threads.mul(0.18));
+  const front = smoothstep(0.25, 0.75, fresh.mul(0.8).add(torn).add(0.15)).mul(
     smoothstep(-0.6, -0.2, holes.add(clumps.mul(0.3))),
   );
   // (fresh, thick foam fills in between the threads, but always with holes: lace, never a sheet)

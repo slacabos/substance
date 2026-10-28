@@ -59,7 +59,8 @@ export function shoreSurface(
   // the sand is as wet as the sim's water has left it: dark where a wave ran up, drying back over seconds; sand
   // turned up from underneath is damp too
   const soaked = max(
-    max(wet.mul(0.5), soakedBy.mul(0.95)),
+    // (the sand's own damp band just above the still sea is faint: the sim's water does the rest)
+    max(wet.mul(0.2), soakedBy.mul(0.95)),
     max(smoothstep(0.0005, 0.005, abs(dug)).mul(0.8), relief.damp),
   );
   const grains = sandGrains(p, bumped(height), light, soaked);
