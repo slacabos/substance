@@ -641,7 +641,7 @@ export class OceanSim {
             float(1).sub(smoothstep(SURF_MAKER[1] * 0.9, SURF_MAKER[1], g4.y)),
           );
           impact.assign(max(bore, crest));
-          foam.assign(clamp(foam.add(impact.mul(u.frameDt).mul(g4.w.mul(1.5).add(3))), 0, 1));
+          foam.assign(clamp(foam.add(impact.mul(u.frameDt).mul(g4.w.mul(1).add(2))), 0, 1));
           turbulence.assign(max(turbulence, impact.mul(0.75)));
         }
         state.z.assign(foam);

@@ -205,11 +205,12 @@ export function threadsAt(obj: Vec3, along: Vec3, amount: Float, fresh: Float): 
   const pits = float(1)
     .sub(lines)
     .mul(smoothstep(0.1, 0.5, snoise(m.mul(2.3).add(1.7))));
-  const front = smoothstep(0.25, 0.75, fresh.mul(0.8).add(torn).add(0.15)).mul(
+  // (a band along the crest only where it's breaking hardest; behind it the white water thins to lace)
+  const front = smoothstep(0.45, 0.85, fresh.mul(0.8).add(torn).add(0.1)).mul(
     smoothstep(-0.35, 0.05, holes.add(clumps.mul(0.3))).mul(float(1).sub(pits.mul(0.85))),
   );
   // (fresh, thick foam fills in between the threads, but always with holes: lace, never a sheet)
-  const fill = max(smoothstep(0.5, 0.9, amount.mul(held)).mul(smoothstep(-0.2, 0.3, holes)), front);
+  const fill = max(smoothstep(0.7, 1, amount.mul(held)).mul(smoothstep(0, 0.45, holes)), front);
   // and old foam the backwash drags out to sea is drawn out into long fine streaks behind the white water
   const q = obj.mul(THREADS * 2.2);
   const streakAt = q.sub(along.mul(dot(q, along).mul(0.96))).add(warp.mul(1.2));
