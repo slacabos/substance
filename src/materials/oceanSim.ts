@@ -561,7 +561,7 @@ export class OceanSim {
           .add(upwindFoam.div(max(upwindWeight, 1e-5)).mul(travel));
         // (the surf zone's white water lingers for seconds, a wide band between the bar and the beach)
         const fade = coastal
-          ? select(g4.y.lessThan(SURF_FADE), exp(u.dt.mul(-1.3)), exp(u.dt.mul(-0.8)))
+          ? select(g4.y.lessThan(SURF_FADE), exp(u.dt.mul(-0.55)), exp(u.dt.mul(-0.8)))
           : exp(u.dt.mul(-0.8));
         const foam = clamp(
           carried
@@ -629,7 +629,7 @@ export class OceanSim {
           const shelf = float(1).sub(smoothstep(SURF_MAKER[0] * 0.8, SURF_MAKER[0], g4.y));
           const rising = state.x.sub(state.y).div(max(u.dt, 1e-4));
           impact.assign(smoothstep(BORE_RISE[0], BORE_RISE[1], rising).mul(shelf));
-          foam.assign(clamp(foam.add(impact.mul(u.frameDt).mul(g4.w.mul(1.2).add(2.8))), 0, 1));
+          foam.assign(clamp(foam.add(impact.mul(u.frameDt).mul(g4.w.mul(2).add(4.5))), 0, 1));
           turbulence.assign(max(turbulence, impact.mul(0.75)));
         }
         state.z.assign(foam);
