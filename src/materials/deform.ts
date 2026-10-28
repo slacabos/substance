@@ -56,6 +56,7 @@ import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import { OCEAN_DEPTH } from '../core/oceanFFT';
 import { DeformMode, oceanDeform, orbDeform, type DeformUniforms } from '../nodes/deform';
 import { FOAM_LAYERS, LACE_TILE_CELLS, oceanColor, oceanFoam, oceanSunLight } from '../nodes/ocean';
+import { snoise } from '../nodes/noise';
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
@@ -287,7 +288,10 @@ export function createDeformMaterial(
   // here showed as a second white strike, cut off from it)
   // and the sea's own foam thins out over the last few millimetres too, handing over to the run-up's: foam
   // piled at the very edge drew it as a white rim
-  const foam = seaFoam.amount.mul(coastal ? smoothstep(EDGE_FADE[0], EDGE_FADE[1] * 0.7, behind) : float(1));
+  // (over a wider band than the water's own fade, ragged with noise: cut sharply where the water meets the sand,
+  // white foam traced the water's triangles there as a sawtooth)
+  const fray = coastal ? snoise(p.mul(160)).mul(0.0025) : float(0);
+  const foam = seaFoam.amount.mul(coastal ? smoothstep(0.0005, 0.007, behind.add(fray)) : float(1));
   const base = materialRoughness.add(turbulence.mul(0.1));
   // GGX alpha^2 grows by twice the hidden slope variance
   const rough = pow(pow(base, 4).add(surface.lostVariance.mul(damping).mul(damping).mul(2)), 0.25);
