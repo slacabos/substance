@@ -36,7 +36,6 @@ import {
   uniform,
   uniformArray,
   varyingProperty,
-  vec2,
   vec3,
   vec4,
   vertexIndex,
@@ -71,6 +70,9 @@ export { DeformMode, type DeformUniforms };
 const SHALLOW_ABSORB = vec3(0.58, 0.76, 0.86);
 /** The colour shallow coastal water scatters back (linear), before the deep sea's own colour takes over. */
 const SHALLOW_SCATTER = vec3(0.015, 0.13, 0.24);
+/** How steep a wave's shoreward face must be to darken (sim slope, radius per radian), and how much at most. */
+const FACE_SLOPE = [0.04, 0.2] as const;
+const FACE_DARK = 0.55;
 const ABSORB_DISTANCE = 0.01;
 /** How bright the coast's foam's key light is, as the land's (KEY_STRENGTH in materials/oceanShores.ts). */
 const FOAM_KEY = 1.4;
@@ -193,7 +195,8 @@ export function createDeformMaterial(
   // shore, the water's column, the depth its colour goes by, and the surf's breaking
   const coast = varyingProperty('vec4', 'vCoast');
   // and which way the water runs, in the vertex's drift basis (driftBasis)
-  const current = varyingProperty('vec2', 'vCurrent');
+  // and (z) how steeply the water falls away toward the shore here: a wave's face as it stands up to break
+  const current = varyingProperty('vec3', 'vCurrent');
   const shore = coastal ? coast.x : undefined;
   // how deep the sim's own water stands here: over dry ground it's negative (its surface sinks under the ground)
   const column = coastal ? coast.y : undefined;
@@ -224,7 +227,7 @@ export function createDeformMaterial(
       const seaward = attribute('oceanShoreData', 'vec4').xyz;
       const speed = length(flow);
       const drag = mix(seaward, flow.div(max(speed, 1e-6)), smoothstep(0.2, 0.5, speed));
-      current.assign(vec2(dot(drag, e1), dot(drag, e2)));
+      current.assign(vec3(dot(drag, e1), dot(drag, e2), dot(simGradient, seaward)));
     }
     objA.assign(p.sub(e1.mul(drift.x)).sub(e2.mul(drift.y)));
     objB.assign(p.sub(e1.mul(drift.z)).sub(e2.mul(drift.w)));
@@ -319,8 +322,17 @@ export function createDeformMaterial(
   const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms, seaFoam.color);
   // (transmitted light is tinted by the colour, so over the shallows the colour is clear and the absorption alone
   // tints it)
+  // A wave standing up to break, seen from above: its steep shoreward face is deeper water, darker, with the
+  // light through its thin lip brighter just behind the white crest, so each crest reads as an arch before it
+  // crashes rather than a flat white line.
+  const face = column
+    ? smoothstep(FACE_SLOPE[0], FACE_SLOPE[1], current.z).mul(float(1).sub(foam))
+    : float(0);
+  const lip = column ? smoothstep(FACE_SLOPE[0], FACE_SLOPE[1], current.z.negate()).mul(0.5) : float(0);
   const water = column
     ? mix(mix(SHALLOW_SCATTER, color, smoothstep(0.02, OCEAN_DEPTH, depth)), color, foam)
+        .mul(float(1).sub(face.mul(FACE_DARK)))
+        .add(SHALLOW_SCATTER.mul(lip.mul(float(1).sub(foam))))
     : color;
   material.colorNode = mix(vec3(1), water, max(body.mul(meets), foam));
   material.roughnessNode = roughness;
