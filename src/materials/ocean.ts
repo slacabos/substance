@@ -74,9 +74,7 @@ export class Ocean implements Substance {
     const deformUniforms = createDeformUniforms();
     this.sim = new OceanSim(renderer, geometry, coastal, tuning, { fields: waves, uniforms: deformUniforms });
     const simBuffers = this.sim.renderBuffers();
-    this.shores = coastal
-      ? new OceanShores(coarse, this.sim.surf, simBuffers, this.sim.sand?.renderBuffers())
-      : null;
+    this.shores = coastal ? new OceanShores(coarse, simBuffers, this.sim.sand?.renderBuffers()) : null;
     const { material, uniforms } = createDeformMaterial(
       {
         color: 0xffffff,

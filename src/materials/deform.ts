@@ -243,7 +243,7 @@ export function createDeformMaterial(
         vec4(
           attribute('oceanShoreData', 'vec4').w,
           depth,
-          sim.ground.element(vertexIndex).x.add(simHeight.mul(0.3)),
+          sim.ground.element(vertexIndex).x.add(simHeight.mul(0.7)),
           simulated.w,
         ),
       );
@@ -307,7 +307,7 @@ export function createDeformMaterial(
   const depth = tintDepth ? clamp(tintDepth, 0, OCEAN_DEPTH) : float(0);
   // how much the water's own colour shows over what's under it: light it scatters back, turquoise a centimetre
   // or two deep, the open sea's blue deeper still
-  const body = column ? smoothstep(0.003, 0.04, depth) : float(1);
+  const body = column ? smoothstep(0, 0.04, depth) : float(1);
   // where the water runs out it ends, by its own depth, rather than wherever its surface dips under the sand
   // (dry ground next to water carries the water's level just under the sand, however steeply the sand rises
   // there, and the sand hides it; ground further from water sinks its surface DRY_SINK under, which this cuts)

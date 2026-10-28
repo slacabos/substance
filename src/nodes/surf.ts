@@ -6,6 +6,7 @@ import {
   MAINLAND,
   SHELF,
   SHELF_EDGE,
+  SHELF_MIN,
   SHORE_SWEEPS,
   SHORE_WATERLINE,
   SURF_FADE,
@@ -82,7 +83,7 @@ export function surfAtPoint(
     .mul(min(float(OCEAN_DEPTH).div(depth).pow(0.25), 1.8))
     .mul(smooth(distance.div(0.025)).mul(0.35).add(0.65));
   const amplitude = min(envelope.mul(strength).mul(SURF_HEIGHT), depth.mul(BREAKER));
-  const calm = smooth(distance.sub(0.005).div(0.035));
+  const calm = smooth(distance.sub(0.002).div(0.02));
   const skew = float(1)
     .sub(smooth(distance.sub(SHELF.bar.at + 0.02).div(0.08)))
     .mul(0.8);
@@ -95,7 +96,9 @@ export function surfAtPoint(
     const s = sin(phase.add(skew.mul(sin(phase))));
     const crest = max(s, 0).pow(5);
     const wave = s.mul(0.32).add(crest.mul(0.95)).sub(0.17).mul(amplitude);
-    height = height.add(wave.mul(select(wave.lessThan(0), calm, calm.mul(0.7).add(0.3))).mul(train.share));
+    height = height.add(
+      wave.mul(select(wave.lessThan(0), calm.mul(0.6).add(0.4), float(1))).mul(train.share),
+    );
     // (it breaks over the whole of its steep front, not just at the peak, as in sampleShoreSurf)
     breaking = max(
       breaking,
@@ -124,7 +127,7 @@ export function shelfDepthAt(d: Float): Float {
     .mul(OCEAN_DEPTH + SHORE_WATERLINE);
   const ridge = bell(out.sub(bar.at).div(bar.width)).mul(bar.height);
   const drop = slope.sub(ridge).add(smooth(out.sub(width).div(0.15)).mul(0.035));
-  return clamp(drop.sub(SHORE_WATERLINE), 0.002, OCEAN_DEPTH);
+  return clamp(drop.sub(SHORE_WATERLINE), SHELF_MIN, OCEAN_DEPTH);
 }
 
 /** Where the surf plunges at distance d out: on the bar and at the beach (surfBreakZone without its whitewater). */

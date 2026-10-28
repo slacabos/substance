@@ -4,6 +4,7 @@ import { buildDirectionLookup } from './oceanLookup';
 import { oceanMesh } from './oceanMesh';
 import {
   shelfLag,
+  SHELF_MIN,
   SHORE_SITES,
   SHORE_WATERLINE,
   shoreDistance,
@@ -92,7 +93,7 @@ export function createOceanField(geometry: BufferGeometry, coastal: boolean): Oc
       // ground is dug below it.
       const ground = shoreGroundHeight(dir.fromArray(positions, i * 3));
       depth[i] = wet[i]
-        ? Math.min(OCEAN_DEPTH, Math.max(0.002, -ground))
+        ? Math.min(OCEAN_DEPTH, Math.max(SHELF_MIN, -ground))
         : Math.min(-SHORE_WATERLINE, -ground);
     }
   }

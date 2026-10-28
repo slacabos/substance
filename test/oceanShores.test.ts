@@ -21,7 +21,6 @@ import {
   surfSet,
 } from '../src/core/oceanShores';
 import { OCEAN_DEFAULTS } from '../src/core/oceanTuning';
-import { uniform } from 'three/tsl';
 import { OceanShores } from '../src/materials/oceanShores';
 import { OceanSim } from '../src/materials/oceanSim';
 
@@ -61,15 +60,9 @@ describe('coastal ocean', () => {
       expect(ashore(-site.beach * 0.5)).toBeLessThan(0.02);
     }
     expect(shoreDistance(SHORE_SITES[0]!.center.clone().negate())).toBeGreaterThan(0);
-    const surf = {
-      clocks: uniform(new Vector3()),
-      setClock: uniform(0),
-      energy: uniform(1),
-      ...shoreSwell(OCEAN_DEFAULTS.peakWavelength),
-    };
     // the sim's buffers the land reads the sea from; no GPU in tests
     const sim = new OceanSim({ compute: () => {} } as unknown as WebGPURenderer, sphere(6));
-    const shores = new OceanShores(true, surf, sim.renderBuffers());
+    const shores = new OceanShores(true, sim.renderBuffers());
     const position = shores.mesh.geometry.getAttribute('position');
     const before = position.getY(0);
     shores.updateMorph(1);

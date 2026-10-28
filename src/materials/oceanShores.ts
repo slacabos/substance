@@ -1,17 +1,9 @@
 import { BufferGeometry, Color, Float32BufferAttribute, Mesh, Vector3 } from 'three';
 import { reposeSlope } from '../core/sand';
 import { MeshStandardNodeMaterial } from 'three/webgpu';
-import {
-  SHALLOWS,
-  SHORE_SITES,
-  shoreElevation,
-  shoreNoise,
-  shoreRadius,
-  shoreSiteDistance,
-} from '../core/oceanShores';
+import { SHALLOWS, SHORE_SITES, shoreElevation, shoreNoise, shoreRadius } from '../core/oceanShores';
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { shoreSurface } from '../nodes/shore';
-import type { SurfInputs } from '../nodes/surf';
 import { blendedAt } from '../nodes/oceanSurface';
 import {
   float,
@@ -21,7 +13,6 @@ import {
   normalLocal,
   positionGeometry,
   positionLocal,
-  select,
   smoothstep,
   uniform,
   varyingProperty,
@@ -46,8 +37,6 @@ type SeaBuffers = Parameters<typeof blendedAt>[1] & {
 const SEABED_DROP = 0.0015;
 /** How bright the land's key light (SAND_KEY_LIGHT) is in its strongest channel. */
 const KEY_STRENGTH = 1.4;
-const UP = new Vector3(0, 1, 0);
-const SIDE = new Vector3(1, 0, 0);
 
 const smooth = (a: number, b: number, value: number): number => {
   const t = Math.min(1, Math.max(0, (value - a) / (b - a)));
@@ -65,7 +54,6 @@ export class OceanShores {
 
   constructor(
     coarse: boolean,
-    surf: SurfInputs,
     sea: SeaBuffers,
     sand?: { bed: StorageBufferNode<'vec4'>; slope: StorageBufferNode<'vec4'> },
   ) {
@@ -176,33 +164,11 @@ export class OceanShores {
       colors.set([color.r, color.g, color.b], i * 3);
     }
     geometry.setAttribute('terrain', new Float32BufferAttribute(terrain, 1));
-    // for the swash: the way out to sea and how far the shoreline is (as one offset), and the site
-    const swash = new Float32Array(elevations.length * 4);
-    const t1 = new Vector3();
-    const t2 = new Vector3();
-    const probe = new Vector3();
-    for (let i = 0; i < elevations.length; i++) {
-      dir.fromArray(this.directions, i * 3);
-      const site = SHORE_SITES[siteOf[i]!]!;
-      t1.crossVectors(dir, Math.abs(dir.y) < 0.9 ? UP : SIDE).normalize();
-      t2.crossVectors(dir, t1);
-      const slope = (t: Vector3) =>
-        (shoreSiteDistance(site, probe.copy(dir).addScaledVector(t, 1e-3).normalize()) -
-          shoreSiteDistance(site, probe.copy(dir).addScaledVector(t, -1e-3).normalize())) /
-        2e-3;
-      const seaward = t1.clone().multiplyScalar(slope(t1)).addScaledVector(t2, slope(t2)).normalize();
-      const ashore = Math.max(0, -shoreSiteDistance(site, dir));
-      swash.set([seaward.x * ashore, seaward.y * ashore, seaward.z * ashore, siteOf[i]!], i * 4);
-    }
-    geometry.setAttribute('swash', new Float32BufferAttribute(swash, 4));
     geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
     const material = new MeshStandardNodeMaterial();
-    // whether the sim's own water stands here (the sea, or a wave the hand sent up the beach), and how wet it has
-    // left the sand
+    // whether the sim's own water stands here (the sea, or a wave running up the beach), and how wet it has left
+    // the sand
     const water = varyingProperty('float', 'vWater');
-    // and whether it's the sim's water standing on the land itself (a wave the hand sent up the beach), not the
-    // sea lapping at the shore
-    const flooded = varyingProperty('float', 'vFlooded');
     const soaked = varyingProperty('float', 'vSoaked');
     // how far the sand has been dug or piled here (the sim's sand bed, blended onto this finer mesh)
     const dug = varyingProperty('float', 'vDug');
@@ -211,13 +177,10 @@ export class OceanShores {
     const down = varyingProperty('vec3', 'vDown');
     material.positionNode = Fn(() => {
       const p = normalize(positionGeometry);
-      // the column: the sea's drawn height (with the surf) over the ground's depth (ground.x, negative on land)
+      // the column: the sea's drawn height over the ground's depth (ground.x, negative on land)
       const column = (i: Parameters<Parameters<typeof blendedAt>[2]>[0]) =>
         smoothstep(0.0002, 0.0008, sea.ground.element(i).x.add(sea.surface.element(i).x));
       water.assign(blendedAt(p, sea, column));
-      flooded.assign(
-        blendedAt(p, sea, (i) => select(sea.ground.element(i).x.lessThan(0), column(i), float(0))),
-      );
       soaked.assign(sand ? blendedAt(p, sea, (i) => sand.bed.element(i).y) : float(0));
       const change = sand ? blendedAt(p, sea, (i) => sand.bed.element(i).x) : float(0);
       dug.assign(change);
@@ -239,8 +202,7 @@ export class OceanShores {
       return positionLocal.add(p.mul(change));
     })();
     const surface = shoreSurface(
-      surf,
-      { water, flooded },
+      water,
       soaked,
       { dir: vec3(SAND_KEY_LIGHT.x, SAND_KEY_LIGHT.y, SAND_KEY_LIGHT.z), color: this.keyColor },
       dug,

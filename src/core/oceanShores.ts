@@ -43,6 +43,8 @@ export const MAINLAND = SHORE_SITES[0]!;
  * sandbar `bar.at` out, `bar.height` proud of the slope, which the waves break on before they reach the beach.
  */
 export const SHELF = { width: 0.55, power: 1, bar: { at: 0.15, height: 0.008, width: 0.03 } } as const;
+/** The shallowest still water the sim keeps at the shoreline, orb radii. */
+export const SHELF_MIN = 0.0008;
 /** How far out the water still looks shallow: clear and turquoise over pale sand, well past the shelf's edge. */
 export const SHALLOWS = 1.1;
 /** The tallest a wave can stand over the still water's depth before it breaks (a breaker index). */
@@ -166,7 +168,7 @@ export function shoreGroundHeight(dir: Vector3): number {
  * and inshore, deepening slowly to the open sea's depth at the shelf's edge.
  */
 export function shelfDepth(d: number): number {
-  return Math.min(OCEAN_DEPTH, Math.max(0.002, shelfDrop(Math.max(0, d)) - WATERLINE));
+  return Math.min(OCEAN_DEPTH, Math.max(SHELF_MIN, shelfDrop(Math.max(0, d)) - WATERLINE));
 }
 
 /** Where the shelf ends and the open sea's depth begins. */
@@ -308,8 +310,8 @@ export function sampleShoreSurf(
   // slope, and its edge would wander far up and down it with every small difference between the sim's vertices,
   // a sharp crest most of all; the swash, drawn on the sand, is the run-up and the backwash)
   const height = (s * 0.32 + crest * 0.95 - 0.17) * amplitude;
-  const calm = smooth((distance - 0.005) / 0.035);
-  out.height = height * (height < 0 ? calm : 0.3 + 0.7 * calm);
+  const calm = smooth((distance - 0.002) / 0.02);
+  out.height = height * (height < 0 ? 0.4 + 0.6 * calm : 1);
   // (it breaks over the whole of its steep front, not just at the peak: a broad band of white water)
   out.breaking = Math.max(0, s) ** 2 * surfBreakZone(distance) * exposure * energy;
 }

@@ -95,6 +95,19 @@ const AREA_FIXED = 1e9;
 const DEEP_WATER = 0.025;
 /** How fast water running over wet sand smooths it (SandField's wash), per second. */
 const SAND_WASH = 0.4;
+/**
+ * The coast's wave maker (heightStep): over this band of distance out from the shore the sim's water is drawn
+ * toward the incoming swell, fully from the far end, at MAKER_RATE per second.
+ */
+const SURF_MAKER = [0.22, 0.32] as const;
+const MAKER_RATE = 10;
+/** How fast the water rises (orb radii a second) where a wave's front starts to break, and where it's all white. */
+const BORE_RISE = [0.0012, 0.005] as const;
+/**
+ * How tall the waves it makes are, of the drawn swell's: on a beach rising a centimetre over its width, a wave a
+ * few millimetres high runs well up it; the drawn swell's centimetre would flood it whole.
+ */
+const MAKER_GAIN = 0.4;
 /** How far under dry ground the water's surface is drawn, so it never shows through the sand. */
 const DRY_SINK = 0.02;
 /**
@@ -522,6 +535,20 @@ export class OceanSim {
         // the cap is the sea's; dry land stands higher, and water on it may too
         const ceiling = max(float(SURFACE.maxHeight), g4.x.negate().add(SURFACE.maxHeight));
         const next = clamp(mix(wave, shallow, mixShallow), floor, ceiling).toVar();
+        if (coastal) {
+          // The wave maker: out past the bar the water is drawn toward the swell running in (surfAt), so each wave
+          // enters the sim there and the sim carries it on: shoaling, steepening, breaking on the bar and the beach,
+          // and running up the sand and draining back as real water, its edge wherever the water goes. Seaward of
+          // the maker it also soaks up waves the beach reflects.
+          const maker = smoothstep(SURF_MAKER[0], SURF_MAKER[1], g4.y);
+          next.assign(
+            mix(
+              next,
+              surfAt(g4.y, g4.z, q).height.mul(MAKER_GAIN),
+              maker.mul(float(1).sub(exp(u.dt.mul(-MAKER_RATE)))),
+            ),
+          );
+        }
 
         // whitecaps on steep, raised crests; foam rides the current, spreads a little and fades
         const steepness = sumDelta.div(6).mul(invSpacing);
@@ -578,7 +605,6 @@ export class OceanSim {
         const state = heights[final]!.element(i);
         const foam = state.z.toVar();
         const turbulence = state.w.toVar();
-        const surfHeight = float(0).toVar();
         const impact = float(0).toVar();
         if (waves) {
           // whitecaps leave foam on the water, which then rides the current (a tap's ring sweeps it aside)
@@ -598,17 +624,11 @@ export class OceanSim {
           foam.assign(max(foam, whitecap.mul(WHITECAP.foam)));
         }
         if (coastal) {
-          const surf = surfAt(g4.y, g4.z, q);
-          surfHeight.assign(surf.height);
-          impact.assign(
-            clamp(
-              surf.breaking.add(
-                smoothstep(0.005, 0.045, state.x).mul(float(1).sub(smoothstep(0.02, 0.08, g4.y))),
-              ),
-              0,
-              1,
-            ),
-          );
+          // the surf breaks where the sim's own water does: a wave's front, the water rising fast over the shelf
+          // and up the beach (its own bore), not on any schedule of its own
+          const shelf = float(1).sub(smoothstep(SURF_MAKER[0] * 0.8, SURF_MAKER[0], g4.y));
+          const rising = state.x.sub(state.y).div(max(u.dt, 1e-4));
+          impact.assign(smoothstep(BORE_RISE[0], BORE_RISE[1], rising).mul(shelf));
           foam.assign(clamp(foam.add(impact.mul(u.frameDt).mul(g4.w.mul(1.2).add(2.8))), 0, 1));
           turbulence.assign(max(turbulence, impact.mul(0.75)));
         }
@@ -616,7 +636,8 @@ export class OceanSim {
         state.w.assign(turbulence);
         // how fast the breaking rose since last frame: a wave arriving, which is when surf throws spray
         const surge = max(impact.sub(this.surface.element(i).w), 0).div(u.frameDt);
-        this.surface.element(i).assign(vec4(state.x.add(surfHeight), foam, turbulence, impact));
+        // (the coast's surf is the sim's own water, made by the wave maker in heightStep)
+        this.surface.element(i).assign(vec4(state.x, foam, turbulence, impact));
         const flow = this.current[final]!.element(i).xyz.add(windDrift(i));
         this.flow.element(i).assign(vec4(flow, surge));
         // both foam drifts in this vertex's tangent basis, each restarting on its own beat
