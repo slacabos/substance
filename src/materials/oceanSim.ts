@@ -103,11 +103,13 @@ const SURF_MAKER = [0.3, 0.55] as const;
 const MAKER_RATE = 10;
 /** How fast the water rises (orb radii a second) where a wave's front starts to break, and where it's all white. */
 const BORE_RISE = [0.0012, 0.005] as const;
+/** How tall a crest stands over the still water's depth where it starts to break, and where it's all white. */
+const CREST_BREAK = [0.22, 0.4] as const;
 /**
  * How tall the waves it makes are, of the drawn swell's: on a beach rising a centimetre over its width, a wave a
  * few millimetres high runs well up it; the drawn swell's centimetre would flood it whole.
  */
-const MAKER_GAIN = 0.4;
+const MAKER_GAIN = 0.7;
 /** How far under dry ground the water's surface is drawn, so it never shows through the sand. */
 const DRY_SINK = 0.02;
 /**
@@ -552,9 +554,13 @@ export class OceanSim {
 
         // whitecaps on steep, raised crests; foam rides the current, spreads a little and fades
         const steepness = sumDelta.div(6).mul(invSpacing);
+        // (off a coast's beach the swell the wave maker drives is long and smooth: its crests break by the
+        // breaker index in finishSurface, along their length, not in patches wherever the mesh finds them steep)
+        const swellOffshore = coastal ? smoothstep(SURF_MAKER[0] * 0.6, SURF_MAKER[0], g4.y) : float(0);
         const breaking = smoothstep(0.09, 0.22, steepness)
           .mul(smoothstep(0.001, 0.015, next))
-          .mul(smoothstep(0.3, 0.8, foamGrain));
+          .mul(smoothstep(0.3, 0.8, foamGrain))
+          .mul(float(1).sub(swellOffshore));
         const travel = clamp(u.dt.mul(length(flow)).mul(invSpacing * 0.65), 0, 0.35);
         const carried = state.z
           .mul(float(1).sub(travel))
@@ -628,7 +634,13 @@ export class OceanSim {
           // and up the beach (its own bore), not on any schedule of its own
           const shelf = float(1).sub(smoothstep(SURF_MAKER[0] * 0.8, SURF_MAKER[0], g4.y));
           const rising = state.x.sub(state.y).div(max(u.dt, 1e-4));
-          impact.assign(smoothstep(BORE_RISE[0], BORE_RISE[1], rising).mul(shelf));
+          const bore = smoothstep(BORE_RISE[0], BORE_RISE[1], rising).mul(shelf);
+          // and a crest breaks once it stands tall for the water under it (a breaker index): out on the shelf an
+          // incoming wave's crest whitens along its length as it arches over, before it crashes in as a bore
+          const crest = smoothstep(CREST_BREAK[0], CREST_BREAK[1], state.x.div(max(g4.x, 0.004))).mul(
+            float(1).sub(smoothstep(SURF_MAKER[1] * 0.9, SURF_MAKER[1], g4.y)),
+          );
+          impact.assign(max(bore, crest));
           foam.assign(clamp(foam.add(impact.mul(u.frameDt).mul(g4.w.mul(1.5).add(3))), 0, 1));
           turbulence.assign(max(turbulence, impact.mul(0.75)));
         }

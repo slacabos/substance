@@ -56,8 +56,8 @@ export function surfWave(
       .mul(surf.omega * train.ratio)
       .sub(out.mul(surf.k * train.ratio * train.ratio))
       .add(bearing.mul(train.slant))
-      .add(sin(bearing.mul(3).add(train.seed)).mul(0.9))
-      .add(sin(bearing.mul(7).add(2.3 * train.seed)).mul(0.5))
+      .add(sin(bearing.mul(3).add(train.seed)).mul(0.7))
+      .add(sin(bearing.mul(7).add(2.3 * train.seed)).mul(0.2))
       .sub(clock[t]!),
   );
   // sets of bigger waves riding in with the crests, a little later along the beach (a whole set a turn, so it

@@ -214,8 +214,8 @@ export interface ShoreSurfSample {
  */
 export const SURF_TRAINS = [
   { ratio: 1, slant: 2, share: 1, seed: 0 },
-  { ratio: 0.83, slant: -3, share: 0.6, seed: 1.9 },
-  { ratio: 1.21, slant: 5, share: 0.45, seed: 4.3 },
+  { ratio: 0.83, slant: 1, share: 0.6, seed: 1.9 },
+  { ratio: 1.21, slant: 3, share: 0.45, seed: 4.3 },
 ] as const;
 export type SurfTrain = (typeof SURF_TRAINS)[number];
 export const SURF_SLANT = SURF_TRAINS[0].slant;
@@ -226,7 +226,7 @@ const SHARES = SURF_TRAINS.reduce((sum, t) => sum + t.share, 0);
  * which brings them in early here and late there, so a crest is a ragged line rather than a ruler.
  */
 export function surfBend(train: SurfTrain, bearing: number): number {
-  return 0.9 * Math.sin(3 * bearing + train.seed) + 0.5 * Math.sin(7 * bearing + 2.3 * train.seed);
+  return 0.7 * Math.sin(3 * bearing + train.seed) + 0.2 * Math.sin(7 * bearing + 2.3 * train.seed);
 }
 
 /**
