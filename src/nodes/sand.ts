@@ -110,8 +110,8 @@ export function bumped(h: Float): Vec3 {
 }
 
 /** One grain cell of a lattice at frequency f: its mineral's tint, a random tilt, and whether it can glint. */
-function grainCell(p: Vec3, f: Float) {
-  const c = ivec3(floor(p.mul(f)));
+/** One grain's mineral tint, a random tilt, and whether it can glint, from its lattice cell `c`. */
+function grainAt(c: Node<'ivec3'>) {
   const seed = uint(c.x).mul(73856093).bitXor(uint(c.y).mul(19349663)).bitXor(uint(c.z).mul(83492791)).mul(8);
   const r = (j: number) => hash(seed.add(j));
   const kind = r(0);
@@ -129,6 +129,29 @@ function grainCell(p: Vec3, f: Float) {
   );
   const tilt = vec3(r(3), r(4), r(5)).mul(2).sub(1);
   return { tint, tilt, glints: r(6).lessThan(GLINT_SHARE) };
+}
+
+/**
+ * The grains of a lattice at frequency f around p. Each grain's tint and tilt are blended smoothly into its
+ * neighbours' across the cell (as value noise is), rather than held flat to the cell's edges, which drew the
+ * lattice as little squares; glints stay a grain's own.
+ */
+function grainCell(p: Vec3, f: Float) {
+  const at = p.mul(f);
+  const base = floor(at);
+  const w = smoothstep(0, 1, at.sub(base));
+  let tint: Vec3 = vec3(0);
+  let tilt: Vec3 = vec3(0);
+  for (let k = 0; k < 8; k++) {
+    const o = [k & 1, (k >> 1) & 1, (k >> 2) & 1] as const;
+    const g = grainAt(ivec3(base.add(vec3(o[0], o[1], o[2]))));
+    const weight = (o[0] ? w.x : float(1).sub(w.x))
+      .mul(o[1] ? w.y : float(1).sub(w.y))
+      .mul(o[2] ? w.z : float(1).sub(w.z));
+    tint = tint.add(g.tint.mul(weight));
+    tilt = tilt.add(g.tilt.mul(weight));
+  }
+  return { tint, tilt, glints: grainAt(ivec3(base)).glints };
 }
 
 /**
@@ -168,7 +191,8 @@ export function sandGrains(
   // wet sand's film of water smooths the grains over and dulls their glints
   const dry = float(1).sub(wet.mul(0.75));
   return {
-    tint: mix(mix(a.tint, b.tint, t), vec3(1), wet.mul(0.45)),
+    // (and damp sand looks more even: its grains' colours run together)
+    tint: mix(mix(a.tint, b.tint, t), vec3(1), wet.mul(0.7)),
     normal: normalize(n.add(tilt.mul(contrast.mul(0.32).mul(dry)))),
     glint: light.color.mul(mix(a.glint, b.glint, t).mul(lit).mul(dry).mul(GLINT_STRENGTH)),
   };
@@ -195,19 +219,21 @@ export function sandRelief(
   const warp = octave(p, 14).mul(3).add(octave(p, 45).mul(0.3));
   const ripple = ripples(p, vec3(0.8, 0.1, -0.59), 95, warp);
   // a fresh dig throws out crumbs of damp sand from underneath, fewer the further from it
-  const clumps = octave(p, 160).mul(0.5).add(0.5);
-  const crumbs = smoothstep(
-    float(1).sub(disturbed.mul(0.7)),
-    float(1.05).sub(disturbed.mul(0.7)),
-    clumps,
-  ).mul(smoothstep(0.02, 0.15, disturbed));
-  const lumps = octave(p, 210).mul(disturbed);
+  // (crumbs a few pixels across, their edges a pixel soft: a hard cut through finer noise drew pixel speckle)
+  const clumps = octave(p, 70).mul(0.5).add(0.5);
+  const soft = fwidth(clumps).add(0.04);
+  const cut = float(1).sub(disturbed.mul(0.7));
+  const crumbs = smoothstep(cut.sub(soft), cut.add(soft), clumps).mul(smoothstep(0.02, 0.15, disturbed));
+  const lumps = octave(p, 110).mul(disturbed);
   let height = ripple.mul(0.0016).mul(combed).add(lumps.mul(0.0014)).add(crumbs.mul(0.0012));
   let tone = float(1).sub(ripple.mul(0.05).mul(combed));
   if (slope) {
     // grains that slid leave streaks down the slope: noise squeezed along the way down
-    const q = p.mul(170);
-    const streak = snoise(q.sub(slope.down.mul(dot(q, slope.down).mul(0.85))));
+    // (coarse enough to see, and faded out once finer than a couple of pixels, as octave does: finer, it aliased
+    // into pixel speckle all over a dug wall)
+    const q = p.mul(80);
+    const at = q.sub(slope.down.mul(dot(q, slope.down).mul(0.85)));
+    const streak = snoise(at).mul(float(1).sub(smoothstep(0.35, 0.7, length(fwidth(at)))));
     const steep = smoothstep(0.35, 0.8, slope.steep);
     height = height.add(streak.mul(steep).mul(0.0012));
     tone = tone.add(streak.mul(steep).mul(0.05));
