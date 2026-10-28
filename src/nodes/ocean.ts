@@ -180,11 +180,14 @@ export function threadsAt(obj: Vec3, along: Vec3, amount: Float, fresh: Float): 
   const cells = mx_worley_noise_vec2(bent.mul(CELL_SCALE));
   const gap = cells.y.sub(cells.x);
   // a line of its own width, thicker where there's more foam, with soft edges a pixel wide
-  const edge = fwidth(gap).add(0.01);
+  // (soft, a few pixels: crisp lines read as a drawn web, not foam)
+  const edge = fwidth(gap).mul(2).add(0.035);
   // (and its width varies along it, where foam has gathered thicker)
   const gather = max(snoise(m.mul(0.9).add(4.4)), 0);
   const line = float(0.02).add(amount.mul(0.07)).add(kind.mul(0.02)).add(gather.mul(0.05));
-  const lines = float(1).sub(smoothstep(line.sub(edge), line.add(edge), gap));
+  const lines = float(1)
+    .sub(smoothstep(line.sub(edge), line.add(edge), gap))
+    .mul(0.8);
   // gathered into patches with open water between, more of it covered the fresher the foam
   const clumps = snoise(m.mul(0.11))
     .mul(0.6)
@@ -276,9 +279,10 @@ export function oceanFoam(
   );
   // ambient: churned foam the sim carries
   const ambient = clamp(
+    // (in the surf zone too, under the shoreline's web: its round bubbles fill the web in as real foam is)
     foamLace(drift, lace, smoothstep(0.04, 0.6, simulated), u)
       .mul(u.uFoamAmbient)
-      .mul(open),
+      .mul(open.mul(0.4).add(0.6)),
     0,
     1,
   );

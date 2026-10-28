@@ -14,6 +14,7 @@ import {
   shoreRadius,
   shoreSurfPhase,
   shoreSwell,
+  SURF_REACH,
   SURF_SET_WAVES,
   SURF_TRAINS,
   shoreSurfAt,
@@ -106,7 +107,8 @@ describe('coastal ocean', () => {
       return near;
     };
     const target = phaseAt(0.05, 0);
-    expect(crestAt(target, 1)).toBeLessThan(0.05 - 0.01);
+    // (slow over the wide, shallow shelf: water a centimetre deep)
+    expect(crestAt(target, 1)).toBeLessThan(0.05 - 0.005);
     // and it slows as it comes in
     const outer = 0.05 - crestAt(target, 1);
     const inner = crestAt(phaseAt(0.01, 0), 0) - crestAt(phaseAt(0.01, 0), 1);
@@ -136,7 +138,7 @@ describe('coastal ocean', () => {
       expect(-trough).toBeLessThan(shelfDepth(d) * 0.5);
     }
     expect(surfAt(-0.01, 3)).toEqual({ height: 0, breaking: 0 });
-    expect(surfAt(0.5, 3)).toEqual({ height: 0, breaking: 0 });
+    expect(surfAt(SURF_REACH + 0.05, 3)).toEqual({ height: 0, breaking: 0 });
   });
 
   it('brings its crests straight in at the beach, nearly parallel to it, not sweeping along it', () => {

@@ -42,7 +42,7 @@ export const MAINLAND = SHORE_SITES[0]!;
  * distance: 1 is a steady slope, which meets the beach's own gentle rise without a step at the waterline), with a
  * sandbar `bar.at` out, `bar.height` proud of the slope, which the waves break on before they reach the beach.
  */
-export const SHELF = { width: 0.55, power: 1, bar: { at: 0.15, height: 0.008, width: 0.03 } } as const;
+export const SHELF = { width: 0.8, power: 1, bar: { at: 0.18, height: 0.0055, width: 0.035 } } as const;
 /** The shallowest still water the sim keeps at the shoreline, orb radii. */
 export const SHELF_MIN = 0.0008;
 /** How far out the water still looks shallow: clear and turquoise over pale sand, well past the shelf's edge. */
@@ -298,7 +298,7 @@ export function sampleShoreSurf(
     return;
   }
   const envelope =
-    (1 - smooth((distance - SURF_FADE) / (SURF_REACH - SURF_FADE))) *
+    (1 - smooth((distance - SWELL_FADE) / (SURF_REACH - SWELL_FADE))) *
     Math.min(1.8, (OCEAN_DEPTH / shelfDepth(distance)) ** 0.25) *
     (0.65 + smooth(distance / 0.025) * 0.35);
   const exposure = 0.15 + 0.85 * smooth((facing + 0.2) / 0.8);
@@ -361,7 +361,9 @@ export function surfSet(spatial: number, setClock: number, seed: number): number
 }
 
 /** How far out from a shore the surf reaches before it's just the open sea's swell, and where it starts to fade. */
-export const SURF_REACH = 0.4;
+export const SURF_REACH = 1.1;
+/** Where the swell starts to fade into the open sea's own waves, far out past the shelf. */
+export const SWELL_FADE = 0.75;
 export const SURF_FADE = SHELF.bar.at + 0.05;
 /** The surf's height scale, orb radii: big next to the orb, as breakers are next to a beach. */
 export const SURF_HEIGHT = 0.034;

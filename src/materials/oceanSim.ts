@@ -99,7 +99,7 @@ const SAND_WASH = 0.4;
  * The coast's wave maker (heightStep): over this band of distance out from the shore the sim's water is drawn
  * toward the incoming swell, fully from the far end, at MAKER_RATE per second.
  */
-const SURF_MAKER = [0.22, 0.32] as const;
+const SURF_MAKER = [0.3, 0.55] as const;
 const MAKER_RATE = 10;
 /** How fast the water rises (orb radii a second) where a wave's front starts to break, and where it's all white. */
 const BORE_RISE = [0.0012, 0.005] as const;

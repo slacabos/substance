@@ -49,7 +49,7 @@ import { OCEAN_FLUID } from '../config';
 import { FLUID, fluidGrid } from '../core/oceanFluid';
 import type { OceanField } from '../core/oceanField';
 import { LOOKUP_SIZE } from '../core/oceanLookup';
-import { shoreGroundHeight, SURF_REACH } from '../core/oceanShores';
+import { shoreGroundHeight, SURF_FADE } from '../core/oceanShores';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { cubeCell, type SurfaceBuffers } from '../nodes/oceanSurface';
 import { oceanWaveVertex, type OceanWaveFields } from '../nodes/oceanWaves';
@@ -221,7 +221,7 @@ export class OceanFluid {
       const whitecap = smoothstep(0.12, 0.4, here.y).mul(this.storm);
       // (off a coast the surf zone is all foam and churn: its spray is the surf's, below, not the open sea's)
       const distance = sea.coastal ? shoreDistanceAt(normalize(vertex.xyz)) : float(1);
-      const offshore = sea.coastal ? smoothstep(SURF_REACH * 0.85, SURF_REACH, distance) : float(1);
+      const offshore = sea.coastal ? smoothstep(SURF_FADE * 1.5, SURF_FADE * 2, distance) : float(1);
       const open = max(select(aerated, here.y.mul(0.82).add(here.z.mul(0.3)), float(0)), whitecap).mul(
         offshore,
       );

@@ -9,7 +9,7 @@ import {
   SHELF_MIN,
   SHORE_SWEEPS,
   SHORE_WATERLINE,
-  SURF_FADE,
+  SWELL_FADE,
   SURF_HEIGHT,
   SURF_REACH,
   SURF_SET_WAVES,
@@ -79,7 +79,7 @@ export function surfAtPoint(
 ): { height: Float; breaking: Float } {
   const depth = shelfDepthAt(distance);
   const envelope = float(1)
-    .sub(smooth(distance.sub(SURF_FADE).div(SURF_REACH - SURF_FADE)))
+    .sub(smooth(distance.sub(SWELL_FADE).div(SURF_REACH - SWELL_FADE)))
     .mul(min(float(OCEAN_DEPTH).div(depth).pow(0.25), 1.8))
     .mul(smooth(distance.div(0.025)).mul(0.35).add(0.65));
   const amplitude = min(envelope.mul(strength).mul(SURF_HEIGHT), depth.mul(BREAKER));
