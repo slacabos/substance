@@ -192,14 +192,18 @@ export function threadsAt(obj: Vec3, along: Vec3, amount: Float, fresh: Float): 
   // (and broken here and there, so it's torn lace rather than a maze of unbroken lines)
   const holes = snoise(m.mul(0.9));
   const threads = lines.mul(smoothstep(-0.7, -0.1, holes.add(kind.mul(0.3))));
-  const held = smoothstep(0, 0.4, clumps.mul(0.6).add(amount.mul(2)).sub(0.15));
+  const held = smoothstep(0, 0.35, clumps.mul(0.5).add(amount.mul(2.6)).sub(0.05));
   // a wave's front, just broken, is thick white water torn by small holes, its edge torn at two scales (the finer
   // the lace's own) so it frays into threads and never shows the triangles the breaking is interpolated across
   // (torn hard: the breaking is interpolated linearly across the sim's triangles, and a cut through that alone
   // shows their edges as a sawtooth; the noise has to be what decides where the white ends)
   const torn = clumps.mul(0.3).add(holes.mul(0.22)).add(threads.mul(0.18));
+  // (holes of two sizes, the finer one the lace's own cells, so it reads as churned white water, not a sheet)
+  const pits = float(1)
+    .sub(lines)
+    .mul(smoothstep(0.1, 0.5, snoise(m.mul(2.3).add(1.7))));
   const front = smoothstep(0.25, 0.75, fresh.mul(0.8).add(torn).add(0.15)).mul(
-    smoothstep(-0.6, -0.2, holes.add(clumps.mul(0.3))),
+    smoothstep(-0.35, 0.05, holes.add(clumps.mul(0.3))).mul(float(1).sub(pits.mul(0.85))),
   );
   // (fresh, thick foam fills in between the threads, but always with holes: lace, never a sheet)
   const fill = max(smoothstep(0.5, 0.9, amount.mul(held)).mul(smoothstep(-0.2, 0.3, holes)), front);
