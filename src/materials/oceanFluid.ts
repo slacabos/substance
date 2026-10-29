@@ -86,8 +86,6 @@ const SURF_SPRAY = 1.5;
  */
 const SURF_TOSS = 0.7;
 const SURF_DROP = 0.65;
-/** The size a droplet's dense-spray sphere is drawn at IMPOSTOR_RADIUS for; smaller droplets draw smaller spheres. */
-const NOMINAL_DROP = 0.0013;
 /** A splash is a third droplets, the rest mist (as the old spray). */
 const DROPLET_SHARE = 0.35;
 /** A particle's crowd (see `crowd`) above which it's dense spray, drawn as one surface. */
@@ -98,7 +96,7 @@ const IMPOSTOR_RADIUS = 0.012;
 const STREAK_TIME = 0.04;
 /** How solid a droplet's and a speck of mist's streak are at full life. */
 const DROPLET_OPACITY = 0.56;
-const MIST_OPACITY = 0.28;
+const MIST_OPACITY = 0.224;
 /** Foam a landing leaves on its vertex. */
 const LANDING_FOAM = { droplet: 0.02, mist: 0.004 };
 
@@ -137,8 +135,8 @@ export class OceanFluid {
     const cells = res * res * res;
     const { buffers, landings } = sea;
 
-    // position and J; velocity and life left (0 when dead); then three per particle: the rows of C, with
-    // kind (0 droplet, 1 mist), size and age in their w
+    // position and J; velocity and life left (0 when dead); then three per particle: the rows of C, with kind (1
+    // mist; a droplet's is its emission's `drop` less 1, 0 at the open sea's size), size and age in their w
     const pos = instancedArray(n, 'vec4') as Vec4Buffer;
     const vel = instancedArray(n, 'vec4') as Vec4Buffer;
     const aff = instancedArray(n * 3, 'vec4') as Vec4Buffer;
@@ -208,7 +206,7 @@ export class OceanFluid {
       const life = select(mist, random(seed, 7).mul(0.55).add(0.28), float(6));
       pos.element(slot).assign(vec4(p, 1));
       vel.element(slot).assign(vec4(v, life));
-      aff.element(slot.mul(3)).assign(vec4(0, 0, 0, select(mist, float(1), float(0))));
+      aff.element(slot.mul(3)).assign(vec4(0, 0, 0, select(mist, float(1), drop.sub(1))));
       aff.element(slot.mul(3).add(1)).assign(vec4(0, 0, 0, size));
       aff.element(slot.mul(3).add(2)).assign(vec4(0));
       // a droplet takes its water from the sea it leaves (mist is spent)
@@ -248,7 +246,8 @@ export class OceanFluid {
         .mul(sea.coastal ? surfPlungeAt(distance) : float(1));
       const excess = max(openExcess, surfExcess);
       // how much of this spray is the coast's surf, thrown lower and finer (SURF_TOSS, SURF_DROP)
-      const surfShare = sea.coastal ? surfExcess.div(max(openExcess.add(surfExcess), 1e-4)) : float(0);
+      // (whichever source makes the spray: the emission is the larger of the two)
+      const surfShare = sea.coastal ? smoothstep(-0.05, 0.05, surfExcess.sub(openExcess)) : float(0);
       // (the open sea's are plain 1: a mix of literals is rejected by Firefox's WebGPU)
       const toss = sea.coastal ? mix(float(1), float(SURF_TOSS), surfShare) : float(1);
       const drop = sea.coastal ? mix(float(1), float(SURF_DROP), surfShare) : float(1);
@@ -553,8 +552,9 @@ export class OceanFluid {
     impostor.vertexNode = Fn(() => {
       const i = instanceIndex;
       const take = alive(i).and(mistAt(i).not());
-      // (as big as the droplet: the coast surf's finer droplets bunch into finer spray too)
-      const scale = clamp(affView.element(i.mul(3).add(1)).w.div(NOMINAL_DROP), 0.5, 1.2);
+      // (scaled with its emission, as the coast surf's finer droplets are, not droplet by droplet: a clump's
+      // spheres stay one size, which the fluid pass's smoothing expects)
+      const scale = affView.element(i.mul(3)).w.add(1);
       const r = select(take, dense(i).mul(IMPOSTOR_RADIUS).mul(scale), float(0));
       const at = modelViewMatrix.mul(vec4(posView.element(i).xyz, 1));
       centre.assign(at.xyz);

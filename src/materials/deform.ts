@@ -75,6 +75,8 @@ const SHALLOW_SCATTER = vec3(0.015, 0.13, 0.24);
 const FACE_SLOPE = [0.04, 0.2] as const;
 const FACE_DARK = 0.55;
 const ABSORB_DISTANCE = 0.01;
+/** How much light deep water lets through (the open sea's, and the coast's once deep). */
+const DEEP_TRANSMISSION = 0.22;
 /** How bright the coast's foam's key light is, as the land's (KEY_STRENGTH in materials/oceanShores.ts). */
 const FOAM_KEY = 1.4;
 /** How much higher water standing on the coast's sand is drawn than the sim has it, orb radii. */
@@ -359,8 +361,8 @@ export function createDeformMaterial(
   material.specularIntensityNode = mix(float(0.75), float(0.08), foam).mul(max(meets, foam));
   // (foam stays opaque white even at the very edge)
   material.transmissionNode = coastal
-    ? mix(mix(float(1), mix(float(0.97), float(0.22), body), meets), float(0), foam)
-    : mix(float(0.22), float(0), foam);
+    ? mix(mix(float(1), mix(float(0.97), float(DEEP_TRANSMISSION), body), meets), float(0), foam)
+    : mix(float(DEEP_TRANSMISSION), float(0), foam);
   if (coastal) {
     material.thicknessNode = depth;
     material.attenuationColorNode = SHALLOW_ABSORB;
