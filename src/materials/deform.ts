@@ -36,6 +36,7 @@ import {
   uniform,
   uniformArray,
   varyingProperty,
+  vec2,
   vec3,
   vec4,
   vertexIndex,
@@ -181,14 +182,20 @@ export function createDeformMaterial(
   }
 
   const { waves, sim, spacing, coastal } = ocean;
-  const wave = varyingProperty('float', 'vWave');
-  const simWave = varyingProperty('float', 'vSimWave');
-  const weatherAmount = varyingProperty('float', 'vWeather');
-  const damping = varyingProperty('float', 'vDamping');
+  // Single numbers travel packed in vec4s: every varying takes a whole location, and Safari's WebGPU allows only
+  // 60 components between the stages (16 locations would be 64), so the coast's water failed to build on iPhone
+  // with each in its own. The wave's height, the sim's part of it, the weather, the shallows' damping; then the
+  // sim's foam and turbulence.
+  const scalars = varyingProperty('vec4', 'vScalars');
+  const wave = scalars.x;
+  const simWave = scalars.y;
+  const weatherAmount = scalars.z;
+  const damping = scalars.w;
   const direction = varyingProperty('vec3', 'vDirection');
   const simGradient = varyingProperty('vec3', 'vSimGradient');
-  const simulatedFoam = varyingProperty('float', 'vSimFoam');
-  const turbulence = varyingProperty('float', 'vTurbulence');
+  const simState = varyingProperty('vec2', 'vSimState');
+  const simulatedFoam = simState.x;
+  const turbulence = simState.y;
   const objA = varyingProperty('vec3', 'vObjA');
   const objB = varyingProperty('vec3', 'vObjB');
   // the coast's values, packed in one varying (WebGPU passes at most 16 from vertex to fragment): distance to
@@ -210,13 +217,9 @@ export function createDeformMaterial(
     const simHeight = simulated.x;
     simGradient.assign(sim.slope.element(vertexIndex).xyz);
     normalLocal.assign(normalize(surface.nrm.sub(simGradient)));
-    wave.assign(surface.height.add(simHeight));
-    simWave.assign(simHeight);
-    weatherAmount.assign(surface.weather);
-    damping.assign(surface.damping);
+    scalars.assign(vec4(surface.height.add(simHeight), simHeight, surface.weather, surface.damping));
     direction.assign(p);
-    simulatedFoam.assign(simulated.y);
-    turbulence.assign(simulated.z);
+    simState.assign(vec2(simulated.y, simulated.z));
     // where the foam pattern is read: this vertex moved back by each of its two drifts
     const drift = sim.drift.element(vertexIndex);
     const { e1, e2 } = driftBasis(p);
