@@ -77,11 +77,17 @@ const SPLASHES = 4;
 const PER_SPLASH = 24;
 /** Particles started per second per unit of sphere area where the water breaks hardest, for 32k particles. */
 const EMISSION = 30000;
-/** How much harder breaking surf throws spray than open-sea whitecaps of the same strength. */
+/** How much more spray breaking surf throws than open-sea whitecaps of the same strength (an emission rate). */
 const SURF_SPRAY = 1.5;
-/** How hard, and how big, the coast's surf throws its spray, of the open sea's. */
-const COAST_TOSS = 0.55;
-const COAST_DROP = 0.65;
+/**
+ * The coast's surf spray, of the open sea's: how hard it's thrown (a breaker a few centimetres high throws it a
+ * little way), and how big its droplets are. Only the surf's own spray; a hand's splash or a whitecap's offshore is
+ * the open sea's.
+ */
+const SURF_TOSS = 0.7;
+const SURF_DROP = 0.65;
+/** The size a droplet's dense-spray sphere is drawn at IMPOSTOR_RADIUS for; smaller droplets draw smaller spheres. */
+const NOMINAL_DROP = 0.0013;
 /** A splash is a third droplets, the rest mist (as the old spray). */
 const DROPLET_SHARE = 0.35;
 /** A particle's crowd (see `crowd`) above which it's dense spray, drawn as one surface. */
@@ -91,7 +97,7 @@ const IMPOSTOR_RADIUS = 0.012;
 /** Seconds of motion a streak shows. */
 const STREAK_TIME = 0.04;
 /** How solid a droplet's and a speck of mist's streak are at full life. */
-const DROPLET_OPACITY = 0.7;
+const DROPLET_OPACITY = 0.56;
 const MIST_OPACITY = 0.28;
 /** Foam a landing leaves on its vertex. */
 const LANDING_FOAM = { droplet: 0.02, mist: 0.004 };
@@ -174,6 +180,8 @@ export class OceanFluid {
       travel: Vec3,
       strength: Float,
       vertex: Node<'uint'>,
+      toss: Float = float(1),
+      drop: Float = float(1),
     ) => {
       const slot = atomicAdd(head.element(0), uint(1)).mod(n);
       const mist = random(seed, 0).greaterThan(DROPLET_SHARE);
@@ -187,17 +195,16 @@ export class OceanFluid {
         .mul(strength);
       const p = d.mul(origin.add(random(seed, 3).mul(0.01))).add(ring.mul(spread));
       // thrown clear of the water around it (the old spray started 3.5 cm up; these start at the surface)
-      // (on a beach the surf's spray is low: a breaker a few centimetres high throws it a little way)
-      const toss = sea.coastal ? COAST_TOSS : 1;
+      // (`toss` scales the whole throw, so lower spray still arcs up rather than skimming along the water)
       const up = select(mist, float(0.32), float(0.48)).mul(strength).add(random(seed, 4).mul(0.2)).mul(toss);
       const outward = random(seed, 5).mul(0.16).add(0.12).mul(strength).mul(toss);
-      const v = d.mul(up).add(travel).add(ring.mul(outward));
+      const v = d.mul(up).add(travel.mul(toss)).add(ring.mul(outward));
       // mostly tiny: a droplet a few millimetres across is metres on a sea this size
       const size = select(
         mist,
         random(seed, 6).mul(0.0015).add(0.001),
         random(seed, 6).pow(4).mul(0.004).add(0.0012),
-      ).mul(sea.coastal ? COAST_DROP : 1);
+      ).mul(drop);
       const life = select(mist, random(seed, 7).mul(0.55).add(0.28), float(6));
       pos.element(slot).assign(vec4(p, 1));
       vel.element(slot).assign(vec4(v, life));
@@ -234,13 +241,16 @@ export class OceanFluid {
       // Surf throws its spray as a wave hits: while the breaking rises (the flow's w), not for as long as it
       // stays broken, which would pour from the same spot like a tap. Far more than an open-sea whitecap.
       const surge = buffers.flow.element(i).w;
-      const excess = max(
-        clamp(open.sub(0.2).div(0.8), 0, 1),
-        clamp(surge.sub(0.3).div(2), 0, 1)
-          .mul(SURF_SPRAY)
-          // only where the waves plunge, on the bar and at the beach, not all through the whitewater between
-          .mul(sea.coastal ? surfPlungeAt(distance) : float(1)),
-      );
+      const openExcess = clamp(open.sub(0.2).div(0.8), 0, 1);
+      const surfExcess = clamp(surge.sub(0.3).div(2), 0, 1)
+        .mul(SURF_SPRAY)
+        // only where the waves plunge, on the bar and at the beach, not all through the whitewater between
+        .mul(sea.coastal ? surfPlungeAt(distance) : float(1));
+      const excess = max(openExcess, surfExcess);
+      // how much of this spray is the coast's surf, thrown lower and finer (SURF_TOSS, SURF_DROP)
+      const surfShare = sea.coastal ? surfExcess.div(max(openExcess.add(surfExcess), 1e-4)) : float(0);
+      const toss = mix(float(1), float(SURF_TOSS), surfShare);
+      const drop = mix(float(1), float(SURF_DROP), surfShare);
       const expected = excess
         .mul((EMISSION * n) / 32768)
         .mul(vertex.w)
@@ -258,7 +268,7 @@ export class OceanFluid {
           .mul(16)
           .add(k * 8);
         If(random(seed, 7).lessThan(expected.sub(k)), () => {
-          start(seed, d, seaRadius(d, here.x).add(0.008), travel, strength, i);
+          start(seed, d, seaRadius(d, here.x).add(0.008), travel, strength, i, toss, drop);
         });
       }
     })().compute(sea.field.count);
@@ -494,6 +504,7 @@ export class OceanFluid {
     };
     const corner = varyingProperty('vec2', 'vCorner');
     const weight = varyingProperty('float', 'vWeight');
+    const mistShown = varyingProperty('float', 'vMist');
     const centre = varyingProperty('vec3', 'vCentre');
     const radius = varyingProperty('float', 'vRadius');
     /** 0 for an isolated droplet, 1 for one in dense spray. */
@@ -516,6 +527,7 @@ export class OceanFluid {
       const fade = clamp(life.div(select(mist, float(0.22), float(0.15))), 0, 1);
       const shown = select(alive(i), float(1), float(0)).mul(select(mist, float(1), float(1).sub(dense(i))));
       weight.assign(fade.mul(shown).mul(select(mist, float(MIST_OPACITY), float(DROPLET_OPACITY))));
+      mistShown.assign(select(mist, float(1), float(0)));
       corner.assign(positionGeometry.xy);
       const offset = along
         .mul(positionGeometry.x.mul(reach))
@@ -530,8 +542,8 @@ export class OceanFluid {
       const alpha = side
         .mul(mix(float(0.25), float(1), head))
         .mul(float(1).sub(smoothstep(0.7, 1, corner.x.abs())));
-      // (white spray, not sky-blue: a lone droplet is too small to show the sky it reflects)
-      return vec4(0.93, 0.95, 0.96, alpha.mul(weight).mul(0.8));
+      // (a lone droplet is white spray, too small to show the sky it reflects; mist keeps the sky's faint tint)
+      return vec4(mix(vec3(0.93, 0.95, 0.96), vec3(0.86, 0.95, 1), mistShown), alpha.mul(weight));
     })();
     this.streaks = new Mesh(quad(), streak);
     this.streaks.frustumCulled = false;
@@ -540,7 +552,9 @@ export class OceanFluid {
     impostor.vertexNode = Fn(() => {
       const i = instanceIndex;
       const take = alive(i).and(mistAt(i).not());
-      const r = select(take, dense(i).mul(IMPOSTOR_RADIUS), float(0));
+      // (as big as the droplet: the coast surf's finer droplets bunch into finer spray too)
+      const scale = clamp(affView.element(i.mul(3).add(1)).w.div(NOMINAL_DROP), 0.5, 1.2);
+      const r = select(take, dense(i).mul(IMPOSTOR_RADIUS).mul(scale), float(0));
       const at = modelViewMatrix.mul(vec4(posView.element(i).xyz, 1));
       centre.assign(at.xyz);
       radius.assign(r);
