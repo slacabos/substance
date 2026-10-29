@@ -11,6 +11,7 @@ import {
   float,
   floor,
   fract,
+  Fn,
   fwidth,
   length,
   max,
@@ -41,7 +42,8 @@ function h31(x: Vec3): Float {
   return fract(p.x.mul(p.y).mul(p.z).mul(p.x.add(p.y).add(p.z)));
 }
 
-function vnoise(x: Vec3): Float {
+// (one WGSL function every use calls, as snoise is, so its locals aren't copied into the shader at each)
+const valueNoise = Fn(([x]: [Vec3]) => {
   const i = floor(x);
   const f0 = fract(x);
   const f = f0.mul(f0).mul(f0.mul(-2).add(3));
@@ -51,6 +53,10 @@ function vnoise(x: Vec3): Float {
     mix(mix(c(0, 0, 1), c(1, 0, 1), f.x), mix(c(0, 1, 1), c(1, 1, 1), f.x), f.y),
     f.z,
   );
+}).setLayout({ name: 'vnoise', type: 'float', inputs: [{ name: 'x', type: 'vec3' }] });
+
+function vnoise(x: Vec3): Float {
+  return valueNoise(x) as Float;
 }
 
 /** Where the foam pattern is read: two drifted positions and how much of it follows the first (see OceanSim). */
