@@ -28,8 +28,10 @@ import {
   min,
   mix,
   normalize,
+  normalViewGeometry,
   normalLocal,
   positionGeometry,
+  positionViewDirection,
   pow,
   smoothstep,
   transformNormalToView,
@@ -75,6 +77,8 @@ const SHALLOW_SCATTER = vec3(0.015, 0.13, 0.24);
 const FACE_SLOPE = [0.04, 0.2] as const;
 const FACE_DARK = 0.55;
 const ABSORB_DISTANCE = 0.01;
+/** `?nodepth`: fade the coast's water edge by its own column, not the depth buffer. */
+const NO_DEPTH = typeof location !== 'undefined' && new URLSearchParams(location.search).has('nodepth');
 /** How much light deep water lets through (the open sea's, and the coast's once deep). */
 const DEEP_TRANSMISSION = 0.22;
 /** How bright the coast's foam's key light is, as the land's (KEY_STRENGTH in materials/oceanShores.ts). */
@@ -290,7 +294,13 @@ export function createDeformMaterial(
   // Where the water meets the sand: how far the sand behind lies from it (from the depth buffer, so along the
   // sand's own contours rather than the water's triangles). Over its last couple of millimetres the water fades
   // to a clear film.
-  const behind = coastal ? viewportLinearDepth.sub(linearDepth()).mul(cameraFar.sub(cameraNear)) : float(1);
+  // (`?nodepth` in the URL reckons it from the water's own column instead, along the view, for devices where
+  // reading the depth buffer fails)
+  const behind = !coastal
+    ? float(1)
+    : NO_DEPTH
+      ? max(column ?? float(0), 0).div(max(dot(normalViewGeometry, positionViewDirection), 0.2))
+      : viewportLinearDepth.sub(linearDepth()).mul(cameraFar.sub(cameraNear));
   // (only the coast's water has an edge; on the open sea a smoothstep of literals would be rejected by Firefox)
   const meets = coastal ? smoothstep(EDGE_FADE[0], EDGE_FADE[1], behind) : float(1);
   // (no foam line of its own there: the run-up drawn on the sand carries the foam on up the beach, and a line

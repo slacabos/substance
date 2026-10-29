@@ -1,7 +1,10 @@
 import './style.css';
 import { App } from './app';
 import { parseScene } from './core/scene';
+import { showErrorsOnScreen } from './debugErrors';
 import { detectDevice } from './device';
+
+showErrorsOnScreen();
 
 const canvas = document.getElementById('stage');
 
