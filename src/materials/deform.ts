@@ -289,7 +289,8 @@ export function createDeformMaterial(
   // sand's own contours rather than the water's triangles). Over its last couple of millimetres the water fades
   // to a clear film.
   const behind = coastal ? viewportLinearDepth.sub(linearDepth()).mul(cameraFar.sub(cameraNear)) : float(1);
-  const meets = smoothstep(EDGE_FADE[0], EDGE_FADE[1], behind);
+  // (only the coast's water has an edge; on the open sea a smoothstep of literals would be rejected by Firefox)
+  const meets = coastal ? smoothstep(EDGE_FADE[0], EDGE_FADE[1], behind) : float(1);
   // (no foam line of its own there: the run-up drawn on the sand carries the foam on up the beach, and a line
   // here showed as a second white strike, cut off from it)
   // and the sea's own foam thins out over the last few millimetres too, handing over to the run-up's: foam
@@ -357,7 +358,9 @@ export function createDeformMaterial(
     .add(foamKey);
   material.specularIntensityNode = mix(float(0.75), float(0.08), foam).mul(max(meets, foam));
   // (foam stays opaque white even at the very edge)
-  material.transmissionNode = mix(mix(float(1), mix(float(0.97), float(0.22), body), meets), float(0), foam);
+  material.transmissionNode = coastal
+    ? mix(mix(float(1), mix(float(0.97), float(0.22), body), meets), float(0), foam)
+    : mix(float(0.22), float(0), foam);
   if (coastal) {
     material.thicknessNode = depth;
     material.attenuationColorNode = SHALLOW_ABSORB;

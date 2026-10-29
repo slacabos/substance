@@ -203,10 +203,12 @@ export function oceanDeform(
   const offshore = coastal ? smoothstep(0, SURF_FADE, shore) : float(1);
   // and the wind's waves stand no taller than the shallows let them, so no trough bares the bar or the shelf
   const shallows = coastal ? clamp(shelfDepthAt(shore).div(OCEAN_DEPTH).mul(0.6), 0.03, 1) : float(1);
-  const damping = min(offshore.mul(0.82).add(0.18), shallows).toVar();
+  // (the open sea's damping is plain 1: built from its constant inputs, min(1.0, 1.0) and the like are
+  // all-literal calls, which Firefox's WebGPU rejects outside constant expressions)
+  const damping = (coastal ? min(offshore.mul(0.82).add(0.18), shallows) : float(1)).toVar();
   const wave = oceanWaveVertex(p, waves, u, weather, spacing);
   const height = wave.height.mul(damping).toVar();
-  const direction = normalize(p.add(wave.offset.mul(min(offshore, shallows))));
+  const direction = normalize(p.add(coastal ? wave.offset.mul(min(offshore, shallows)) : wave.offset));
   const radius = baseR(direction);
   const pos = direction.mul(radius.add(height));
   const nrm = normalize(baseN(p, p.mul(baseR(p))).sub(wave.gradient.mul(damping).div(radius)));

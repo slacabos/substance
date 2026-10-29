@@ -249,8 +249,9 @@ export class OceanFluid {
       const excess = max(openExcess, surfExcess);
       // how much of this spray is the coast's surf, thrown lower and finer (SURF_TOSS, SURF_DROP)
       const surfShare = sea.coastal ? surfExcess.div(max(openExcess.add(surfExcess), 1e-4)) : float(0);
-      const toss = mix(float(1), float(SURF_TOSS), surfShare);
-      const drop = mix(float(1), float(SURF_DROP), surfShare);
+      // (the open sea's are plain 1: a mix of literals is rejected by Firefox's WebGPU)
+      const toss = sea.coastal ? mix(float(1), float(SURF_TOSS), surfShare) : float(1);
+      const drop = sea.coastal ? mix(float(1), float(SURF_DROP), surfShare) : float(1);
       const expected = excess
         .mul((EMISSION * n) / 32768)
         .mul(vertex.w)
