@@ -7,7 +7,6 @@ import {
   dot,
   floor,
   Fn,
-  instanceIndex,
   length,
   max,
   min,
@@ -29,7 +28,18 @@ import {
 } from 'three/tsl';
 import { FLUFF } from '../core/fluff';
 import type { FluffSim } from '../materials/fluffSim';
-import { baseN, baseR, shapeOnPlane, shapeHeightScale, shapeNormal, shapeShell, shapeVector } from './shape';
+import { PLANE } from '../core/chart';
+import {
+  baseN,
+  baseR,
+  shapeFar,
+  shapeNormal,
+  shapeOnPlane,
+  shapeShell,
+  shapeStrand,
+  shapeStrandVector,
+} from './shape';
+import { strandCopy, strandSpacing } from './strandCopies';
 
 // Fluff: camera-facing strand ribbons over a dark skin. Strand template: position.x is the side (-1 or 1),
 // position.y runs 0 at the root to 1 at the tip. Each strand follows the points FluffSim simulates.
@@ -78,6 +88,7 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
   const { roots, rand, pos } = sim.renderBuffers();
   const K = sim.points;
   const vH = varyingProperty('float', 'vH'); // height along the full fluff length, 0 at the skin
+  const vFar = varyingProperty('float', 'vFar'); // how far out across the plane (shapeFar)
   const vT = varyingProperty('float', 'vT'); // 0 at the root, 1 at the tip of this strand
   const vThin = varyingProperty('float', 'vThin'); // < 1 when drawn wider than the strand, and fainter
   const vRand = varyingProperty('float', 'vRand');
@@ -85,16 +96,21 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
   const vTan = varyingProperty('vec3', 'vTan');
 
   // The strands are in world space (the mesh sits at the scene root), following the simulated points.
+  // (on the plane each strand is drawn several times over: nodes/strandCopies.ts)
+  const copy = strandCopy(sim.count, strandSpacing(sim.count));
   const position = Fn(() => {
-    const p = roots.element(instanceIndex);
-    const rnd = rand.element(instanceIndex);
+    const own = roots.element(copy.strand);
+    const ownQ = own.mul(baseR(own));
+    const ownN = baseN(own, ownQ);
+    const p = copy.root(own);
+    const rnd = rand.element(copy.strand);
     const n = normalize(sim.uniforms.anchor.mul(vec4(shapeNormal(p, baseN(p, p.mul(baseR(p)))), 0)).xyz);
 
     const t = positionGeometry.y;
     const f = t.mul(K - 1);
     const segment = min(floor(f), K - 2);
     const i = uint(segment);
-    const base = instanceIndex.mul(K);
+    const base = copy.strand.mul(K);
     const p1 = pos.element(base.add(i));
     const p2 = pos.element(base.add(i).add(1));
     // past either end, extend the first or last segment straight
@@ -103,17 +119,17 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
     const p0 = select(i.equal(0), p1.mul(2).sub(p2), before);
     const p3 = select(i.equal(K - 2), p2.mul(2).sub(p1), after);
     const strand = catmullRom(p0, p1, p2, p3, f.sub(segment));
-    // drawn where the shape puts it: on the plane, standing on the ground as big as the ground's scale there
+    // drawn where the shape puts it: on the plane, standing on the ground at the ground's detail size
     const world = (v: Node<'vec3'>, w: number) => sim.uniforms.anchor.mul(vec4(v, w)).xyz;
-    // (shorter on the plane: the strand shrunk toward its root)
-    const root = p.mul(baseR(p));
-    const local = root.add(
-      sim.uniforms.anchorInv.mul(vec4(strand.point, 1)).xyz.sub(root).mul(shapeOnPlane(FLUFF.plane.length)),
-    );
-    const outward = normalize(local);
-    const point = world(shapeShell(local), 1);
+    // (the simulated strand moved onto this copy's root and turned its way; shorter on the plane, shrunk toward
+    // its root)
+    const off = copy.turn(sim.uniforms.anchorInv.mul(vec4(strand.point, 1)).xyz.sub(ownQ), ownN);
+    const point = world(shapeStrand(p.mul(baseR(p)).add(off), p, off.mul(FLUFF.plane.length)), 1);
     const dir = normalize(
-      world(shapeVector(outward, sim.uniforms.anchorInv.mul(vec4(strand.tangent, 0)).xyz), 0),
+      world(
+        shapeStrandVector(p, copy.turn(sim.uniforms.anchorInv.mul(vec4(strand.tangent, 0)).xyz, ownN)),
+        0,
+      ),
     );
 
     // Width tapers to a fine tip. Directions spread out where the cube's surface stretches away from the
@@ -125,7 +141,7 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
       .add(0.1)
       .mul(rnd.y.mul(0.4).add(0.8))
       .mul(stretch)
-      .mul(shapeHeightScale(p).mul(shapeOnPlane(FLUFF.plane.width)))
+      .mul(shapeOnPlane(PLANE.detail * FLUFF.plane.width))
       .mul(sim.uniforms.scale)
       .div(u.density);
     // Never thinner than a pixel.
@@ -141,6 +157,7 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
     );
 
     vH.assign(t.mul(rnd.x.mul(0.45).add(0.55)));
+    vFar.assign(shapeFar(p));
     vT.assign(t);
     vThin.assign(width.div(drawn));
     vRand.assign(rnd.z);
@@ -155,7 +172,9 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
   const V = normalize(positionView.negate());
   const L = normalize(u.light);
   const base = mix(u.root, u.tip, smoothstep(0, 0.95, vH)).mul(vRand.mul(0.55).add(0.7));
-  const ao = mix(0.15, 1, pow(vH, 0.85));
+  // (the shade deep in the pile fades out with distance on the plane: a strand a pixel or two long there read as
+  // a dark speck)
+  const ao = mix(mix(0.15, 1, pow(vH, 0.85)), 0.9, vFar);
   const wrap = clamp(dot(N, L).mul(0.6).add(0.4), 0, 1);
   const tl = dot(T, L);
   const kk = sqrt(max(tl.mul(tl).oneMinus(), 0));
@@ -182,15 +201,22 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
   return { position, color, opacity };
 }
 
-/** The skin under the hair: dark and matte, it only peeks through between strands. */
+/**
+ * The skin under the hair: dark and matte, it only peeks through between strands. Out across the plane, where the
+ * strands, drawn at one size, cover less and less of the ground, it takes on the pile's own colour, as a rug's
+ * backing would, so the far ground doesn't darken.
+ */
 export function createSkinNodes(u: FluffUniforms) {
   const vN = varyingProperty('vec3', 'vSkinN');
+  const vFar = varyingProperty('float', 'vSkinFar');
   const position = Fn(() => {
     const p = normalize(positionGeometry);
     const q = p.mul(baseR(p));
     vN.assign(transformNormalToView(shapeNormal(p, baseN(p, q))));
+    vFar.assign(shapeFar(p));
     return shapeShell(q);
   })();
   const lit = clamp(dot(normalize(vN), normalize(u.light)).mul(0.5).add(0.5), 0, 1).add(0.15);
-  return { position, color: u.root.mul(0.55).mul(lit) };
+  const pile = mix(u.root, u.tip, 0.55).mul(0.8);
+  return { position, color: mix(u.root.mul(0.55), pile, vFar).mul(lit) };
 }

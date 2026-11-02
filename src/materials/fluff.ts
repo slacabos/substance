@@ -9,6 +9,7 @@ import {
 import { MeshBasicNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import { FLUFF } from '../core/fluff';
 import { approach } from '../core/spring';
+import { planeUniform } from '../scene/shape';
 import { createFluffUniforms, createSkinNodes, createStrandNodes } from '../nodes/fluff';
 import { FluffSim } from './fluffSim';
 import type { FrameContext, Readout, Substance } from './types';
@@ -73,6 +74,9 @@ export class Fluff implements Substance {
   private readonly sim: FluffSim;
   private readonly strands: Mesh<InstancedBufferGeometry>;
   private readonly anchor: Object3D;
+  /** Strands drawn on the orb, and how many times over on the plane. */
+  private readonly count: number;
+  private readonly copies: number;
   private last: Vector3 | null = null;
   private hoverLast: Vector3 | null = null;
   private press = 0;
@@ -96,6 +100,8 @@ export class Fluff implements Substance {
     this.strands = new Mesh(geometry, strandMaterial);
     this.strands.frustumCulled = false;
     this.strands.renderOrder = 1;
+    this.count = this.sim.count;
+    this.copies = FLUFF.plane.copies(coarse);
 
     const skinNodes = createSkinNodes(uniforms);
     const skinMaterial = new MeshBasicNodeMaterial();
@@ -117,7 +123,9 @@ export class Fluff implements Substance {
   }
 
   readout(): Readout {
-    return ['Fluff', `≈ ${strandEstimate(FLUFF.density)}k strands`, 'keratin n ≈ 1.55'];
+    // (counting the copies drawn on the plane)
+    const copies = this.strands.geometry.instanceCount / this.count;
+    return ['Fluff', `≈ ${strandEstimate(FLUFF.density) * copies}k strands`, 'keratin n ≈ 1.55'];
   }
 
   /** Combs along a stroke from `last` to `dir`. Returns false when the contact barely moved. */
@@ -187,5 +195,7 @@ export class Fluff implements Substance {
     this.press += (this.pressTarget - this.press) * approach(9, ctx.dt);
     u.press.value = this.press;
     if (this.strands.visible) this.sim.update(this.anchor, ctx.time, ctx.dt);
+    // the copies only on the plane (nodes/strandCopies.ts)
+    this.strands.geometry.instanceCount = this.count * (planeUniform.value > 0 ? this.copies : 1);
   }
 }

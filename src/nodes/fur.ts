@@ -9,7 +9,6 @@ import {
   dot,
   floor,
   Fn,
-  instanceIndex,
   instancedArray,
   length,
   max,
@@ -36,7 +35,18 @@ import { FUR, type FurCoat } from '../core/fur';
 import type { FurSim } from '../materials/furSim';
 import { furGroom, furRestOffset } from './furGroom';
 import { snoise } from './noise';
-import { baseN, baseR, shapeOnPlane, shapeHeightScale, shapeNormal, shapeShell, shapeVector } from './shape';
+import { strandCopy, strandSpacing } from './strandCopies';
+import { PLANE } from '../core/chart';
+import {
+  baseN,
+  baseR,
+  shapeFar,
+  shapeNormal,
+  shapeOnPlane,
+  shapeShell,
+  shapeStrand,
+  shapeStrandVector,
+} from './shape';
 
 export function createFurUniforms(density: number = FUR.density) {
   return {
@@ -106,18 +116,21 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
   const weights = read(coat.weights);
   const K = sim.points;
   const vH = varyingProperty('float', 'vFurHeight');
+  const vFar = varyingProperty('float', 'vFurFar'); // how far out across the plane (shapeFar)
   const vT = varyingProperty('float', 'vFurT');
   const vThin = varyingProperty('float', 'vFurThin');
   const vPigment = varyingProperty('vec3', 'vFurPigment');
   const vN = varyingProperty('vec3', 'vFurN');
   const vTan = varyingProperty('vec3', 'vFurTangent');
 
+  // (on the plane each fibre is drawn several times over, each copy on its own root: nodes/strandCopies.ts)
+  const copy = strandCopy(coat.count, strandSpacing(coat.count));
   const position = Fn(() => {
-    const root = roots.element(instanceIndex);
-    const rnd = traits.element(instanceIndex);
-    const ids = indices.element(instanceIndex);
-    const blend = weights.element(instanceIndex);
-    const p = root.xyz;
+    const root = roots.element(copy.strand);
+    const rnd = traits.element(copy.strand);
+    const ids = indices.element(copy.strand);
+    const blend = weights.element(copy.strand);
+    const p = copy.root(root.xyz);
     const r = baseR(p);
     const q = p.mul(r);
     const localN = baseN(p, q);
@@ -181,16 +194,14 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
     }
 
     // A blended displacement may cross a sharp cube transition; keep the visible fibre outside too.
-    // (shorter on the plane: the fibre shrunk toward its root)
-    const local = q.add(
-      sim.uniforms.anchorInv.mul(vec4(point, 1)).xyz.sub(q).mul(shapeOnPlane(FUR.plane.length)),
-    );
+    const off = sim.uniforms.anchorInv.mul(vec4(point, 1)).xyz.sub(q);
+    const local = q.add(off);
     const radial = max(length(local), 1e-6);
     const outward = local.div(radial);
     const floorR = baseR(outward).add(t.mul(0.001));
-    // drawn where the shape puts it: on the plane, standing on the ground as big as the ground's scale there
-    const safe = world(shapeShell(outward.mul(max(radial, floorR))), 1);
-    const dir = normalize(world(shapeVector(outward, sim.uniforms.anchorInv.mul(vec4(tangent, 0)).xyz), 0));
+    // drawn where the shape puts it: on the plane, standing on the ground at the ground's detail size, shorter
+    const safe = world(shapeStrand(outward.mul(max(radial, floorR)), p, off.mul(FUR.plane.length)), 1);
+    const dir = normalize(world(shapeStrandVector(p, sim.uniforms.anchorInv.mul(vec4(tangent, 0)).xyz), 0));
     const stretch = sqrt(r.mul(r).div(max(dot(p, localN), 0.3)));
     const width = pow(t.oneMinus(), 0.65)
       .mul(0.96)
@@ -198,7 +209,7 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
       .mul(rnd.x.mul(0.35).add(0.8))
       .mul(FUR.widthScale)
       .mul(stretch)
-      .mul(shapeHeightScale(p).mul(shapeOnPlane(FUR.plane.width)))
+      .mul(shapeOnPlane(PLANE.detail * FUR.plane.width))
       .mul(sim.uniforms.scale)
       .div(u.density);
     const toCamera = cameraPosition.sub(safe);
@@ -207,6 +218,7 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
     const fallback = cross(n, select(abs(n.y).lessThan(0.9), vec3(0, 1, 0), vec3(1, 0, 0)));
     const side = normalize(select(length(side0).greaterThan(1e-6), side0, fallback));
     vH.assign(distance.div(FUR.length));
+    vFar.assign(shapeFar(p));
     vT.assign(t);
     vThin.assign(width.div(drawn));
     vPigment.assign(coatColor(p, rnd.y, u).mul(rnd.z.mul(0.22).add(0.9)));
@@ -220,7 +232,9 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
   const V = normalize(positionView.negate());
   const L = normalize(u.light);
   const base = mix(vPigment, u.tip, smoothstep(0.25, 1, vT).mul(0.1));
-  const ao = mix(0.48, 1, pow(vH, 0.55));
+  // (the shade deep in the coat fades out with distance on the plane: a fibre a pixel or two long there read as a
+  // dark speck)
+  const ao = mix(mix(0.48, 1, pow(vH, 0.55)), 0.9, vFar);
   const wrap = clamp(dot(N, L).mul(0.55).add(0.45), 0, 1);
   const tl = dot(T, L);
   const kk = sqrt(max(tl.mul(tl).oneMinus(), 0));

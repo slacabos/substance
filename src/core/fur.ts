@@ -35,11 +35,13 @@ export const FUR = {
    * stood like a macro shot, the camera being so close), and the coat combed one way across the ground (`lay`,
    * world x and z), swaying `wave.angle` radians every `wave.length` ground units so its sheen moves across it. The
    * orb's lay would leave its pole, a flat whorl, in the middle of the view. `lean` is how hard it lies over,
-   * against the orb's: a little less, so the coat has some depth seen from above.
+   * against the orb's: a little less, so the coat has some depth seen from above. Each fibre is drawn `copies` times
+   * over there, every copy on its own root, as each covers far more ground than on the orb (nodes/strandCopies.ts).
    */
   plane: {
+    copies: (coarse: boolean) => (coarse ? 2 : 3),
     length: 0.45,
-    width: 0.8,
+    width: 0.65,
     lay: [0.85, -0.55],
     lean: 0.6,
     wave: { length: 3.5, angle: 0.45 },

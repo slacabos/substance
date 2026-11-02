@@ -54,7 +54,14 @@ export class Stage {
   static async create(canvas: HTMLCanvasElement, setting: SettingId, supersample: boolean): Promise<Stage> {
     const gpu = (navigator as GpuNavigator).gpu;
     if (!gpu || !(await gpu.requestAdapter())) throw new Error('WebGPU is not available');
-    const renderer = new WebGPURenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    // (an opaque canvas: the backdrop always fills it, and hair's alpha-to-coverage leaves alpha under 1 where a
+    // fading tip was drawn last, which let the page's own background show through as grey specks in the coat)
+    const renderer = new WebGPURenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+      powerPreference: 'high-performance',
+    });
     await renderer.init();
     if (!(renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend) {
       renderer.dispose();

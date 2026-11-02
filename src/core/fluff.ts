@@ -14,9 +14,11 @@ export const FLUFF = {
   /**
    * On the plane's ground: strands drawn shorter than the orb's, a rug's pile a few strands' spacing deep, and a
    * little thinner (grown with the ground's scale they stood like a macro shot of a field); and each leaning its
-   * own way, by up to `splay` (as a lean, where 1 is 45°), so the pile splays like a rug's.
+   * own way, by up to `splay` (as a lean, where 1 is 45°), so the pile splays like a rug's. Each strand is drawn
+   * `copies` times over there, every copy on its own root and turned its own way, as each covers far more ground
+   * than on the orb (nodes/strandCopies.ts).
    */
-  plane: { length: 0.28, width: 0.85, splay: 0.9 },
+  plane: { copies: (coarse: boolean) => (coarse ? 2 : 4), length: 0.28, width: 0.6, splay: 0.9 },
   physics: {
     rate: 240,
     maxSteps: 10,

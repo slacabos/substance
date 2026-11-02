@@ -58,6 +58,10 @@ describe('the plane chart', () => {
     expect(Math.abs(onScreen(shore).y)).toBeLessThan(0.3);
   });
 
+  it('sizes detail by the ground’s scale where the orb’s front lands', () => {
+    expect(PLANE.detail).toBeCloseTo(planeScale(new Vector3(0, 0, 1)), 9);
+  });
+
   it('puts every direction somewhere finite, the back pole included', () => {
     for (const p of [...fibonacci(2000), new Vector3(0, 0, -1)]) {
       const q = planePoint(p);

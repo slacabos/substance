@@ -31,6 +31,12 @@ export const PLANE = {
   /** The most a height off the surface is scaled up by, so tall features far away stay within reason. */
   heightCap: 5,
   /**
+   * The ground's scale where the orb's front lands (kappa * rho0), which things drawn at one size across the ground
+   * (hair) take: grown with the chart's own scale instead, they grew with distance faster than perspective
+   * shrank them, and the background looked magnified.
+   */
+  detail: 0.35 * 6,
+  /**
    * The fixed camera: its height over the ground, and where the horizon sits on screen, as a fraction of the way
    * from the middle to the top edge. A wide view lets it look down steeply and still leave a band of sky.
    */

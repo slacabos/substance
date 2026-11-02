@@ -124,6 +124,21 @@ const chartVector = Fn(([p, v]: [Vec3, Vec3]) => {
   ],
 });
 
+/** A vector v at direction p turned as the shell map turns it, but not scaled: the chart's rotation alone. */
+const chartRigid = Fn(([p, v]: [Vec3, Vec3]) => {
+  const out = v.dot(p);
+  return chartPush(p, v.sub(p.mul(out)))
+    .div(chartScale(p).x)
+    .add(vec3(0, out, 0));
+}).setLayout({
+  name: 'chartRigid',
+  type: 'vec3',
+  inputs: [
+    { name: 'p', type: 'vec3' },
+    { name: 'v', type: 'vec3' },
+  ],
+});
+
 /** A surface normal n at direction p as the shell map turns it (the inverse transpose of its Jacobian). */
 const chartNormal = Fn(([p, n]: [Vec3, Vec3]) => {
   const scale = chartScale(p);
@@ -144,6 +159,8 @@ export const planePointNode = (p: Vec3): Vec3 => chartPoint(p) as Vec3;
 export const planeScaleNode = (p: Vec3): Node<'vec4'> => chartScale(p) as Node<'vec4'>;
 export const planeShellNode = (x: Vec3, base: Node<'float'>): Vec3 => chartShell(x, base) as Vec3;
 export const planeVectorNode = (p: Vec3, v: Vec3): Vec3 => chartVector(p, v) as Vec3;
+/** A vector v at direction p turned onto the ground without being scaled. */
+export const planeRigidNode = (p: Vec3, v: Vec3): Vec3 => chartRigid(p, v) as Vec3;
 /** The way along the orb's surface at p that comes out along the ground vector g (unnormalized). */
 export const planePullNode = (p: Vec3, g: Vec3): Vec3 => chartPull(p, g) as Vec3;
 export const planeNormalNode = (p: Vec3, n: Vec3): Vec3 => chartNormal(p, n) as Vec3;
