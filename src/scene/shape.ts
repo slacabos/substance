@@ -41,6 +41,12 @@ export class ShapeMorph {
     stepSprings([this.spring, this.flat], dt, 0.01);
     this.spring.value = Math.min(1.15, Math.max(-0.15, this.spring.value));
     this.flat.value = Math.min(1, Math.max(0, this.flat.value));
+    // settled, it lands exactly: the orb and the cube test the plane's weight against 0 (drawing hair's copies,
+    // the water's bed), and a spring only ever creeps toward it
+    if (this.flat.isSettled()) {
+      this.flat.value = this.flat.target;
+      this.flat.velocity = 0;
+    }
     morphUniform.value = this.spring.value;
     planeUniform.value = this.flat.value;
   }
