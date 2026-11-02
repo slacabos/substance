@@ -551,7 +551,8 @@ export class OceanFluid {
     this.streaks = new Mesh(quad(), streak);
     this.streaks.frustumCulled = false;
 
-    const impostor = new MeshBasicNodeMaterial();
+    // This pass stores distance and coverage, not visible colour: haze must not alter its data.
+    const impostor = new MeshBasicNodeMaterial({ fog: false });
     impostor.vertexNode = Fn(() => {
       const i = instanceIndex;
       const take = alive(i).and(mistAt(i).not());

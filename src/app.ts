@@ -163,6 +163,7 @@ export class App implements PointerTarget {
     if (id === this.morph.shape) return;
     this.morph.set(id, this.device.reduceMotion);
     this.spin.setLocked(id === 'plane');
+    if (id === 'plane') this.pointer.cancelSpin();
     this.controls.showShape(id);
     this.syncUrl();
     this.current.onShapeChange?.(this.frontDirection());

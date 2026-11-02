@@ -44,6 +44,15 @@ export class PointerInput {
     return this.active?.mode === 'spin';
   }
 
+  /** Ends an in-progress spin when the shape switches to fixed ground. */
+  cancelSpin(): void {
+    if (!this.active || this.active.mode !== 'spin') return;
+    this.target.spinEnd(performance.now() - this.active.t);
+    if (this.canvas.hasPointerCapture(this.active.id)) this.canvas.releasePointerCapture(this.active.id);
+    this.canvas.classList.remove('grabbing');
+    this.active = null;
+  }
+
   get msSinceLastMove(): number {
     return this.active ? performance.now() - this.active.t : Infinity;
   }

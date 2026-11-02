@@ -31,6 +31,7 @@ import {
   vec4,
 } from 'three/tsl';
 import { snoise } from './noise';
+import { shapeStrandVector } from './shape';
 
 type Float = Node<'float'>;
 type Vec3 = Node<'vec3'>;
@@ -179,8 +180,9 @@ export function sandGrains(
   const lit = smoothstep(0, 0.15, dot(surface, l));
   const at = (f: Float) => {
     const cell = grainCell(p, f);
-    // the tilt, flat to the surface and turning with the orb
-    const tilt = modelViewMatrix.mul(vec4(cell.tilt.sub(p.mul(dot(cell.tilt, p))), 0)).xyz;
+    // Carry the grain's tangent onto the ground before converting it to view space.
+    const tangent = cell.tilt.sub(p.mul(dot(cell.tilt, p)));
+    const tilt = modelViewMatrix.mul(vec4(shapeStrandVector(p, tangent), 0)).xyz;
     const facet = normalize(surface.add(tilt.mul(0.9)));
     const glint = select(cell.glints, smoothstep(GLINT_ALIGN, 1, dot(facet, h)), float(0));
     return { tint: mix(vec3(1), cell.tint, contrast.mul(GRAIN_TINT)), tilt, glint };

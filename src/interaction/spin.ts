@@ -38,6 +38,7 @@ export class SpinController {
   /** Locks the object: it stops spinning and turns back to rest (the plane's view is fixed). */
   setLocked(on: boolean): void {
     this.locked = on;
+    if (on) this.angularVelocity.set(0, 0, 0);
   }
 
   grab(): void {
@@ -46,6 +47,7 @@ export class SpinController {
 
   /** Rotates by a screen-space drag of (dx, dy) pixels over `dt` seconds. */
   drag(dx: number, dy: number, dt: number): void {
+    if (this.locked) return;
     // dragging right turns about +y, dragging down turns the front face downward (about +x)
     this.axis.set(dy, dx, 0);
     const angle = this.axis.length() * DRAG_RADIANS_PER_PX;
