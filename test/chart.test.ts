@@ -10,6 +10,7 @@ import {
   planeShell,
   planeView,
 } from '../src/core/chart';
+import { MAINLAND } from '../src/core/oceanShores';
 
 /** Evenly spread unit directions, as the orb's meshes are. */
 const fibonacci = (count: number): Vector3[] => {
@@ -38,11 +39,22 @@ describe('the plane chart', () => {
     expect(c.z).toBeCloseTo(1);
   });
 
-  it('brings the top to the foreground and sends the bottom toward the horizon', () => {
-    const top = planePoint(new Vector3(0, 1, 1).normalize());
-    const bottom = planePoint(new Vector3(0, -1, 1).normalize());
-    expect(top.z).toBeGreaterThan(1);
-    expect(bottom.z).toBeLessThan(1);
+  it('puts the coast’s land on the right and its sea on the left, the shore running across the middle', () => {
+    const view = planeView(1.78);
+    const camera = new PerspectiveCamera(view.fov, 1.78, 0.1, 1000);
+    camera.position.copy(view.eye);
+    camera.lookAt(view.target);
+    camera.updateMatrixWorld();
+    const onScreen = (p: Vector3) => planePoint(p).project(camera);
+    const land = onScreen(MAINLAND.center);
+    const sea = onScreen(MAINLAND.center.clone().negate());
+    expect(land.x).toBeGreaterThan(0.5);
+    expect(sea.x).toBeLessThan(0);
+    // the shoreline (the land's edge, ignoring its noise) crosses the view near the middle
+    const towardSea = MAINLAND.center.clone().multiplyScalar(Math.cos(MAINLAND.radius));
+    const shore = towardSea.addScaledVector(new Vector3(0, 0, 1), Math.sin(MAINLAND.radius)).normalize();
+    expect(Math.abs(onScreen(shore).x)).toBeLessThan(0.3);
+    expect(Math.abs(onScreen(shore).y)).toBeLessThan(0.3);
   });
 
   it('puts every direction somewhere finite, the back pole included', () => {

@@ -9,9 +9,16 @@ import { PLANE } from '../core/chart';
 type Vec3 = Node<'vec3'>;
 
 const K = PLANE.kappa;
+const TURN_COS = Math.cos(PLANE.turn);
+const TURN_SIN = Math.sin(PLANE.turn);
+
+/** The orb turned about the axis toward the camera (the chart's step 0). */
+const turned = (v: Vec3): Vec3 =>
+  vec3(v.x.mul(TURN_COS).sub(v.y.mul(TURN_SIN)), v.x.mul(TURN_SIN).add(v.y.mul(TURN_COS)), v.z);
 
 /** The fan at direction p: (ρ, φ, σx, σy). */
-const chartFan = Fn(([p]: [Vec3]) => {
+const chartFan = Fn(([direction]: [Vec3]) => {
+  const p = turned(direction);
   const d = max(p.z.add(1), 1e-6);
   const sx = p.x.mul(2).div(d);
   const sy = p.y.mul(2).div(d);
@@ -34,8 +41,10 @@ const chartScale = Fn(([p]: [Vec3]) => {
 }).setLayout({ name: 'chartScale', type: 'vec4', inputs: [{ name: 'p', type: 'vec3' }] });
 
 /** Where a step t along the orb's surface at p goes on the ground. */
-const chartPush = Fn(([p, t]: [Vec3, Vec3]) => {
-  const fan = chartFan(p);
+const chartPush = Fn(([direction, step]: [Vec3, Vec3]) => {
+  const fan = chartFan(direction);
+  const p = turned(direction);
+  const t = turned(step);
   const d = max(p.z.add(1), 1e-6);
   const dd = d.mul(d);
   const dsx = t.x.mul(d).sub(p.x.mul(t.z)).mul(2).div(dd);
