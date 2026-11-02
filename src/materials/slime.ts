@@ -1,6 +1,7 @@
-import { Color, Mesh, Vector3, type BufferGeometry } from 'three';
+import { Color, Group, Mesh, Vector3, type BufferGeometry } from 'three';
 import { MAX_IMPULSES } from '../config';
 import { Spring, stepSprings } from '../core/spring';
+import { planeUniform } from '../scene/shape';
 import { TrappedBubbles } from './bubbles';
 import { createDeformMaterial, DeformMode, type DeformUniforms } from './deform';
 import type { FrameContext, Readout, Substance } from './types';
@@ -61,7 +62,8 @@ export class Slime implements Substance {
     const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
     this.uniforms = uniforms;
-    this.objects = [mesh, this.bubbles.mesh] as const;
+    // (in a rig of their own: the app shows and hides the material's objects, the bubbles only show off the plane)
+    this.objects = [mesh, new Group().add(this.bubbles.mesh)] as const;
   }
 
   hint(): string {
@@ -148,6 +150,8 @@ export class Slime implements Substance {
     const a = this.wobbleAxis;
     this.uniforms.uWob.value.set(a.x, a.y, a.z, this.wobble.value);
     this.uniforms.uTime.value = ctx.time;
+    // (a flat sheet of slime has no inside to trap them in)
+    this.bubbles.mesh.visible = planeUniform.value < 0.5;
     this.bubbles.update(ctx.time, 1 + this.wobble.value * 0.8);
   }
 }

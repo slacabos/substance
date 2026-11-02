@@ -31,11 +31,16 @@ export const PLANE = {
   /** The most a height off the surface is scaled up by, so tall features far away stay within reason. */
   heightCap: 5,
   /**
+   * How long hair is drawn on the ground, against the orb's: grown with the ground's scale it stood like a macro
+   * shot of a field, the camera being so close.
+   */
+  hair: 0.3,
+  /**
    * The fixed camera: its height over the ground, and where the horizon sits on screen, as a fraction of the way
-   * from the middle to the top edge. It looks down steeply, almost from above, with only a strip of sky.
+   * from the middle to the top edge. A wide view lets it look down steeply and still leave a band of sky.
    */
   eyeHeight: 2.5,
-  horizon: 0.92,
+  horizon: 0.64,
 } as const;
 
 const TURN_COS = Math.cos(PLANE.turn);
@@ -139,7 +144,7 @@ export interface PlaneView {
 
 /** The plane's fixed camera for a screen of this aspect (width / height). */
 export function planeView(aspect: number): PlaneView {
-  const fov = MathUtils.lerp(50, 45, MathUtils.clamp((aspect - 0.6) / 0.9, 0, 1));
+  const fov = MathUtils.lerp(60, 55, MathUtils.clamp((aspect - 0.6) / 0.9, 0, 1));
   const pitch = Math.atan(PLANE.horizon * Math.tan(MathUtils.degToRad(fov / 2)));
   const eye = new Vector3(0, PLANE.groundY + PLANE.eyeHeight, PLANE.footZ);
   const target = new Vector3(0, PLANE.groundY, PLANE.footZ - PLANE.eyeHeight / Math.tan(pitch));

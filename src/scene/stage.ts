@@ -44,6 +44,8 @@ export class Stage {
   /** How far toward the plane's view the camera is, 0 to 1. */
   private plane = 0;
   private readonly target = new Vector3();
+  /** The screen's size, and how far down the free space between the top bar and the dock is centred. */
+  private screen = { width: 1, height: 1, shift: 0 };
 
   /**
    * Starts WebGPU and builds the stage. Throws without WebGPU: the renderer would quietly fall back to WebGL,
@@ -106,8 +108,7 @@ export class Stage {
     const distance = FIT_RADIUS / (tanHalf * fraction);
     this.orbEye.set(0, distance * 0.12, distance);
     this.planeView = planeView(width / height);
-    // shift the view so the object is centred in the free space rather than the whole screen
-    this.camera.setViewOffset(width, height, 0, (bottomInset - topInset) / 2, width, height);
+    this.screen = { width, height, shift: (bottomInset - topInset) / 2 };
     this.place();
   }
 
@@ -131,6 +132,10 @@ export class Stage {
     this.camera.lookAt(this.target.set(0, 0, 0).lerp(view.target, w));
     this.camera.fov = MathUtils.lerp(ORB_FOV, view.fov, w);
     this.camera.far = MathUtils.lerp(ORB_FAR, PLANE_FAR, w);
+    // shift the view so the object is centred in the free space rather than the whole screen; the plane's ground
+    // runs on under the panels, and its sky stays clear of the top bar
+    const { width, height, shift } = this.screen;
+    this.camera.setViewOffset(width, height, 0, shift * (1 - w), width, height);
     this.camera.updateProjectionMatrix();
   }
 
