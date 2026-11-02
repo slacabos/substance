@@ -9,6 +9,7 @@ import {
 import { MeshBasicNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import { FLUFF } from '../core/fluff';
 import { approach } from '../core/spring';
+import { strandsDrawn } from '../nodes/strandCopies';
 import { planeUniform } from '../scene/shape';
 import { createFluffUniforms, createSkinNodes, createStrandNodes } from '../nodes/fluff';
 import { FluffSim } from './fluffSim';
@@ -196,6 +197,6 @@ export class Fluff implements Substance {
     u.press.value = this.press;
     if (this.strands.visible) this.sim.update(this.anchor, ctx.time, ctx.dt);
     // the copies only on the plane (nodes/strandCopies.ts)
-    this.strands.geometry.instanceCount = this.count * (planeUniform.value > 0 ? this.copies : 1);
+    this.strands.geometry.instanceCount = strandsDrawn(this.count, this.copies, planeUniform.value);
   }
 }

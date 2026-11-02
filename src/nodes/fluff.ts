@@ -142,6 +142,7 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
       .mul(rnd.y.mul(0.4).add(0.8))
       .mul(stretch)
       .mul(shapeOnPlane(PLANE.detail * FLUFF.plane.width))
+      .mul(copy.shown)
       .mul(sim.uniforms.scale)
       .div(u.density);
     // Never thinner than a pixel.

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { COPIES_FROM, strandsDrawn } from '../src/nodes/strandCopies';
 import { planeUniform, ShapeMorph } from '../src/scene/shape';
 
 describe('ShapeMorph', () => {
@@ -21,5 +22,14 @@ describe('ShapeMorph', () => {
     morph.set('plane', false);
     for (let i = 0; i < 60 * 4; i++) morph.update(1 / 60);
     expect(planeUniform.value).toBe(1);
+  });
+});
+
+describe('strandsDrawn', () => {
+  it('draws the plane’s copies only while the plane is well in', () => {
+    expect(strandsDrawn(100, 4, 0)).toBe(100);
+    expect(strandsDrawn(100, 4, COPIES_FROM)).toBe(100);
+    expect(strandsDrawn(100, 4, 0.6)).toBe(400);
+    expect(strandsDrawn(100, 4, 1)).toBe(400);
   });
 });

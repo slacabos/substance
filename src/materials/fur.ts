@@ -9,6 +9,7 @@ import {
 import { MeshBasicNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import { createFurCoat, FUR } from '../core/fur';
 import { approach } from '../core/spring';
+import { strandsDrawn } from '../nodes/strandCopies';
 import { planeUniform } from '../scene/shape';
 import { createFurUniforms, createSkinNodes, createStrandNodes } from '../nodes/fur';
 import { FurSim } from './furSim';
@@ -177,6 +178,6 @@ export class Fur implements Substance {
     u.press.value = this.press;
     if (this.strands.visible) this.sim.update(this.anchor, ctx.dt);
     // the copies only on the plane (nodes/strandCopies.ts)
-    this.strands.geometry.instanceCount = this.count * (planeUniform.value > 0 ? this.copies : 1);
+    this.strands.geometry.instanceCount = strandsDrawn(this.count, this.copies, planeUniform.value);
   }
 }

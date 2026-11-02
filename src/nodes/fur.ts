@@ -210,6 +210,7 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
       .mul(FUR.widthScale)
       .mul(stretch)
       .mul(shapeOnPlane(PLANE.detail * FUR.plane.width))
+      .mul(copy.shown)
       .mul(sim.uniforms.scale)
       .div(u.density);
     const toCamera = cameraPosition.sub(safe);
