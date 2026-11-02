@@ -3,6 +3,9 @@ import { approach } from '../core/spring';
 
 const DRAG_RADIANS_PER_PX = 0.0065;
 const MAX_FLICK = 14;
+/** How fast a locked object turns back to rest, per second. */
+const SETTLE_RATE = 3;
+const REST = new Quaternion();
 
 /**
  * Spins a quaternion: drag to rotate, flick for inertia, then it eases back to a slow idle spin (or to rest,
@@ -17,6 +20,7 @@ export class SpinController {
   private readonly axis = new Vector3();
   private readonly tmp = new Vector3();
   private readonly quaternion: Quaternion;
+  private locked = false;
 
   constructor(quaternion: Quaternion, idleSpeed: number) {
     this.quaternion = quaternion;
@@ -29,6 +33,11 @@ export class SpinController {
   setIdle(on: boolean, instant = false): void {
     this.idle.set(0, on ? this.idleSpeed : 0, 0);
     if (instant) this.angularVelocity.copy(this.idle);
+  }
+
+  /** Locks the object: it stops spinning and turns back to rest (the plane's view is fixed). */
+  setLocked(on: boolean): void {
+    this.locked = on;
   }
 
   grab(): void {
@@ -57,7 +66,10 @@ export class SpinController {
    * Returns the change in angular velocity this frame (world space), which jiggly materials react to.
    */
   update(dt: number, held: boolean, msSinceLastMove: number): Vector3 {
-    if (!held) {
+    if (this.locked) {
+      this.angularVelocity.set(0, 0, 0);
+      this.quaternion.slerp(REST, approach(SETTLE_RATE, dt));
+    } else if (!held) {
       this.angularVelocity.lerp(this.idle, approach(1.1, dt));
       const angle = this.angularVelocity.length() * dt;
       if (angle > 1e-7) {

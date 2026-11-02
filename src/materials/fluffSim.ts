@@ -27,7 +27,7 @@ import {
   vec4,
 } from 'three/tsl';
 import { FLUFF, fluffFrame } from '../core/fluff';
-import { baseN, baseR } from '../nodes/shape';
+import { baseN, baseR, shapeDown } from '../nodes/shape';
 
 const SIM = FLUFF.physics;
 
@@ -210,7 +210,8 @@ export class FluffSim {
       });
 
       const h = u.step;
-      const gravity = vec3(0, -SIM.gravity, 0);
+      // down, or on the plane toward the orb's centre, which it draws as down
+      const gravity = shapeDown(this.toWorld(p.negate(), 0)).mul(SIM.gravity);
       const parent = root.toVar();
       Loop({ start: 0, end: u.steps, type: 'int' }, ({ i: step }) => {
         // Sample the original idle sway at physics time, rather than holding one pose for a whole frame.

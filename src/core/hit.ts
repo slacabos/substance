@@ -1,4 +1,5 @@
 import { Vector3 } from 'three';
+import { PLANE, planeDirection } from './chart';
 
 /** Half-size of the cube shape's flat faces (matches baseR() in nodes/shape.ts). */
 export const CUBE_HALF = 0.8;
@@ -25,6 +26,20 @@ export function intersectShape(
   const hit = dir.clone().multiplyScalar(t).add(origin);
   if (hit.lengthSq() < 1e-12) return null;
   return hit.normalize();
+}
+
+/**
+ * Intersects a ray in object space with the plane shape's ground, returning the direction whose ground point it hits
+ * (core/chart.ts). It never misses: a ray at or above the horizon lands on the far ring, along its bearing.
+ */
+export function intersectPlane(origin: Vector3, dir: Vector3): Vector3 {
+  const drop = origin.y - PLANE.groundY;
+  const t = dir.y < -1e-6 ? drop / -dir.y : Infinity;
+  const x = origin.x + dir.x * t;
+  const z = origin.z + dir.z * t;
+  if (Number.isFinite(t) && Math.hypot(x, PLANE.footZ - z) < PLANE.rhoFar) return planeDirection(x, z);
+  const bearing = Math.hypot(dir.x, dir.z) > 1e-9 ? Math.atan2(dir.x, -dir.z) : 0;
+  return planeDirection(PLANE.rhoFar * Math.sin(bearing), PLANE.footZ - PLANE.rhoFar * Math.cos(bearing));
 }
 
 export function raySphere(origin: Vector3, dir: Vector3, radius: number): number | null {

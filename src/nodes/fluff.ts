@@ -29,7 +29,7 @@ import {
 } from 'three/tsl';
 import { FLUFF } from '../core/fluff';
 import type { FluffSim } from '../materials/fluffSim';
-import { baseN, baseR } from './shape';
+import { baseN, baseR, shapeHeightScale, shapeNormal, shapeShell, shapeVector } from './shape';
 
 // Fluff: camera-facing strand ribbons over a dark skin. Strand template: position.x is the side (-1 or 1),
 // position.y runs 0 at the root to 1 at the tip. Each strand follows the points FluffSim simulates.
@@ -88,7 +88,7 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
   const position = Fn(() => {
     const p = roots.element(instanceIndex);
     const rnd = rand.element(instanceIndex);
-    const n = normalize(sim.uniforms.anchor.mul(vec4(baseN(p, p.mul(baseR(p))), 0)).xyz);
+    const n = normalize(sim.uniforms.anchor.mul(vec4(shapeNormal(p, baseN(p, p.mul(baseR(p)))), 0)).xyz);
 
     const t = positionGeometry.y;
     const f = t.mul(K - 1);
@@ -102,8 +102,15 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
     const after = pos.element(base.add(uint(min(segment.add(2), K - 1))));
     const p0 = select(i.equal(0), p1.mul(2).sub(p2), before);
     const p3 = select(i.equal(K - 2), p2.mul(2).sub(p1), after);
-    const { point, tangent } = catmullRom(p0, p1, p2, p3, f.sub(segment));
-    const dir = normalize(tangent);
+    const strand = catmullRom(p0, p1, p2, p3, f.sub(segment));
+    // drawn where the shape puts it: on the plane, standing on the ground as big as the ground's scale there
+    const world = (v: Node<'vec3'>, w: number) => sim.uniforms.anchor.mul(vec4(v, w)).xyz;
+    const local = sim.uniforms.anchorInv.mul(vec4(strand.point, 1)).xyz;
+    const outward = normalize(local);
+    const point = world(shapeShell(local), 1);
+    const dir = normalize(
+      world(shapeVector(outward, sim.uniforms.anchorInv.mul(vec4(strand.tangent, 0)).xyz), 0),
+    );
 
     // Width tapers to a fine tip. Directions spread out where the cube's surface stretches away from the
     // sphere, so strands there get wider to keep the coat looking as dense.
@@ -114,6 +121,7 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
       .add(0.1)
       .mul(rnd.y.mul(0.4).add(0.8))
       .mul(stretch)
+      .mul(shapeHeightScale(p))
       .mul(sim.uniforms.scale)
       .div(u.density);
     // Never thinner than a pixel.
@@ -176,8 +184,8 @@ export function createSkinNodes(u: FluffUniforms) {
   const position = Fn(() => {
     const p = normalize(positionGeometry);
     const q = p.mul(baseR(p));
-    vN.assign(transformNormalToView(baseN(p, q)));
-    return q;
+    vN.assign(transformNormalToView(shapeNormal(p, baseN(p, q))));
+    return shapeShell(q);
   })();
   const lit = clamp(dot(normalize(vN), normalize(u.light)).mul(0.5).add(0.5), 0, 1).add(0.15);
   return { position, color: u.root.mul(0.55).mul(lit) };

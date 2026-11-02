@@ -4,6 +4,7 @@ import { MeshStandardNodeMaterial } from 'three/webgpu';
 import { SHALLOWS, SHORE_SITES, shoreElevation, shoreNoise, shoreRadius } from '../core/oceanShores';
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { shoreSurface } from '../nodes/shore';
+import { shapeNormal, shapeShell } from '../nodes/shape';
 import { blendedAt } from '../nodes/oceanSurface';
 import {
   float,
@@ -192,14 +193,15 @@ export class OceanShores {
           blendedAt(p, sea, (i) => sand.slope.element(i).y),
           blendedAt(p, sea, (i) => sand.slope.element(i).z),
         );
-        normalLocal.assign(normalize(normalLocal.sub(slope)));
+        normalLocal.assign(shapeNormal(p, normalize(normalLocal.sub(slope))));
         steep.assign(length(slope).div(reposeSlope(0)));
         down.assign(slope.negate().div(length(slope).add(1e-6)));
       } else {
+        normalLocal.assign(shapeNormal(p, normalLocal));
         steep.assign(0);
         down.assign(vec3(0, 0, 1));
       }
-      return positionLocal.add(p.mul(change));
+      return shapeShell(positionLocal.add(p.mul(change)));
     })();
     const surface = shoreSurface(
       water,

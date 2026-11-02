@@ -62,7 +62,7 @@ import { snoise } from '../nodes/noise';
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
-import { baseN, baseR } from '../nodes/shape';
+import { baseN, baseR, shapeNormal, shapeShell } from '../nodes/shape';
 
 export { DeformMode, type DeformUniforms };
 
@@ -180,9 +180,10 @@ export function createDeformMaterial(
 
   if (mode !== DeformMode.Ocean || !ocean) {
     material.positionNode = Fn(() => {
-      const { pos, nrm } = orbDeform(normalize(positionGeometry), mode, uniforms);
-      normalLocal.assign(nrm);
-      return pos;
+      const p = normalize(positionGeometry);
+      const { pos, nrm } = orbDeform(p, mode, uniforms);
+      normalLocal.assign(shapeNormal(p, nrm));
+      return shapeShell(pos);
     })();
     return { material, uniforms };
   }
@@ -222,7 +223,7 @@ export function createDeformMaterial(
     const simulated = sim.surface.element(vertexIndex);
     const simHeight = simulated.x;
     simGradient.assign(sim.slope.element(vertexIndex).xyz);
-    normalLocal.assign(normalize(surface.nrm.sub(simGradient)));
+    normalLocal.assign(shapeNormal(p, normalize(surface.nrm.sub(simGradient))));
     scalars.assign(vec4(surface.height.add(simHeight), simHeight, surface.weather, surface.damping));
     direction.assign(p);
     simState.assign(vec2(simulated.y, simulated.z));
@@ -263,7 +264,9 @@ export function createDeformMaterial(
     const lift = coastal ? float(WATER_LIFT) : float(0);
     // nor do crests lean near the water's edge, where a sideways shift would show as teeth along the beach
     const leaning = coastal ? smoothstep(0.004, 0.012, depth) : float(1);
-    return surface.pos.add(normalize(surface.pos).mul(simHeight.add(lift))).add(shift.mul(leaning));
+    return shapeShell(
+      surface.pos.add(normalize(surface.pos).mul(simHeight.add(lift))).add(shift.mul(leaning)),
+    );
   })();
 
   // Per pixel: the full-resolution wave slopes, crests where the surface bunches up, and roughness for the
@@ -315,10 +318,13 @@ export function createDeformMaterial(
   // GGX alpha^2 grows by twice the hidden slope variance
   const rough = pow(pow(base, 4).add(surface.lostVariance.mul(damping).mul(damping).mul(2)), 0.25);
   const normal = transformNormalToView(
-    normalize(
-      baseN(p, p.mul(baseR(p)))
-        .sub(surface.gradient.mul(damping).div(baseR(p)))
-        .sub(simGradient),
+    shapeNormal(
+      p,
+      normalize(
+        baseN(p, p.mul(baseR(p)))
+          .sub(surface.gradient.mul(damping).div(baseR(p)))
+          .sub(simGradient),
+      ),
     ),
   );
   const roughness = mix(rough, 0.92, foam);

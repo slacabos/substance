@@ -15,7 +15,7 @@ import {
 import { oceanDetail } from '../core/oceanTuning';
 import { reposeSlope, SAND } from '../core/sand';
 import { SAND_KEY_LIGHT, sandSurface } from '../nodes/sand';
-import { baseN, baseR } from '../nodes/shape';
+import { baseN, baseR, shapeNormal, shapeShell } from '../nodes/shape';
 import { createDeformGeometry } from './deform';
 import { SandField } from './sandField';
 import { PER_THROW, SandGrains } from './sandGrains';
@@ -91,10 +91,10 @@ export class Sand implements Substance {
       below.assign(here.x.negate());
       // the shape's normal, tilted by the bed's slope
       const gradient = slope.element(vertexIndex).xyz;
-      normalLocal.assign(normalize(baseN(p, p.mul(radius)).sub(gradient.div(radius))));
+      normalLocal.assign(shapeNormal(p, normalize(baseN(p, p.mul(radius)).sub(gradient.div(radius)))));
       steep.assign(length(gradient).div(reposeSlope(0)));
       down.assign(gradient.negate().div(length(gradient).add(1e-6)));
-      return p.mul(radius.add(here.x));
+      return shapeShell(p.mul(radius.add(here.x)));
     })();
     const surface = sandSurface(
       normalize(positionGeometry),

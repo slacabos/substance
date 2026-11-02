@@ -1,8 +1,15 @@
-import { Color, Group, Mesh, type BufferGeometry, type Vector3 } from 'three';
+import { Color, Group, IcosahedronGeometry, Mesh, type BufferGeometry, type Vector3 } from 'three';
+import { MeshStandardNodeMaterial } from 'three/webgpu';
+import { Fn, normalize, positionGeometry } from 'three/tsl';
+import { shapeShell } from '../nodes/shape';
+import { planeUniform } from '../scene/shape';
 import { RisingBubbles } from './bubbles';
 import { createDeformMaterial, DeformMode } from './deform';
 import { RippleField } from './ripples';
 import type { FrameContext, Readout, Substance } from './types';
+
+/** How deep the plane's water stands over its bed, as a fraction of the orb's radius. */
+const BED_DEPTH = 0.85;
 
 export class Water implements Substance {
   readonly id = 'water';
@@ -15,6 +22,8 @@ export class Water implements Substance {
   private readonly ripples;
   private readonly bubbles = new RisingBubbles(16);
   private readonly bubbleRig = new Group();
+  /** A pale floor under the plane's water, for it to refract; inside the orb there's nothing to see. */
+  private readonly bed: Mesh;
   private time = 0;
 
   constructor(geometry: BufferGeometry, coarse: boolean) {
@@ -38,7 +47,13 @@ export class Water implements Substance {
     mesh.frustumCulled = false;
     this.ripples = new RippleField(uniforms);
     this.bubbleRig.add(this.bubbles.mesh);
-    this.objects = [mesh] as const;
+    const bedMaterial = new MeshStandardNodeMaterial({ color: '#b9cfd6', roughness: 0.9 });
+    bedMaterial.positionNode = Fn(() => shapeShell(normalize(positionGeometry).mul(BED_DEPTH)))();
+    this.bed = new Mesh(new IcosahedronGeometry(1, 24), bedMaterial);
+    this.bed.frustumCulled = false;
+    // (in a rig of its own: the app shows and hides the material's objects, the bed only shows on the plane)
+    const bedRig = new Group().add(this.bed);
+    this.objects = [mesh, bedRig] as const;
     // Bubbles rise along world up, so their rig follows the anchor's position but not its spin.
     this.worldObjects = [this.bubbleRig] as const;
   }
@@ -72,6 +87,9 @@ export class Water implements Substance {
     this.ripples.update(ctx.time, ctx.dt);
     this.bubbleRig.position.copy(ctx.anchor.position);
     this.bubbleRig.scale.copy(ctx.anchor.scale);
+    // (a flat sheet of water has nothing to rise through)
+    this.bubbles.mesh.visible = planeUniform.value < 0.5;
+    this.bed.visible = planeUniform.value > 0;
     this.bubbles.update(ctx.time, ctx.dt);
   }
 }

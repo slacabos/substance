@@ -31,6 +31,12 @@ describe('scene query strings', () => {
     expect(parseScene(query)).toEqual(scene);
   });
 
+  it('keeps the plane in shareable scene URLs', () => {
+    const scene = { ...DEFAULT_SCENE, shape: 'plane' } as const;
+    expect(sceneQuery(scene)).toBe('?shape=plane');
+    expect(parseScene(sceneQuery(scene))).toEqual(scene);
+  });
+
   it('keeps the coastal variant in shareable scene URLs', () => {
     expect(parseScene(sceneQuery({ ...DEFAULT_SCENE, material: 'coast' })).material).toBe('coast');
   });

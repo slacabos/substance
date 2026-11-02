@@ -11,7 +11,7 @@ import {
 import { MeshBasicNodeMaterial } from 'three/webgpu';
 import { uniform } from 'three/tsl';
 import { approach } from '../core/spring';
-import { backdropColor, poolColor } from '../nodes/backdrop';
+import { BACKDROP_RADIUS, backdropColor, backdropHaze, poolColor } from '../nodes/backdrop';
 import { SETTINGS, type SettingId, type SettingLook } from './settings';
 
 /** How quickly a new setting fades in (per second). */
@@ -24,6 +24,8 @@ const FADE_RATE = 7;
 export class Backdrop {
   readonly sphere: Mesh;
   readonly pool: Mesh;
+  /** The haze over the plane, for the scene's fog (nodes/backdrop.ts). */
+  readonly haze;
 
   private readonly uniforms = {
     wall: uniform(new Color()),
@@ -36,13 +38,15 @@ export class Backdrop {
     strength: uniform(0.2),
     glow: uniform(1),
     shadow: uniform(0),
+    shown: uniform(1),
   };
   private target: SettingLook;
 
   constructor(setting: SettingId) {
     const sky = new MeshBasicNodeMaterial({ side: BackSide, depthWrite: false });
     sky.colorNode = backdropColor(this.uniforms);
-    this.sphere = new Mesh(new SphereGeometry(40, 64, 32), sky);
+    this.sphere = new Mesh(new SphereGeometry(BACKDROP_RADIUS, 64, 32), sky);
+    this.haze = backdropHaze(this.uniforms);
     this.sphere.renderOrder = -1;
 
     const pool = new MeshBasicNodeMaterial({
@@ -71,6 +75,12 @@ export class Backdrop {
   setPool(color: string, strength: number): void {
     this.poolUniforms.color.value.set(color);
     this.poolUniforms.strength.value = strength;
+  }
+
+  /** How far the plane has come in (0 to 1): it takes away the floor the pool lies on. */
+  setPlane(plane: number): void {
+    this.poolUniforms.shown.value = 1 - plane;
+    this.pool.visible = plane < 1;
   }
 
   update(dt: number, instant = false): void {

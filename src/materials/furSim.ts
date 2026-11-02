@@ -27,7 +27,7 @@ import {
 } from 'three/tsl';
 import { FUR, furFrame } from '../core/fur';
 import { furGroom } from '../nodes/furGroom';
-import { baseN, baseR } from '../nodes/shape';
+import { baseN, baseR, shapeDown } from '../nodes/shape';
 
 const SIM = FUR.physics;
 
@@ -206,7 +206,8 @@ export class FurSim {
         this.rest.element(at).assign(baseline);
       });
       const h = u.step;
-      const gravity = vec3(0, -SIM.gravity, 0);
+      // down, or on the plane toward the orb's centre, which it draws as down
+      const gravity = shapeDown(this.toWorld(p.negate(), 0)).mul(SIM.gravity);
       const parent = root.toVar();
       const target = root.toVar();
       Loop({ start: 0, end: u.steps, type: 'int' }, () => {

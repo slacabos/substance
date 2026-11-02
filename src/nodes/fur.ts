@@ -36,7 +36,7 @@ import { FUR, type FurCoat } from '../core/fur';
 import type { FurSim } from '../materials/furSim';
 import { furGroom, furRestOffset } from './furGroom';
 import { snoise } from './noise';
-import { baseN, baseR } from './shape';
+import { baseN, baseR, shapeHeightScale, shapeNormal, shapeShell, shapeVector } from './shape';
 
 export function createFurUniforms(density: number = FUR.density) {
   return {
@@ -125,7 +125,7 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
     const acrossLay = cross(localN, naturalLay);
     const lay = naturalLay.mul(rnd.x.mul(0.3).add(0.85)).add(acrossLay.mul(rnd.y.sub(0.5).mul(0.35)));
     const world = (point: Vec3, w: number) => sim.uniforms.anchor.mul(vec4(point, w)).xyz;
-    const n = normalize(world(localN, 0));
+    const n = normalize(world(shapeNormal(p, localN), 0));
     const t = positionGeometry.y;
     const distance = t.mul(root.w);
     // Tiny irregular bends break up straight, needle-like highlights, particularly in the woolly undercoat.
@@ -185,8 +185,9 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
     const radial = max(length(local), 1e-6);
     const outward = local.div(radial);
     const floorR = baseR(outward).add(t.mul(0.001));
-    const safe = world(outward.mul(max(radial, floorR)), 1);
-    const dir = normalize(tangent);
+    // drawn where the shape puts it: on the plane, standing on the ground as big as the ground's scale there
+    const safe = world(shapeShell(outward.mul(max(radial, floorR))), 1);
+    const dir = normalize(world(shapeVector(outward, sim.uniforms.anchorInv.mul(vec4(tangent, 0)).xyz), 0));
     const stretch = sqrt(r.mul(r).div(max(dot(p, localN), 0.3)));
     const width = pow(t.oneMinus(), 0.65)
       .mul(0.96)
@@ -194,6 +195,7 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
       .mul(rnd.x.mul(0.35).add(0.8))
       .mul(FUR.widthScale)
       .mul(stretch)
+      .mul(shapeHeightScale(p))
       .mul(sim.uniforms.scale)
       .div(u.density);
     const toCamera = cameraPosition.sub(safe);
@@ -240,8 +242,8 @@ export function createSkinNodes(u: FurUniforms) {
     const p = normalize(positionGeometry);
     const q = p.mul(baseR(p));
     vP.assign(p);
-    vN.assign(transformNormalToView(baseN(p, q)));
-    return q;
+    vN.assign(transformNormalToView(shapeNormal(p, baseN(p, q))));
+    return shapeShell(q);
   })();
   const lit = clamp(dot(normalize(vN), normalize(u.light)).mul(0.5).add(0.5), 0, 1)
     .mul(0.65)

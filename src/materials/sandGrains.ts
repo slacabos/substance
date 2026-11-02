@@ -41,7 +41,7 @@ import {
 } from 'three/tsl';
 import { LOOKUP_SIZE } from '../core/oceanLookup';
 import { cubeCell } from '../nodes/oceanSurface';
-import { baseR } from '../nodes/shape';
+import { baseR, shapeHeightScale, shapeShell, shapeVector } from '../nodes/shape';
 import { LANDING, type SandField } from './sandField';
 
 type Vec4Buffer = StorageBufferNode<'vec4'>;
@@ -171,8 +171,11 @@ export class SandGrains {
       const i = instanceIndex;
       const p = posView.element(i);
       const g = velView.element(i);
-      const at = modelViewMatrix.mul(vec4(p.xyz, 1));
-      const flow = modelViewMatrix.mul(vec4(g.xyz, 0)).xy;
+      // drawn where the shape puts it, as big as the ground's scale there
+      const d = normalize(p.xyz);
+      const size = g.w.mul(shapeHeightScale(d));
+      const at = modelViewMatrix.mul(vec4(shapeShell(p.xyz), 1));
+      const flow = modelViewMatrix.mul(vec4(shapeVector(d, g.xyz), 0)).xy;
       const speed = length(flow);
       const along = select(speed.greaterThan(1e-5), flow.div(max(speed, 1e-5)), vec2(1, 0));
       const across = vec2(along.y.negate(), along.x);
@@ -188,9 +191,9 @@ export class SandGrains {
             .mul(screenSize.y),
         );
       const flying = select(p.w.greaterThan(0), float(1), float(0));
-      const radius = max(g.w, pixel.mul(0.75));
+      const radius = max(size, pixel.mul(0.75));
       const reach = min(radius.add(speed.mul(STREAK_TIME)), radius.mul(MOST_STRETCH));
-      shape.assign(vec2(reach.div(radius), min(float(1), g.w.div(radius)).pow(2)));
+      shape.assign(vec2(reach.div(radius), min(float(1), size.div(radius)).pow(2)));
       corner.assign(positionGeometry.xy);
       const r = hash(i.add(n * 3));
       tint.assign(

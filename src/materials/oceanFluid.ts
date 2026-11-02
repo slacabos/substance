@@ -54,7 +54,7 @@ import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { cubeCell, type SurfaceBuffers } from '../nodes/oceanSurface';
 import { oceanWaveVertex, type OceanWaveFields } from '../nodes/oceanWaves';
 import { shoreDistanceAt, surfPlungeAt } from '../nodes/surf';
-import { baseR } from '../nodes/shape';
+import { baseR, shapeHeightScale, shapeShell, shapeVector } from '../nodes/shape';
 import { FLUID_LAYER } from '../scene/fluidPass';
 
 type Vec4Buffer = StorageBufferNode<'vec4'>;
@@ -517,9 +517,12 @@ export class OceanFluid {
       const i = instanceIndex;
       const life = velView.element(i).w;
       const mist = mistAt(i);
-      const size = affView.element(i.mul(3).add(1)).w;
-      const at = modelViewMatrix.mul(vec4(posView.element(i).xyz, 1));
-      const motion = modelViewMatrix.mul(vec4(velView.element(i).xyz, 0)).xy;
+      // drawn where the shape puts it, as big as the ground's scale there
+      const x = posView.element(i).xyz;
+      const d = normalize(x);
+      const size = affView.element(i.mul(3).add(1)).w.mul(shapeHeightScale(d));
+      const at = modelViewMatrix.mul(vec4(shapeShell(x), 1));
+      const motion = modelViewMatrix.mul(vec4(shapeVector(d, velView.element(i).xyz), 0)).xy;
       const speed = length(motion);
       const along = select(speed.greaterThan(1e-5), motion.div(speed), vec2(1, 0));
       const across = vec2(along.y.negate(), along.x);
@@ -555,8 +558,16 @@ export class OceanFluid {
       // (scaled with its emission, as the coast surf's finer droplets are, not droplet by droplet: a clump's
       // spheres stay one size, which the fluid pass's smoothing expects)
       const scale = affView.element(i.mul(3)).w.add(1);
-      const r = select(take, dense(i).mul(IMPOSTOR_RADIUS).mul(scale), float(0));
-      const at = modelViewMatrix.mul(vec4(posView.element(i).xyz, 1));
+      const x = posView.element(i).xyz;
+      const r = select(
+        take,
+        dense(i)
+          .mul(IMPOSTOR_RADIUS)
+          .mul(scale)
+          .mul(shapeHeightScale(normalize(x))),
+        float(0),
+      );
+      const at = modelViewMatrix.mul(vec4(shapeShell(x), 1));
       centre.assign(at.xyz);
       radius.assign(r);
       corner.assign(positionGeometry.xy);

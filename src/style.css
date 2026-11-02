@@ -159,6 +159,10 @@ button:focus-visible {
 body[data-shape='cube'] .mark {
   border-radius: 3px;
 }
+body[data-shape='plane'] .mark {
+  height: 5px;
+  border-radius: 2px;
+}
 .readout {
   font-family: var(--f-mono);
   font-size: 10.5px;
@@ -361,6 +365,10 @@ body[data-shape='cube'] .mark {
 .glyph-cube {
   border-radius: 2.5px;
 }
+.glyph-plane {
+  height: 4px;
+  border-radius: 1.5px;
+}
 
 .settings {
   justify-self: end;
@@ -375,6 +383,10 @@ body[data-shape='cube'] .mark {
 .spin[aria-pressed='true'] {
   color: var(--text);
   box-shadow: var(--pressed);
+}
+.spin:disabled {
+  opacity: 0.35;
+  box-shadow: none;
 }
 .spin[aria-pressed='true'] .icon-play,
 .spin[aria-pressed='false'] .icon-pause {
@@ -478,6 +490,19 @@ body[data-shape='cube'] .mark {
   .wind {
     width: 36px;
     height: 36px;
+  }
+  /* three shapes don't fit with their names: only the chosen one keeps its name (the others keep it for screen readers) */
+  .shapes button[aria-checked='false'] {
+    gap: 0;
+    padding: 8px 10px;
+  }
+  .shapes button[aria-checked='false'] .shape-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 @media (max-width: 380px) {

@@ -1,5 +1,5 @@
 import { Quaternion, Vector3 } from 'three';
-import { intersectShape } from './core/hit';
+import { intersectPlane, intersectShape } from './core/hit';
 import { parseScene, sceneQuery, type SceneState } from './core/scene';
 import { oceanDetail, oceanTuningQuery, readOceanTuning, type OceanTuning } from './core/oceanTuning';
 import { BEAUFORT_NAMES, BEAUFORT_STEP, windForBeaufort } from './core/oceanWind';
@@ -123,6 +123,7 @@ export class App implements PointerTarget {
     resize();
 
     this.morph.set(scene.shape, true);
+    this.spin.setLocked(scene.shape === 'plane');
     this.controls.showShape(scene.shape);
     this.controls.showSetting(this.setting);
     for (const m of Object.values(this.materials)) m.onSettingChange?.(SETTINGS[this.setting]);
@@ -161,6 +162,7 @@ export class App implements PointerTarget {
   setShape(id: ShapeId): void {
     if (id === this.morph.shape) return;
     this.morph.set(id, this.device.reduceMotion);
+    this.spin.setLocked(id === 'plane');
     this.controls.showShape(id);
     this.syncUrl();
     this.current.onShapeChange?.(this.frontDirection());
@@ -220,6 +222,8 @@ export class App implements PointerTarget {
     this.invQ.copy(anchor.quaternion).invert();
     this.rayOrigin.sub(anchor.position).applyQuaternion(this.invQ).divideScalar(anchor.scale.x);
     this.rayDir.applyQuaternion(this.invQ);
+    // (the plane's ground runs to the horizon, so a touch never misses it and never spins anything)
+    if (this.morph.plane > 0.5) return intersectPlane(this.rayOrigin, this.rayDir);
     return intersectShape(
       this.rayOrigin,
       this.rayDir,
@@ -254,8 +258,9 @@ export class App implements PointerTarget {
 
   // ---- frame loop ----
 
-  /** The point on the object facing the camera, in object space. */
+  /** The point on the object facing the camera, in object space: on the plane, the middle of the view. */
   private frontDirection(): Vector3 {
+    if (this.morph.shape === 'plane') return this.stage.planeFocus.clone();
     const { camera, anchor } = this.stage;
     this.invQ.copy(anchor.quaternion).invert();
     return this.tmp.copy(camera.position).sub(anchor.position).normalize().applyQuaternion(this.invQ).clone();
@@ -273,9 +278,12 @@ export class App implements PointerTarget {
     if (jerkSize > 0.4) this.current.onSpinJerk?.(jerk.normalize().applyQuaternion(this.invQ), jerkSize);
 
     this.morph.update(dt);
-    anchor.position.y = Math.sin(this.time * 0.8) * (this.device.reduceMotion ? 0.01 : 0.04);
+    const plane = this.morph.plane;
+    this.stage.setPlane(plane);
+    // the orb bobs and pops; the ground stays put
+    anchor.position.y = Math.sin(this.time * 0.8) * (this.device.reduceMotion ? 0.01 : 0.04) * (1 - plane);
     stepSprings([this.pop], dt, 0.008);
-    anchor.scale.setScalar(this.pop.value);
+    anchor.scale.setScalar(this.pop.value + (1 - this.pop.value) * plane);
 
     this.ctx.time = this.time;
     this.ctx.dt = dt;

@@ -6,7 +6,7 @@ import { shoreDistance } from '../core/oceanShores';
 import { OceanWeather, weatherRadius } from '../core/oceanWeather';
 import { beaufortFor, GustField, oceanWind } from '../core/oceanWind';
 import type { OceanTuning } from '../core/oceanTuning';
-import { baseR } from '../nodes/shape';
+import { baseR, shapeShell } from '../nodes/shape';
 import { morphUniform } from '../scene/shape';
 import { createDeformMaterial, createDeformUniforms, DeformMode, type DeformUniforms } from './deform';
 import type { OceanFFT } from './oceanFFT';
@@ -113,7 +113,8 @@ export class Ocean implements Substance {
     const interiorMaterial = new MeshBasicNodeMaterial({ color: '#031525' });
     interiorMaterial.positionNode = Fn(() => {
       const p = normalize(positionGeometry);
-      return p.mul(baseR(p).mul(0.72));
+      // (on the plane it's the seabed, as far under the water as it is inside the orb)
+      return shapeShell(p.mul(baseR(p).mul(0.72)));
     })();
     const interior = new Mesh(new IcosahedronGeometry(1, 24), interiorMaterial);
     interior.frustumCulled = false;

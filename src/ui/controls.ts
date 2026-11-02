@@ -11,7 +11,7 @@ const MATERIAL_KEYS: Record<string, MaterialId> = {
   '6': 'sand',
   '7': 'fluff',
 };
-const SHAPE_KEYS: Record<string, ShapeId> = { o: 'orb', c: 'cube' };
+const SHAPE_KEYS: Record<string, ShapeId> = { o: 'orb', c: 'cube', p: 'plane' };
 
 export interface ControlHandlers {
   onMaterial(id: MaterialId): void;
@@ -129,6 +129,8 @@ export class Controls {
   showShape(id: ShapeId): void {
     document.body.dataset['shape'] = id;
     for (const b of this.shapeButtons) b.setAttribute('aria-checked', String(b.dataset['shape'] === id));
+    // the plane's view is fixed: nothing to spin
+    this.spinButton.disabled = id === 'plane';
   }
 
   showSetting(id: SettingId): void {
