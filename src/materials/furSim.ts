@@ -130,7 +130,9 @@ export class FurSim {
 
   private createReset() {
     return Fn(() => {
-      If(instanceIndex.greaterThanEqual(this.count), () => Return());
+      If(instanceIndex.greaterThanEqual(this.count), () => {
+        Return();
+      });
       const { q, n, segment, lay } = this.strandBase();
       const base = instanceIndex.mul(this.points);
       const x = this.toWorld(q, 1).toVar();
@@ -157,7 +159,9 @@ export class FurSim {
   private createStep() {
     const u = this.uniforms;
     return Fn(() => {
-      If(instanceIndex.greaterThanEqual(this.count), () => Return());
+      If(instanceIndex.greaterThanEqual(this.count), () => {
+        Return();
+      });
       const { p, q, n, segment, lay } = this.strandBase();
       const groom = this.groom.element(instanceIndex);
       const bs = acos(clamp(dot(p, u.brushDir), -1, 1));
@@ -240,7 +244,9 @@ export class FurSim {
           const r = max(length(local), 1e-6);
           const outward = local.div(r);
           const surface = baseR(outward).add(SIM.skin);
-          If(r.lessThan(surface), () => next.assign(this.toWorld(outward.mul(surface), 1)));
+          If(r.lessThan(surface), () => {
+            next.assign(this.toWorld(outward.mul(surface), 1));
+          });
           this.prev.element(at).assign(x);
           this.pos.element(at).assign(next);
           parent.assign(next);
