@@ -5,6 +5,7 @@ import {
   planeDirection,
   planeNormal,
   planePoint,
+  planePull,
   planePush,
   planeScale,
   planeShell,
@@ -80,6 +81,16 @@ describe('the plane chart', () => {
         const expected = ahead.sub(planePoint(p)).divideScalar(step);
         expect(planePush(p, t).distanceTo(expected)).toBeLessThan(1e-4 * expected.length());
       }
+    }
+  });
+
+  it('pulls a way along the ground back to the orb', () => {
+    const g = new Vector3(0.8, 0, -0.6);
+    for (const p of front) {
+      const t = planePull(p, g);
+      expect(Math.abs(t.dot(p))).toBeLessThan(1e-9);
+      const back = planePush(p, t).normalize();
+      expect(back.dot(g)).toBeCloseTo(1, 9);
     }
   });
 

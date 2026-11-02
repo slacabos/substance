@@ -31,11 +31,6 @@ export const PLANE = {
   /** The most a height off the surface is scaled up by, so tall features far away stay within reason. */
   heightCap: 5,
   /**
-   * How long hair is drawn on the ground, against the orb's: grown with the ground's scale it stood like a macro
-   * shot of a field, the camera being so close.
-   */
-  hair: 0.3,
-  /**
    * The fixed camera: its height over the ground, and where the horizon sits on screen, as a fraction of the way
    * from the middle to the top edge. A wide view lets it look down steeply and still leave a band of sky.
    */
@@ -96,6 +91,22 @@ export function planePush(p: Vector3, t: Vector3, out = new Vector3()): Vector3 
   const sin = Math.sin(phi);
   const cos = Math.cos(phi);
   return out.set(dRho * sin + rho * dPhi * cos, 0, -dRho * cos + rho * dPhi * sin);
+}
+
+/**
+ * The step along the orb's surface at p that the chart carries along the ground vector g (its scale aside): the
+ * transpose of its differential, which for a conformal map points the same way as its inverse.
+ */
+export function planePull(p: Vector3, g: Vector3, out = new Vector3()): Vector3 {
+  const e1 = new Vector3(Math.abs(p.y) < 0.9 ? 0 : 1, Math.abs(p.y) < 0.9 ? 1 : 0, 0)
+    .cross(p)
+    .negate()
+    .normalize();
+  const e2 = p.clone().cross(e1);
+  return out
+    .copy(e1)
+    .multiplyScalar(g.dot(planePush(p, e1)))
+    .addScaledVector(e2, g.dot(planePush(p, e2)));
 }
 
 /** The direction whose ground point is (x, groundY, z): the chart's inverse, clamped into its range. */

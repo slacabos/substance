@@ -1,12 +1,16 @@
 import { Matrix4, Vector3, type Object3D } from 'three';
 import type { ComputeNode, Node, StorageBufferNode, WebGPURenderer } from 'three/webgpu';
 import {
+  abs,
   acos,
   clamp,
+  cos,
+  cross,
   dot,
   exp,
   float,
   Fn,
+  hash,
   If,
   instancedArray,
   instanceIndex,
@@ -28,6 +32,7 @@ import {
 } from 'three/tsl';
 import { FLUFF, fluffFrame } from '../core/fluff';
 import { baseN, baseR, shapeDown } from '../nodes/shape';
+import { planeUniform } from '../scene/shape';
 
 const SIM = FLUFF.physics;
 
@@ -212,6 +217,19 @@ export class FluffSim {
       const h = u.step;
       // down, or on the plane toward the orb's centre, which it draws as down
       const gravity = shapeDown(this.toWorld(p.negate(), 0)).mul(SIM.gravity);
+      // on the plane each strand leans its own way, so the short pile splays like a rug's rather than standing
+      // in the rows its roots were laid out in
+      const e1 = normalize(cross(p, select(abs(p.y).lessThan(0.9), vec3(0, 1, 0), vec3(1, 0, 0))));
+      const turn = hash(instanceIndex.add(this.count)).mul(Math.PI * 2);
+      const splay = e1
+        .mul(cos(turn))
+        .add(cross(p, e1).mul(sin(turn)))
+        .mul(
+          hash(instanceIndex.add(this.count * 2))
+            .mul(0.5)
+            .add(0.5),
+        )
+        .mul(planeUniform.mul(FLUFF.plane.splay));
       const parent = root.toVar();
       Loop({ start: 0, end: u.steps, type: 'int' }, ({ i: step }) => {
         // Sample the original idle sway at physics time, rather than holding one pose for a whole frame.
@@ -221,7 +239,7 @@ export class FluffSim {
           sin(t.mul(1.1).add(p.z.mul(4))),
           sin(t.mul(1.7).add(p.x.mul(4.5))),
         ).mul(0.04);
-        const lean = groom.add(part).add(sway);
+        const lean = groom.add(part).add(sway).add(splay);
         const rest = normalize(this.toWorld(n.add(lean.sub(n.mul(dot(lean, n)))), 0)).toVar();
         parent.assign(root);
         Loop({ start: 1, end: this.points, type: 'uint' }, ({ i }) => {

@@ -30,6 +30,20 @@ export const FUR = {
     rootLean: 2.25,
     bend: 3.0,
   },
+  /**
+   * On the plane's ground: fibres drawn shorter and thinner than the orb's (grown with the ground's scale they
+   * stood like a macro shot, the camera being so close), and the coat combed one way across the ground (`lay`,
+   * world x and z), swaying `wave.angle` radians every `wave.length` ground units so its sheen moves across it. The
+   * orb's lay would leave its pole, a flat whorl, in the middle of the view. `lean` is how hard it lies over,
+   * against the orb's: a little less, so the coat has some depth seen from above.
+   */
+  plane: {
+    length: 0.45,
+    width: 0.8,
+    lay: [0.85, -0.55],
+    lean: 0.6,
+    wave: { length: 3.5, angle: 0.45 },
+  },
   physics: {
     rate: 240,
     maxSteps: 10,

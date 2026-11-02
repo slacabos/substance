@@ -11,6 +11,12 @@ export const FLUFF = {
     highlight: [0.94, 0.87, 1],
   },
   light: [-0.55, 0.75, 0.5],
+  /**
+   * On the plane's ground: strands drawn shorter than the orb's, a rug's pile a few strands' spacing deep, and a
+   * little thinner (grown with the ground's scale they stood like a macro shot of a field); and each leaning its
+   * own way, by up to `splay` (as a lean, where 1 is 45°), so the pile splays like a rug's.
+   */
+  plane: { length: 0.28, width: 0.85, splay: 0.9 },
   physics: {
     rate: 240,
     maxSteps: 10,

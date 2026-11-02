@@ -36,7 +36,7 @@ import { FUR, type FurCoat } from '../core/fur';
 import type { FurSim } from '../materials/furSim';
 import { furGroom, furRestOffset } from './furGroom';
 import { snoise } from './noise';
-import { baseN, baseR, shapeHair, shapeHeightScale, shapeNormal, shapeShell, shapeVector } from './shape';
+import { baseN, baseR, shapeOnPlane, shapeHeightScale, shapeNormal, shapeShell, shapeVector } from './shape';
 
 export function createFurUniforms(density: number = FUR.density) {
   return {
@@ -181,9 +181,10 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
     }
 
     // A blended displacement may cross a sharp cube transition; keep the visible fibre outside too.
-    // (shorter on the plane: the fibre shrunk toward its root, and thinner by less, so the short coat still covers)
-    const hair = shapeHair();
-    const local = q.add(sim.uniforms.anchorInv.mul(vec4(point, 1)).xyz.sub(q).mul(hair));
+    // (shorter on the plane: the fibre shrunk toward its root)
+    const local = q.add(
+      sim.uniforms.anchorInv.mul(vec4(point, 1)).xyz.sub(q).mul(shapeOnPlane(FUR.plane.length)),
+    );
     const radial = max(length(local), 1e-6);
     const outward = local.div(radial);
     const floorR = baseR(outward).add(t.mul(0.001));
@@ -197,7 +198,7 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
       .mul(rnd.x.mul(0.35).add(0.8))
       .mul(FUR.widthScale)
       .mul(stretch)
-      .mul(shapeHeightScale(p).mul(sqrt(hair)))
+      .mul(shapeHeightScale(p).mul(shapeOnPlane(FUR.plane.width)))
       .mul(sim.uniforms.scale)
       .div(u.density);
     const toCamera = cameraPosition.sub(safe);

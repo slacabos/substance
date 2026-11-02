@@ -29,7 +29,7 @@ import {
 } from 'three/tsl';
 import { FLUFF } from '../core/fluff';
 import type { FluffSim } from '../materials/fluffSim';
-import { baseN, baseR, shapeHair, shapeHeightScale, shapeNormal, shapeShell, shapeVector } from './shape';
+import { baseN, baseR, shapeOnPlane, shapeHeightScale, shapeNormal, shapeShell, shapeVector } from './shape';
 
 // Fluff: camera-facing strand ribbons over a dark skin. Strand template: position.x is the side (-1 or 1),
 // position.y runs 0 at the root to 1 at the tip. Each strand follows the points FluffSim simulates.
@@ -105,10 +105,11 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
     const strand = catmullRom(p0, p1, p2, p3, f.sub(segment));
     // drawn where the shape puts it: on the plane, standing on the ground as big as the ground's scale there
     const world = (v: Node<'vec3'>, w: number) => sim.uniforms.anchor.mul(vec4(v, w)).xyz;
-    // (shorter on the plane: the strand shrunk toward its root, and as much thinner)
-    const hair = shapeHair();
+    // (shorter on the plane: the strand shrunk toward its root)
     const root = p.mul(baseR(p));
-    const local = root.add(sim.uniforms.anchorInv.mul(vec4(strand.point, 1)).xyz.sub(root).mul(hair));
+    const local = root.add(
+      sim.uniforms.anchorInv.mul(vec4(strand.point, 1)).xyz.sub(root).mul(shapeOnPlane(FLUFF.plane.length)),
+    );
     const outward = normalize(local);
     const point = world(shapeShell(local), 1);
     const dir = normalize(
@@ -124,7 +125,7 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
       .add(0.1)
       .mul(rnd.y.mul(0.4).add(0.8))
       .mul(stretch)
-      .mul(shapeHeightScale(p).mul(hair))
+      .mul(shapeHeightScale(p).mul(shapeOnPlane(FLUFF.plane.width)))
       .mul(sim.uniforms.scale)
       .div(u.density);
     // Never thinner than a pixel.

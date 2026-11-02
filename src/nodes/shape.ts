@@ -1,6 +1,5 @@
 import type { Node } from 'three/webgpu';
 import { abs, clamp, float, mix, normalize, pow, sign, vec3 } from 'three/tsl';
-import { PLANE } from '../core/chart';
 import { morphUniform, planeUniform } from '../scene/shape';
 import { planeNormalNode, planeScaleNode, planeShellNode, planeVectorNode } from './chart';
 
@@ -41,9 +40,9 @@ export function shapeHeightScale(p: Node<'vec3'>): Node<'float'> {
   return mix(float(1), planeScaleNode(p).y, planeUniform);
 }
 
-/** How long hair is drawn, against the orb's: shorter on the plane (PLANE.hair), and thinner with it. */
-export function shapeHair(): Node<'float'> {
-  return mix(float(1), float(PLANE.hair), planeUniform);
+/** A size the shape scales by `onPlane` on the plane's ground, and leaves alone on the orb and the cube. */
+export function shapeOnPlane(onPlane: number): Node<'float'> {
+  return mix(float(1), float(onPlane), planeUniform);
 }
 
 /**
