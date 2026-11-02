@@ -14,7 +14,7 @@ import {
   smoothstep,
   vec4,
 } from 'three/tsl';
-import { bumped, sandGrains, sandRelief, type SandLight, type SandSlope } from './sand';
+import { bumped, shapeSandGrains, shapeSandRelief, type SandLight, type SandSlope } from './sand';
 import { baseR } from './shape';
 
 type Float = Node<'float'>;
@@ -47,7 +47,7 @@ export function shoreSurface(
 
   // sand: ripples the wind combed across the dry sand, wiped where it's dug; crumbs thrown out of a dig
   const disturbed = smoothstep(0.0005, 0.004, abs(dug));
-  const relief = sandRelief(p, float(1).sub(wet).mul(float(1).sub(disturbed)), disturbed, slope);
+  const relief = shapeSandRelief(p, float(1).sub(wet).mul(float(1).sub(disturbed)), disturbed, slope);
   const tone = relief.tone;
   const height = relief.height.mul(float(1).sub(wet.mul(0.7)));
   // height above the still sea, as the land mesh was built (it follows the cube morph like the water)
@@ -63,7 +63,7 @@ export function shoreSurface(
     max(wet.mul(0.2), soakedBy.mul(0.95)),
     max(smoothstep(0.0005, 0.005, abs(dug)).mul(0.8), relief.damp),
   );
-  const grains = sandGrains(p, bumped(height), light, soaked);
+  const grains = shapeSandGrains(p, bumped(height), light, soaked);
   // wet sand is darker and glossy (bared seabed takes the beach's own wet sand, not the paler sand meant to be
   // seen through water)
   const albedo = mix(attribute('color', 'vec3'), WET_SAND, bared)

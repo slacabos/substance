@@ -1,7 +1,7 @@
 import type { Node } from 'three/webgpu';
 import { cos, dot, float, length, max, mix, normalize, select, sin, vec3 } from 'three/tsl';
 import { FUR } from '../core/fur';
-import { planeUniform } from '../scene/shape';
+import { shapePlaneWeight } from './shape';
 import { planePointNode, planePullNode } from './chart';
 
 type Vec3 = Node<'vec3'>;
@@ -33,7 +33,8 @@ export function furGroom(p: Vec3, n: Vec3): Vec3 {
   const pulled = planePullNode(p, combed);
   const plane = pulled.mul(float(Math.hypot(...direction) * FUR.plane.lean).div(max(length(pulled), 1e-20)));
   // (the orb's lay exactly, off the plane: nothing from the chart can reach its sim there)
-  return select(planeUniform.greaterThan(0), mix(orb, plane, planeUniform), orb);
+  const weight = shapePlaneWeight(p);
+  return select(weight.greaterThan(0), mix(orb, plane, weight), orb);
 }
 
 /** Mean direction of a gently curving fibre; roots stand up and the tips follow the coat's lay. */

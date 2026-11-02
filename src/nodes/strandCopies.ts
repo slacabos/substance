@@ -14,7 +14,8 @@ import {
   sqrt,
   vec3,
 } from 'three/tsl';
-import { planeUniform } from '../scene/shape';
+import { PLANE } from '../core/chart';
+import { shapePlaneWeight } from './shape';
 
 // On the plane each drawn strand covers far more ground than on the orb, so fur and fluff draw every simulated
 // strand several times over there (FUR.plane.copies, FLUFF.plane.copies). Instances run copy by copy: the first
@@ -27,9 +28,11 @@ import { planeUniform } from '../scene/shape';
 export const COPIES_FROM = 0.3;
 const COPIES_FULL = 0.8;
 
-/** How many times over `count` strands are drawn at this plane weight. */
+/** Dispatch copies conservatively before the nearest roots reach their visibility threshold.
+ * Their individual shader weights hide them until needed, including during a reversed morph.
+ */
 export function strandsDrawn(count: number, copies: number, plane: number): number {
-  return count * (plane > COPIES_FROM ? copies : 1);
+  return count * (plane > COPIES_FROM * PLANE.unfold.duration ? copies : 1);
 }
 
 type Vec3 = Node<'vec3'>;
@@ -39,7 +42,7 @@ export interface StrandCopy {
   /** The simulated strand this instance draws. */
   readonly strand: Node<'uint'>;
   /** How much of this copy shows, for its width: 1 for the strand itself, thinning out as the plane goes. */
-  readonly shown: Float;
+  shown(p: Vec3): Float;
   /** The copy's root: the strand's own (unit direction p), or scattered across its patch for later copies. */
   root(p: Vec3): Vec3;
   /** Turns a vector off the root (n its unit normal) the copy's own way: unchanged for the strand itself. */
@@ -57,7 +60,8 @@ export function strandCopy(count: number, spacing: number): StrandCopy {
     .mul(copy);
   return {
     strand,
-    shown: float(1).sub(copy.mul(float(1).sub(smoothstep(COPIES_FROM, COPIES_FULL, planeUniform)))),
+    shown: (p) =>
+      float(1).sub(copy.mul(float(1).sub(smoothstep(COPIES_FROM, COPIES_FULL, shapePlaneWeight(p))))),
     root: (p: Vec3): Vec3 => {
       const e1 = normalize(cross(p, select(abs(p.y).lessThan(0.9), vec3(0, 1, 0), vec3(1, 0, 0))));
       const e2 = cross(p, e1);

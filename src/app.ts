@@ -48,7 +48,7 @@ export class App implements PointerTarget {
   /** Starts the renderer (WebGPU only) and builds the app, opening on the scene the URL asks for. */
   static async create(canvas: HTMLCanvasElement, device: DeviceProfile): Promise<App> {
     const scene = parseScene(location.search);
-    const stage = await Stage.create(canvas, scene.setting, !device.coarse);
+    const stage = await Stage.create(canvas, scene.setting, !device.coarse, device.coarse);
     return new App(canvas, device, stage, scene);
   }
 
@@ -122,8 +122,9 @@ export class App implements PointerTarget {
     new ResizeObserver(resize).observe(this.controls.dock);
     resize();
 
+    if (scene.shape === 'plane') this.stage.preparePlane();
     this.morph.set(scene.shape, true);
-    this.spin.setLocked(scene.shape === 'plane');
+    this.spin.setPlane(this.morph.plane, scene.shape === 'plane');
     this.controls.showShape(scene.shape);
     this.controls.showSetting(this.setting);
     for (const m of Object.values(this.materials)) m.onSettingChange?.(SETTINGS[this.setting]);
@@ -147,7 +148,7 @@ export class App implements PointerTarget {
       for (const o of m.worldObjects ?? []) o.visible = visible;
     }
     this.stage.backdrop.setPool(this.current.accent, this.current.poolStrength);
-    this.controls.showMaterial(id, this.current.hint(this.device.coarse));
+    this.controls.showMaterial(id, this.current.hint(this.device.coarse, this.morph.shape));
     this.controls.showWind(this.current.hasWind ? this.windLevel() : null);
     this.stage.useFluid(this.current.splashes === true);
     this.controls.showReadout(this.current.readout());
@@ -161,10 +162,12 @@ export class App implements PointerTarget {
 
   setShape(id: ShapeId): void {
     if (id === this.morph.shape) return;
+    if (id === 'plane') this.stage.preparePlane();
     this.morph.set(id, this.device.reduceMotion);
-    this.spin.setLocked(id === 'plane');
+    this.spin.setPlane(this.morph.plane, id === 'plane');
     if (id === 'plane') this.pointer.cancelSpin();
     this.controls.showShape(id);
+    this.controls.showHint(this.current.hint(this.device.coarse, id));
     this.syncUrl();
     this.current.onShapeChange?.(this.frontDirection());
   }
@@ -273,13 +276,14 @@ export class App implements PointerTarget {
     this.time += dt;
     const { anchor } = this.stage;
 
+    this.morph.update(dt);
+    const plane = this.morph.plane;
+    this.spin.setPlane(plane, this.morph.shape === 'plane');
     const jerk = this.spin.update(dt, this.pointer.spinning, this.pointer.msSinceLastMove);
     this.invQ.copy(anchor.quaternion).invert();
     const jerkSize = jerk.length();
     if (jerkSize > 0.4) this.current.onSpinJerk?.(jerk.normalize().applyQuaternion(this.invQ), jerkSize);
 
-    this.morph.update(dt);
-    const plane = this.morph.plane;
     this.stage.setPlane(plane);
     // the orb bobs and pops; the ground stays put
     anchor.position.y = Math.sin(this.time * 0.8) * (this.device.reduceMotion ? 0.01 : 0.04) * (1 - plane);

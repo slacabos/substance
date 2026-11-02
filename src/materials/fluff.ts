@@ -13,7 +13,7 @@ import { strandsDrawn } from '../nodes/strandCopies';
 import { planeUniform } from '../scene/shape';
 import { createFluffUniforms, createSkinNodes, createStrandNodes } from '../nodes/fluff';
 import { FluffSim } from './fluffSim';
-import type { FrameContext, Readout, Substance } from './types';
+import type { ShapeId, FrameContext, Readout, Substance } from './types';
 
 /** How many strands cover the skin at a given density (strands per unit length). */
 export function strandCount(density: number): number {
@@ -108,6 +108,7 @@ export class Fluff implements Substance {
     const skinMaterial = new MeshBasicNodeMaterial();
     skinMaterial.positionNode = skinNodes.position;
     skinMaterial.colorNode = skinNodes.color;
+    skinMaterial.maskNode = skinNodes.mask;
     const skin = new Mesh(new SphereGeometry(1, coarse ? 96 : 128, coarse ? 64 : 96), skinMaterial);
     skin.frustumCulled = false;
 
@@ -117,7 +118,9 @@ export class Fluff implements Substance {
     this.sim.reset(anchor);
   }
 
-  hint(coarse: boolean): string {
+  hint(coarse: boolean, shape?: ShapeId): string {
+    if (shape === 'plane')
+      return coarse ? 'Stroke the fluff to comb it.' : 'Brush the fluff with your cursor.';
     return coarse
       ? 'Stroke the fluff to comb it. Spin it to fluff it up.'
       : 'Brush the fluff with your cursor. Spin it to fluff it up.';

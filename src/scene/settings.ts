@@ -20,6 +20,8 @@ export interface SettingLook {
   halo: Color;
   /** How much of the material's coloured light pool shows on the floor. */
   glow: number;
+  /** Plane haze half-density distance, ground units. */
+  hazeHalf: number;
   /** Contact shadow under the object. */
   shadow: number;
   /** The sun (or moon) water glints and glows with: world direction toward it, and linear colour times strength. */
@@ -28,6 +30,7 @@ export interface SettingLook {
 
 export const SETTINGS: Record<SettingId, SettingLook> = {
   studio: {
+    hazeHalf: 55,
     wall: new Color(0.84, 0.97, 1.24),
     floor: new Color(0.48, 0.55, 0.68),
     horizon: new Color(0, 0, 0),
@@ -41,6 +44,7 @@ export const SETTINGS: Record<SettingId, SettingLook> = {
     },
   },
   dusk: {
+    hazeHalf: 40,
     wall: new Color(0.16, 0.12, 0.3),
     floor: new Color(0.05, 0.025, 0.04),
     horizon: new Color(0.9, 0.36, 0.18),
@@ -54,6 +58,7 @@ export const SETTINGS: Record<SettingId, SettingLook> = {
     },
   },
   night: {
+    hazeHalf: 30,
     wall: new Color(0.04, 0.05, 0.085),
     floor: new Color(0.006, 0.008, 0.016),
     horizon: new Color(0.035, 0.05, 0.09),

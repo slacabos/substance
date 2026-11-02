@@ -29,12 +29,13 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
+import { PLANE } from '../core/chart';
 import { OCEAN_WIND_ANGLE } from '../core/oceanFFT';
 import { OCEAN_DEFAULTS } from '../core/oceanTuning';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { sampleSurface, windAt, type SurfaceBuffers } from '../nodes/oceanSurface';
 import { oceanWaveVertex, type OceanWaveFields } from '../nodes/oceanWaves';
-import { baseR, shapeShell } from '../nodes/shape';
+import { baseR, shapeShell, shapeStrandVector, shapeOnPlane } from '../nodes/shape';
 
 /** What flecks ride on: the simulated surface, and the FFT waves the water shows. */
 export interface FleckSurface {
@@ -162,11 +163,11 @@ export class OceanFoamFlecks {
       const direction = normalize(d.add(wave.offset.mul(offshore)));
       const lift = wave.height.mul(offshore.mul(0.82).add(0.18)).add(streak.w).add(0.004);
       const centre = direction.mul(baseR(direction).add(lift));
-      return shapeShell(
-        centre
-          .add(streak.xyz.mul(positionGeometry.x.mul(form.y).mul(fade)))
-          .add(side.mul(positionGeometry.y.mul(form.z).mul(fade))),
-      );
+      const offset = streak.xyz
+        .mul(positionGeometry.x.mul(form.y).mul(fade))
+        .add(side.mul(positionGeometry.y.mul(form.z).mul(fade)));
+      // Project the centre once. Mapping the corners separately can stretch a single fleck across the chart's pole.
+      return shapeShell(centre, d).add(shapeStrandVector(d, offset).mul(shapeOnPlane(PLANE.detail, d)));
     })();
     const circle = new CircleGeometry(0.5, 6);
     const geometry = new InstancedBufferGeometry();

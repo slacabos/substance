@@ -33,7 +33,7 @@ export interface Substance {
   /** Throws splash water, which the stage's fluid pass draws (scene/fluidPass.ts). */
   readonly splashes?: boolean;
 
-  hint(coarse: boolean): string;
+  hint(coarse: boolean, shape?: ShapeId): string;
   readout(): Readout;
 
   down(dir: Vector3): void;

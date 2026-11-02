@@ -31,8 +31,7 @@ import {
   vec4,
 } from 'three/tsl';
 import { FLUFF, fluffFrame } from '../core/fluff';
-import { baseN, baseR, shapeDown } from '../nodes/shape';
-import { planeUniform } from '../scene/shape';
+import { baseN, baseR, shapeDown, shapePlaneWeight } from '../nodes/shape';
 
 const SIM = FLUFF.physics;
 
@@ -216,7 +215,7 @@ export class FluffSim {
 
       const h = u.step;
       // down, or on the plane toward the orb's centre, which it draws as down
-      const gravity = shapeDown(this.toWorld(p.negate(), 0)).mul(SIM.gravity);
+      const gravity = shapeDown(this.toWorld(p.negate(), 0), p).mul(SIM.gravity);
       // on the plane each strand leans its own way, so the short pile splays like a rug's rather than standing
       // in the rows its roots were laid out in
       const e1 = normalize(cross(p, select(abs(p.y).lessThan(0.9), vec3(0, 1, 0), vec3(1, 0, 0))));
@@ -229,7 +228,7 @@ export class FluffSim {
             .mul(0.5)
             .add(0.5),
         )
-        .mul(planeUniform.mul(FLUFF.plane.splay));
+        .mul(shapePlaneWeight(p).mul(FLUFF.plane.splay));
       const parent = root.toVar();
       Loop({ start: 0, end: u.steps, type: 'int' }, ({ i: step }) => {
         // Sample the original idle sway at physics time, rather than holding one pose for a whole frame.

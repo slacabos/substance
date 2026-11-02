@@ -1,7 +1,8 @@
 import { Color, Group, IcosahedronGeometry, Mesh, type BufferGeometry, type Vector3 } from 'three';
 import { MeshStandardNodeMaterial } from 'three/webgpu';
 import { Fn, normalLocal, normalize, positionGeometry } from 'three/tsl';
-import { shapeNormal, shapeShell } from '../nodes/shape';
+import { shapeNormal, shapeShell, shapeMask } from '../nodes/shape';
+import { UNFURL } from '../core/transition';
 import { planeUniform } from '../scene/shape';
 import { RisingBubbles } from './bubbles';
 import { createDeformMaterial, DeformMode } from './deform';
@@ -48,10 +49,11 @@ export class Water implements Substance {
     this.ripples = new RippleField(uniforms);
     this.bubbleRig.add(this.bubbles.mesh);
     const bedMaterial = new MeshStandardNodeMaterial({ color: '#b9cfd6', roughness: 0.9 });
+    bedMaterial.maskNode = shapeMask(normalize(positionGeometry));
     bedMaterial.positionNode = Fn(() => {
       const p = normalize(positionGeometry);
       normalLocal.assign(shapeNormal(p, p));
-      return shapeShell(p.mul(BED_DEPTH));
+      return shapeShell(p.mul(BED_DEPTH), p);
     })();
     this.bed = new Mesh(new IcosahedronGeometry(1, 24), bedMaterial);
     this.bed.frustumCulled = false;
@@ -92,7 +94,7 @@ export class Water implements Substance {
     this.bubbleRig.position.copy(ctx.anchor.position);
     this.bubbleRig.scale.copy(ctx.anchor.scale);
     // (a flat sheet of water has nothing to rise through)
-    this.bubbles.mesh.visible = planeUniform.value < 0.5;
+    this.bubbles.mesh.visible = planeUniform.value < UNFURL.bubblesUntil;
     this.bed.visible = planeUniform.value > 0;
     this.bubbles.update(ctx.time, ctx.dt);
   }

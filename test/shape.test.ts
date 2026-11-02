@@ -17,6 +17,18 @@ describe('ShapeMorph', () => {
     }
   });
 
+  it('jumps exactly to either endpoint for reduced motion, including after interruption', () => {
+    const morph = new ShapeMorph();
+    morph.set('plane', false);
+    morph.update(0.2);
+    morph.set('orb', true);
+    morph.update(0);
+    expect(morph.plane).toBe(0);
+    morph.set('plane', true);
+    morph.update(0);
+    expect(morph.plane).toBe(1);
+  });
+
   it('reaches the plane exactly', () => {
     const morph = new ShapeMorph();
     morph.set('plane', false);
@@ -28,7 +40,7 @@ describe('ShapeMorph', () => {
 describe('strandsDrawn', () => {
   it('draws the plane’s copies only while the plane is well in', () => {
     expect(strandsDrawn(100, 4, 0)).toBe(100);
-    expect(strandsDrawn(100, 4, COPIES_FROM)).toBe(100);
+    expect(strandsDrawn(100, 4, COPIES_FROM * 0.65)).toBe(100);
     expect(strandsDrawn(100, 4, 0.6)).toBe(400);
     expect(strandsDrawn(100, 4, 1)).toBe(400);
   });

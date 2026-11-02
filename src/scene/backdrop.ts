@@ -9,9 +9,10 @@ import {
   SphereGeometry,
 } from 'three';
 import { MeshBasicNodeMaterial } from 'three/webgpu';
-import { uniform } from 'three/tsl';
+import { mix, uniform } from 'three/tsl';
+import type { Node } from 'three/webgpu';
 import { approach } from '../core/spring';
-import { BACKDROP_RADIUS, backdropColor, backdropHaze, poolColor } from '../nodes/backdrop';
+import { BACKDROP_RADIUS, backdropColor, backdropHaze, hazeAt, poolColor } from '../nodes/backdrop';
 import { SETTINGS, type SettingId, type SettingLook } from './settings';
 
 /** How quickly a new setting fades in (per second). */
@@ -32,6 +33,7 @@ export class Backdrop {
     floor: uniform(new Color()),
     horizon: uniform(new Color()),
     halo: uniform(new Color()),
+    hazeHalf: uniform(55),
   };
   private readonly poolUniforms = {
     color: uniform(new Color()),
@@ -66,6 +68,12 @@ export class Backdrop {
     this.update(1, true);
   }
 
+  /** The same haze on reconstructed splash surfaces, with the scene camera supplied explicitly. */
+  hazeColor(color: Node<'vec3'>, point: Node<'vec3'>, eye: Node<'vec3'>): Node<'vec3'> {
+    const haze = hazeAt(this.uniforms, point, eye);
+    return mix(color, haze.color, haze.amount);
+  }
+
   setSetting(id: SettingId, instant = false): void {
     this.target = SETTINGS[id];
     if (instant) this.update(1, true);
@@ -91,6 +99,7 @@ export class Backdrop {
     u.floor.value.lerp(t.floor, k);
     u.horizon.value.lerp(t.horizon, k);
     u.halo.value.lerp(t.halo, k);
+    u.hazeHalf.value += (t.hazeHalf - u.hazeHalf.value) * k;
     const p = this.poolUniforms;
     p.glow.value += (t.glow - p.glow.value) * k;
     p.shadow.value += (t.shadow - p.shadow.value) * k;

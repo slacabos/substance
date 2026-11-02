@@ -30,6 +30,10 @@ import {
 } from 'three/tsl';
 import type { DeformUniforms } from './deform';
 import { snoise } from './noise';
+import { groundDetail } from './shape';
+import { blendDetail } from './detail';
+import { PLANE } from '../core/chart';
+import { planeRigidNode, planeVectorNode } from './chart';
 
 type Vec3 = Node<'vec3'>;
 type Float = Node<'float'>;
@@ -76,8 +80,8 @@ export const LACE_TILE_CELLS = 32;
  * that bubble's own random number. Projected along the three axes and blended by how squarely each faces the
  * surface; each bubble size is offset so they never line up.
  */
-function bubblesAt(lace: Texture, obj: Vec3, frequency: number, scale: Float): Node<'vec2'> {
-  const n = normalize(obj);
+function bubblesAt(lace: Texture, obj: Vec3, frequency: number, scale: Float, planar = false): Node<'vec2'> {
+  const n = planar ? vec3(0, 1, 0) : normalize(obj);
   const w = pow(abs(n), vec3(6));
   const weights = w.div(w.x.add(w.y).add(w.z));
   const at = obj.mul(scale.mul(frequency / LACE_TILE_CELLS)).add(frequency * 0.37);
@@ -93,7 +97,7 @@ function bubblesAt(lace: Texture, obj: Vec3, frequency: number, scale: Float): N
  * at both drifts and crossfaded before the holes are cut, so bubbles never double up. Already scaled by the
  * foam strength.
  */
-function foamLace(drift: FoamDrift, lace: Texture, amount: Float, u: DeformUniforms): Float {
+function foamLace(drift: FoamDrift, lace: Texture, amount: Float, u: DeformUniforms, planar = false): Float {
   const scale = float(FOAM_REFERENCE_WAVELENGTH).div(u.uOceanWavelength).mul(LACE);
   const middle = mix(drift.b, drift.a, drift.blend).mul(scale);
   const clumps = vnoise(middle.mul(0.08))
@@ -102,7 +106,11 @@ function foamLace(drift: FoamDrift, lace: Texture, amount: Float, u: DeformUnifo
   const held = clamp(amount.mul(clumps.sub(0.3).mul(2.6)), 0, 1);
   const thin = float(1).sub(held);
   const bubbles = (frequency: number) =>
-    mix(bubblesAt(lace, drift.b, frequency, scale), bubblesAt(lace, drift.a, frequency, scale), drift.blend);
+    mix(
+      bubblesAt(lace, drift.b, frequency, scale, planar),
+      bubblesAt(lace, drift.a, frequency, scale, planar),
+      drift.blend,
+    );
   // 1 outside a round hole of the given radius around each bubble's centre
   const outside = (distance: Float, radius: Float) => {
     const width = fwidth(distance).add(0.015);
@@ -251,7 +259,7 @@ const layerColor = (c: readonly number[]) => vec3(c[0]!, c[1]!, c[2]!);
  * All the foam at a point: each layer's coverage (0 to 1), laid over one another (each covers what the others
  * leave open), and the colour they make together, each weighted by how much of it shows.
  */
-export function oceanFoam(
+function oceanFoamAt(
   drift: FoamDrift,
   lace: Texture,
   breaking: Float,
@@ -261,6 +269,7 @@ export function oceanFoam(
   shore?: Float,
   along?: Vec3,
   fresh: Float = float(0),
+  planar = false,
 ): { amount: Float; color: Vec3 } {
   // the surf zone, where the shoreline layer takes over from the open sea's two
   const zone = shore && along ? float(1).sub(smoothstep(SURF_FADE * 0.6, SURF_FADE * 1.3, shore)) : float(0);
@@ -287,7 +296,7 @@ export function oceanFoam(
   // ambient: churned foam the sim carries
   const ambient = clamp(
     // (in the surf zone too, under the shoreline's web: its round bubbles fill the web in as real foam is)
-    foamLace(drift, lace, smoothstep(0.04, 0.6, simulated), u)
+    foamLace(drift, lace, smoothstep(0.04, 0.6, simulated), u, planar)
       .mul(u.uFoamAmbient)
       .mul(open.mul(0.4).add(0.6)),
     0,
@@ -315,6 +324,51 @@ export function oceanFoam(
     .add(layerColor(FOAM_LAYERS.shore.color).mul(surf))
     .div(weight);
   return { amount, color };
+}
+
+/** Fixed-size ground foam, carrying the sim's drift without the chart's magnification. */
+export function oceanFoam(
+  drift: FoamDrift,
+  lace: Texture,
+  breaking: Float,
+  weather: Float,
+  simulated: Float,
+  u: DeformUniforms,
+  shore?: Float,
+  along?: Vec3,
+  fresh: Float = float(0),
+  p: Vec3 = normalize(mix(drift.b, drift.a, drift.blend)),
+): { amount: Float; color: Vec3 } {
+  const pack = (planar: boolean) => {
+    const q = groundDetail(p);
+    const sampled = planar
+      ? {
+          a: q.sub(planeVectorNode(p, p.sub(drift.a)).div(PLANE.detail)),
+          b: q.sub(planeVectorNode(p, p.sub(drift.b)).div(PLANE.detail)),
+          blend: drift.blend,
+        }
+      : drift;
+    const foam = oceanFoamAt(
+      sampled,
+      lace,
+      breaking,
+      weather,
+      simulated,
+      u,
+      shore,
+      along && (planar ? planeRigidNode(p, along) : along),
+      fresh,
+      planar,
+    );
+    return vec4(foam.color, foam.amount);
+  };
+  const foam = blendDetail(
+    p,
+    vec4(0),
+    () => pack(false),
+    () => pack(true),
+  );
+  return { amount: foam.w, color: foam.xyz };
 }
 
 /** Approximate absorption through a deep body of water, plus a blue grazing-angle glint. */

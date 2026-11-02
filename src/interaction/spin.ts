@@ -1,4 +1,5 @@
 import { Quaternion, Vector3 } from 'three';
+import { unfurlRotationWeight } from '../core/transition';
 import { approach } from '../core/spring';
 
 const DRAG_RADIANS_PER_PX = 0.0065;
@@ -21,6 +22,8 @@ export class SpinController {
   private readonly tmp = new Vector3();
   private readonly quaternion: Quaternion;
   private locked = false;
+  private unfolding = false;
+  private readonly solidOrientation = new Quaternion();
 
   constructor(quaternion: Quaternion, idleSpeed: number) {
     this.quaternion = quaternion;
@@ -39,6 +42,23 @@ export class SpinController {
   setLocked(on: boolean): void {
     this.locked = on;
     if (on) this.angularVelocity.set(0, 0, 0);
+  }
+
+  /** Rotate to ground orientation on the same reversible timeline as the geometry. */
+  setPlane(progress: number, selected: boolean): void {
+    if (selected && !this.unfolding) {
+      this.solidOrientation.copy(this.quaternion);
+      this.unfolding = true;
+      this.locked = true;
+      this.angularVelocity.set(0, 0, 0);
+      this.previous.set(0, 0, 0);
+    }
+    if (!this.unfolding) return;
+    this.quaternion.slerpQuaternions(this.solidOrientation, REST, unfurlRotationWeight(progress));
+    if (progress === 0 && !selected) {
+      this.unfolding = false;
+      this.locked = false;
+    }
   }
 
   grab(): void {
@@ -70,7 +90,7 @@ export class SpinController {
   update(dt: number, held: boolean, msSinceLastMove: number): Vector3 {
     if (this.locked) {
       this.angularVelocity.set(0, 0, 0);
-      this.quaternion.slerp(REST, approach(SETTLE_RATE, dt));
+      if (!this.unfolding) this.quaternion.slerp(REST, approach(SETTLE_RATE, dt));
     } else if (!held) {
       this.angularVelocity.lerp(this.idle, approach(1.1, dt));
       const angle = this.angularVelocity.length() * dt;

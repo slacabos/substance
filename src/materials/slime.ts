@@ -1,6 +1,7 @@
 import { Color, Group, Mesh, Vector3, type BufferGeometry } from 'three';
 import { MAX_IMPULSES } from '../config';
 import { Spring, stepSprings } from '../core/spring';
+import { UNFURL } from '../core/transition';
 import { planeUniform } from '../scene/shape';
 import { TrappedBubbles } from './bubbles';
 import { createDeformMaterial, DeformMode, type DeformUniforms } from './deform';
@@ -151,7 +152,7 @@ export class Slime implements Substance {
     this.uniforms.uWob.value.set(a.x, a.y, a.z, this.wobble.value);
     this.uniforms.uTime.value = ctx.time;
     // (a flat sheet of slime has no inside to trap them in)
-    this.bubbles.mesh.visible = planeUniform.value < 0.5;
+    this.bubbles.mesh.visible = planeUniform.value < UNFURL.bubblesUntil;
     this.bubbles.update(ctx.time, 1 + this.wobble.value * 0.8);
   }
 }

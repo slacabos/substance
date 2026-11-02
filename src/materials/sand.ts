@@ -15,7 +15,7 @@ import {
 import { oceanDetail } from '../core/oceanTuning';
 import { reposeSlope, SAND } from '../core/sand';
 import { SAND_KEY_LIGHT, sandSurface } from '../nodes/sand';
-import { baseN, baseR, shapeNormal, shapeShell } from '../nodes/shape';
+import { baseN, baseR, shapeNormal, shapeShell, shapeMask } from '../nodes/shape';
 import { createDeformGeometry } from './deform';
 import { SandField } from './sandField';
 import { PER_THROW, SandGrains } from './sandGrains';
@@ -82,6 +82,7 @@ export class Sand implements Substance {
     const steep = varyingProperty('float', 'vSteep');
     const down = varyingProperty('vec3', 'vDown');
     const material = new MeshStandardNodeMaterial();
+    material.maskNode = shapeMask(normalize(positionGeometry));
     material.positionNode = Fn(() => {
       const p = normalize(positionGeometry);
       const here = bed.element(vertexIndex);
@@ -94,7 +95,7 @@ export class Sand implements Substance {
       normalLocal.assign(shapeNormal(p, normalize(baseN(p, p.mul(radius)).sub(gradient.div(radius)))));
       steep.assign(length(gradient).div(reposeSlope(0)));
       down.assign(gradient.negate().div(length(gradient).add(1e-6)));
-      return shapeShell(p.mul(radius.add(here.x)));
+      return shapeShell(p.mul(radius.add(here.x)), p);
     })();
     const surface = sandSurface(
       normalize(positionGeometry),

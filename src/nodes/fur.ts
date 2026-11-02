@@ -44,6 +44,7 @@ import {
   shapeNormal,
   shapeOnPlane,
   shapeShell,
+  shapeMask,
   shapeStrand,
   shapeStrandVector,
 } from './shape';
@@ -209,8 +210,8 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
       .mul(rnd.x.mul(0.35).add(0.8))
       .mul(FUR.widthScale)
       .mul(stretch)
-      .mul(shapeOnPlane(PLANE.detail * FUR.plane.width))
-      .mul(copy.shown)
+      .mul(shapeOnPlane(PLANE.detail * FUR.plane.width, p))
+      .mul(copy.shown(p))
       .mul(sim.uniforms.scale)
       .div(u.density);
     const toCamera = cameraPosition.sub(safe);
@@ -221,7 +222,7 @@ export function createStrandNodes(u: FurUniforms, sim: FurSim, coat: FurCoat) {
     vH.assign(distance.div(FUR.length));
     vFar.assign(shapeFar(p));
     vT.assign(t);
-    vThin.assign(width.div(drawn));
+    vThin.assign(width.div(drawn).mul(select(shapeMask(p), 1, 0)));
     vPigment.assign(coatColor(p, rnd.y, u).mul(rnd.z.mul(0.22).add(0.9)));
     vN.assign(transformNormalToView(n));
     vTan.assign(normalize(modelViewMatrix.mul(vec4(dir, 0)).xyz));
@@ -261,11 +262,15 @@ export function createSkinNodes(u: FurUniforms) {
     const q = p.mul(baseR(p));
     vP.assign(p);
     vN.assign(transformNormalToView(shapeNormal(p, baseN(p, q))));
-    return shapeShell(q);
+    return shapeShell(q, p);
   })();
   const lit = clamp(dot(normalize(vN), normalize(u.light)).mul(0.5).add(0.5), 0, 1)
     .mul(0.65)
     .add(0.3);
   const grain = snoise(vP.mul(520)).mul(0.06).add(0.94);
-  return { position, color: coatColor(vP, uniform(0.5), u).mul(lit).mul(grain).mul(0.75) };
+  return {
+    position,
+    mask: shapeMask(normalize(positionGeometry)),
+    color: coatColor(vP, uniform(0.5), u).mul(lit).mul(grain).mul(0.75),
+  };
 }

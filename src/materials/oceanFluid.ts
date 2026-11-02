@@ -28,10 +28,12 @@ import {
   length,
   Loop,
   max,
+  min,
   mix,
   modelViewMatrix,
   normalize,
   positionGeometry,
+  positionLocal,
   Return,
   round,
   select,
@@ -54,7 +56,16 @@ import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { cubeCell, type SurfaceBuffers } from '../nodes/oceanSurface';
 import { oceanWaveVertex, type OceanWaveFields } from '../nodes/oceanWaves';
 import { shoreDistanceAt, surfPlungeAt } from '../nodes/surf';
-import { baseR, shapeHeightScale, shapeShell, shapeVector } from '../nodes/shape';
+import {
+  baseR,
+  shapeHeightScale,
+  shapeOnPlane,
+  shapePlaneWeight,
+  shapeShell,
+  shapeVector,
+} from '../nodes/shape';
+import { PLANE } from '../core/chart';
+import { PLANE_RESPONSE } from '../core/planeResponse';
 import { FLUID_LAYER } from '../scene/fluidPass';
 
 type Vec4Buffer = StorageBufferNode<'vec4'>;
@@ -520,13 +531,21 @@ export class OceanFluid {
       // drawn where the shape puts it, as big as the ground's scale there
       const x = posView.element(i).xyz;
       const d = normalize(x);
-      const size = affView.element(i.mul(3).add(1)).w.mul(shapeHeightScale(d));
-      const at = modelViewMatrix.mul(vec4(shapeShell(x), 1));
+      const size = affView.element(i.mul(3).add(1)).w.mul(shapeOnPlane(PLANE.detail, d));
+      // Custom billboard vertices must publish their centre for scene haze; the template quad is at the origin.
+      positionLocal.assign(shapeShell(x));
+      const at = modelViewMatrix.mul(vec4(positionLocal, 1));
       const motion = modelViewMatrix.mul(vec4(shapeVector(d, velView.element(i).xyz), 0)).xy;
       const speed = length(motion);
       const along = select(speed.greaterThan(1e-5), motion.div(speed), vec2(1, 0));
       const across = vec2(along.y.negate(), along.x);
-      const reach = size.add(speed.mul(STREAK_TIME));
+      const motionReach = size.add(speed.mul(STREAK_TIME));
+      // The chart differential is unbounded near its pole; never turn one particle into a sky-spanning line.
+      const reach = mix(
+        motionReach,
+        min(motionReach, size.mul(PLANE_RESPONSE.maxStreakAspect)),
+        shapePlaneWeight(d),
+      );
       const fade = clamp(life.div(select(mist, float(0.22), float(0.15))), 0, 1);
       const shown = select(alive(i), float(1), float(0)).mul(select(mist, float(1), float(1).sub(dense(i))));
       weight.assign(fade.mul(shown).mul(select(mist, float(MIST_OPACITY), float(DROPLET_OPACITY))));

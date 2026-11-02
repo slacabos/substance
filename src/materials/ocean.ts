@@ -6,8 +6,9 @@ import { shoreDistance } from '../core/oceanShores';
 import { OceanWeather, weatherRadius } from '../core/oceanWeather';
 import { beaufortFor, GustField, oceanWind } from '../core/oceanWind';
 import type { OceanTuning } from '../core/oceanTuning';
-import { baseR, shapeShell } from '../nodes/shape';
-import { morphUniform } from '../scene/shape';
+import { baseR, shapeShell, shapeMask } from '../nodes/shape';
+import { planeWeatherRecovery } from '../core/planeResponse';
+import { planeUniform, morphUniform } from '../scene/shape';
 import { createDeformMaterial, createDeformUniforms, DeformMode, type DeformUniforms } from './deform';
 import type { OceanFFT } from './oceanFFT';
 import { OceanFluid } from './oceanFluid';
@@ -111,6 +112,7 @@ export class Ocean implements Substance {
     const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
     const interiorMaterial = new MeshBasicNodeMaterial({ color: '#031525' });
+    interiorMaterial.maskNode = shapeMask(normalize(positionGeometry));
     interiorMaterial.positionNode = Fn(() => {
       const p = normalize(positionGeometry);
       // (on the plane it's the seabed, as far under the water as it is inside the orb)
@@ -217,7 +219,7 @@ export class Ocean implements Substance {
         this.heldSeconds = Math.min(2, (performance.now() - this.pressStartedAt) / 1000);
         this.sim.setPressure(this.pressDir, this.heldSeconds);
       }
-      this.weatherField.update(ctx.dt);
+      this.weatherField.update(ctx.dt, planeWeatherRecovery(planeUniform.value, this.pressing));
       this.sim.update(ctx.dt, this.pendingForces, ctx.time);
       this.fluid.update(ctx.dt);
       this.foamFlecks.update(ctx.dt);

@@ -42,6 +42,8 @@ import { WIND } from '../core/oceanWind';
 import { shoreSwell, SURF_FADE, SURF_SET_WAVES, SURF_TRAINS } from '../core/oceanShores';
 import { SURFACE } from '../core/shallowWater';
 import { WAVE_SLOTS } from '../core/waveKernel';
+import { PLANE_RESPONSE } from '../core/planeResponse';
+import { planeUniform } from '../scene/shape';
 import { oceanWeatherAt, type DeformUniforms } from '../nodes/deform';
 import { driftBasis, windAt } from '../nodes/oceanSurface';
 import { surfAtPoint, surfWave, type SurfInputs } from '../nodes/surf';
@@ -431,7 +433,9 @@ export class OceanSim {
         });
         // The waves' current (the wind's drift is added on top where needed): it carries water (heightStep), is
         // pushed by gravity and the hand, turned back at the bank and capped.
-        const drag = exp(u.dt.mul(-SURFACE.drag));
+        const drag = exp(
+          u.dt.mul(float(-SURFACE.drag).sub(planeUniform.mul(coastal ? 0 : PLANE_RESPONSE.extraCurrentDrag))),
+        );
         const waves = this.current[from]!.element(i)
           .xyz.mul(drag)
           .sub(gradient.mul(u.dt.mul(SURFACE.gravity)).div(v.w))
@@ -506,7 +510,9 @@ export class OceanSim {
           });
         });
 
-        const a = u.dt.mul(SURFACE.damping * 0.5);
+        const a = u.dt
+          .mul(float(SURFACE.damping).add(planeUniform.mul(coastal ? 0 : PLANE_RESPONSE.extraWaveDamping)))
+          .mul(0.5);
         const ownRise = h.sub(state.y);
         const eased = ownRise.add(
           select(

@@ -15,6 +15,7 @@ import {
   Loop,
   max,
   min,
+  mix,
   normalize,
   select,
   sin,
@@ -28,7 +29,9 @@ import { shelfDepthAt } from './surf';
 import { OCEAN_WEATHER_PATCHES } from '../core/oceanWeather';
 import { snoise } from './noise';
 import { oceanWaveVertex, type OceanWaveFields } from './oceanWaves';
-import { baseN, baseR } from './shape';
+import { baseN, baseR, groundDetail, shapePlaneWeight } from './shape';
+import { PLANE } from '../core/chart';
+import { planeScaleNode } from './chart';
 
 // GPU displacement for the water-like materials. Every surface point is a unit direction pushed out by
 // baseR (the orb/cube shape) plus a height from ripples, dents, waves or wobble.
@@ -159,12 +162,20 @@ function dispAt(p: Vec3, mode: DeformMode, u: DeformUniforms): Float {
   if (mode === DeformMode.Water) {
     // gentle swell so the water never looks frozen
     const t = u.uTime;
+    const swell = (q: Vec3) =>
+      sin(q.x.mul(5).add(t.mul(1.3)))
+        .mul(sin(q.y.add(q.z).mul(4).sub(t.mul(1.1))))
+        .mul(0.006)
+        .add(sin(q.z.mul(7).add(q.x.mul(3)).add(t.mul(1.7))).mul(0.004));
+    const ground = groundDetail(p);
+    // Reconstruct the original y-axis in the ground's second axis only for the plane endpoint.
+    const orb = sin(p.x.mul(5).add(t.mul(1.3)))
+      .mul(sin(p.y.mul(4).sub(t.mul(1.1))))
+      .mul(0.006)
+      .add(sin(p.z.mul(7).add(p.x.mul(3)).add(t.mul(1.7))).mul(0.004));
     d.addAssign(
-      sin(p.x.mul(5).add(t.mul(1.3)))
-        .mul(sin(p.y.mul(4).sub(t.mul(1.1))))
-        .mul(0.006),
+      mix(orb, swell(ground).mul(float(PLANE.detail).div(planeScaleNode(p).y)), shapePlaneWeight(p)),
     );
-    d.addAssign(sin(p.z.mul(7).add(p.x.mul(3)).add(t.mul(1.7))).mul(0.004));
   }
   ripplesAt(p, u, d);
   return d;

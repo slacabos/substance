@@ -31,7 +31,9 @@ import {
   vec4,
 } from 'three/tsl';
 import { snoise } from './noise';
-import { shapeStrandVector } from './shape';
+import { planeRigidNode } from './chart';
+import { blendDetail } from './detail';
+import { groundDetail } from './shape';
 
 type Float = Node<'float'>;
 type Vec3 = Node<'vec3'>;
@@ -166,8 +168,10 @@ export function sandGrains(
   n: Vec3,
   light: SandLight,
   wet: Float,
+  detail = p,
+  planar = false,
 ): { tint: Vec3; normal: Vec3; glint: Vec3 } {
-  const footprint = max(length(fwidth(p)), 1e-6).mul(CELL_PIXELS);
+  const footprint = max(length(fwidth(detail)), 1e-6).mul(CELL_PIXELS);
   const level = log2(footprint).negate();
   const lo = floor(level);
   const t = level.sub(lo);
@@ -179,10 +183,10 @@ export function sandGrains(
   const surface = normalViewGeometry;
   const lit = smoothstep(0, 0.15, dot(surface, l));
   const at = (f: Float) => {
-    const cell = grainCell(p, f);
+    const cell = grainCell(detail, f);
     // Carry the grain's tangent onto the ground before converting it to view space.
-    const tangent = cell.tilt.sub(p.mul(dot(cell.tilt, p)));
-    const tilt = modelViewMatrix.mul(vec4(shapeStrandVector(p, tangent), 0)).xyz;
+    const tangent = planar ? vec3(cell.tilt.x, 0, cell.tilt.z) : cell.tilt.sub(p.mul(dot(cell.tilt, p)));
+    const tilt = modelViewMatrix.mul(vec4(tangent, 0)).xyz;
     const facet = normalize(surface.add(tilt.mul(0.9)));
     const glint = select(cell.glints, smoothstep(GLINT_ALIGN, 1, dot(facet, h)), float(0));
     return { tint: mix(vec3(1), cell.tint, contrast.mul(GRAIN_TINT)), tilt, glint };
@@ -243,6 +247,48 @@ export function sandRelief(
   return { tone, damp: crumbs.mul(0.6), height: height.mul(BUMP / 0.0012) };
 }
 
+/** Evaluate both coordinate systems before crossfading; never slide a texture's coordinates. */
+export function shapeSandRelief(p: Vec3, combed: Float, disturbed: Float = float(0), slope?: SandSlope) {
+  const pack = (q: Vec3, down = slope?.down) => {
+    const relief = sandRelief(q, combed, disturbed, slope && { steep: slope.steep, down: down! });
+    return vec3(relief.tone, relief.damp, relief.height);
+  };
+  const relief = blendDetail(
+    p,
+    vec3(0),
+    () => pack(p),
+    () => pack(groundDetail(p), slope && planeRigidNode(p, slope.down)),
+  );
+  return { tone: relief.x, damp: relief.y, height: relief.z };
+}
+
+export function shapeSandGrains(p: Vec3, n: Vec3, light: SandLight, wet: Float) {
+  const orb = sandGrains(p, n, light, wet);
+  const ground = sandGrains(p, n, light, wet, groundDetail(p), true);
+  return {
+    tint: blendDetail(
+      p,
+      vec3(0),
+      () => orb.tint,
+      () => ground.tint,
+    ),
+    normal: normalize(
+      blendDetail(
+        p,
+        vec3(0),
+        () => orb.normal,
+        () => ground.normal,
+      ),
+    ),
+    glint: blendDetail(
+      p,
+      vec3(0),
+      () => orb.glint,
+      () => ground.glint,
+    ),
+  };
+}
+
 /** The colours a sand orb is made of: dry, a warmer and a paler drift, and damp. */
 const DRY = color('#d39a62');
 const WARM = color('#cf8c55');
@@ -263,8 +309,14 @@ export function sandSurface(
   below: Float = float(0),
   slope?: SandSlope,
 ): { color: Vec3; roughness: Float; normal: Vec3; emissive: Vec3 } {
-  const drift = octave(p, 3.5).add(octave(p, 9).mul(0.3));
-  const relief = sandRelief(p, float(1).sub(disturbed), disturbed, slope);
+  const q = groundDetail(p);
+  const drift = blendDetail(
+    p,
+    vec3(0),
+    () => vec3(octave(p, 3.5).add(octave(p, 9).mul(0.3))),
+    () => vec3(octave(q, 3.5).add(octave(q, 9).mul(0.3))),
+  ).x;
+  const relief = shapeSandRelief(p, float(1).sub(disturbed), disturbed, slope);
   const base = mix(
     mix(DRY, WARM, smoothstep(0, 0.8, drift).mul(0.12)),
     PALE,
@@ -272,7 +324,7 @@ export function sandSurface(
   );
   // sand turned up from underneath is damp, and dries back as it settles
   const damp = max(max(wet, relief.damp), max(disturbed.mul(0.45), smoothstep(0, 0.02, below).mul(0.55)));
-  const grains = sandGrains(p, bumped(relief.height.mul(float(1).sub(wet.mul(0.6)))), light, damp);
+  const grains = shapeSandGrains(p, bumped(relief.height.mul(float(1).sub(wet.mul(0.6)))), light, damp);
   return {
     color: mix(base, WET, damp).mul(relief.tone).mul(grains.tint),
     roughness: mix(mix(float(0.9), float(0.96), disturbed), float(0.45), wet),

@@ -75,12 +75,12 @@ export class OceanWeather {
     this.churn = 0;
   }
 
-  update(dt: number): void {
-    this.churn *= Math.exp(-dt / 5);
+  update(dt: number, recoverySeconds = 5): void {
+    this.churn *= Math.exp(-dt / recoverySeconds);
     for (const patch of this.patches) {
       if (patch.strength <= 0) continue;
       patch.age += dt;
-      patch.strength *= Math.exp(-dt / 5);
+      patch.strength *= Math.exp(-dt / recoverySeconds);
       if (patch.strength < 0.01) patch.strength = 0;
     }
   }

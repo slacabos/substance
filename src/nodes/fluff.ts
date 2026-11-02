@@ -36,6 +36,7 @@ import {
   shapeNormal,
   shapeOnPlane,
   shapeShell,
+  shapeMask,
   shapeStrand,
   shapeStrandVector,
 } from './shape';
@@ -141,8 +142,8 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
       .add(0.1)
       .mul(rnd.y.mul(0.4).add(0.8))
       .mul(stretch)
-      .mul(shapeOnPlane(PLANE.detail * FLUFF.plane.width))
-      .mul(copy.shown)
+      .mul(shapeOnPlane(PLANE.detail * FLUFF.plane.width, p))
+      .mul(copy.shown(p))
       .mul(sim.uniforms.scale)
       .div(u.density);
     // Never thinner than a pixel.
@@ -160,7 +161,7 @@ export function createStrandNodes(u: FluffUniforms, sim: FluffSim) {
     vH.assign(t.mul(rnd.x.mul(0.45).add(0.55)));
     vFar.assign(shapeFar(p));
     vT.assign(t);
-    vThin.assign(width.div(drawn));
+    vThin.assign(width.div(drawn).mul(select(shapeMask(p), 1, 0)));
     vRand.assign(rnd.z);
     vN.assign(transformNormalToView(n));
     vTan.assign(normalize(modelViewMatrix.mul(vec4(dir, 0)).xyz));
@@ -215,9 +216,13 @@ export function createSkinNodes(u: FluffUniforms) {
     const q = p.mul(baseR(p));
     vN.assign(transformNormalToView(shapeNormal(p, baseN(p, q))));
     vFar.assign(shapeFar(p));
-    return shapeShell(q);
+    return shapeShell(q, p);
   })();
   const lit = clamp(dot(normalize(vN), normalize(u.light)).mul(0.5).add(0.5), 0, 1).add(0.15);
   const pile = mix(u.root, u.tip, 0.55).mul(0.8);
-  return { position, color: mix(u.root.mul(0.55), pile, vFar).mul(lit) };
+  return {
+    position,
+    mask: shapeMask(normalize(positionGeometry)),
+    color: mix(u.root.mul(0.55), pile, vFar).mul(lit),
+  };
 }

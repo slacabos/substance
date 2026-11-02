@@ -139,6 +139,9 @@ describe('fur material', () => {
   it.each([false, true])('reports rendered fibres rather than simulated guides (touch: %s)', (coarse) => {
     const renderer = { compute: () => {} } as unknown as WebGPURenderer;
     const fur = new Fur(coarse, renderer, new Group());
+    expect(fur.hint(coarse, 'plane')).not.toContain('Spin');
+    expect(fur.hint(coarse, 'orb')).toContain('Spin');
+    expect(fur.hint(coarse, 'cube')).toContain('Spin');
     const count = strandCount(coarse ? FUR.touchDensity : FUR.density);
     expect(fur.worldObjects[0]!.geometry.instanceCount).toBe(count);
     expect(fur.readout()[1]).toBe(`≈ ${Math.round(count / 1000)}k strands`);

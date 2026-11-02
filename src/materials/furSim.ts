@@ -207,7 +207,7 @@ export class FurSim {
       });
       const h = u.step;
       // down, or on the plane toward the orb's centre, which it draws as down
-      const gravity = shapeDown(this.toWorld(p.negate(), 0)).mul(SIM.gravity);
+      const gravity = shapeDown(this.toWorld(p.negate(), 0), p).mul(SIM.gravity);
       const parent = root.toVar();
       const target = root.toVar();
       Loop({ start: 0, end: u.steps, type: 'int' }, () => {

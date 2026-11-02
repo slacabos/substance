@@ -4,7 +4,7 @@ import { MeshStandardNodeMaterial } from 'three/webgpu';
 import { SHALLOWS, SHORE_SITES, shoreElevation, shoreNoise, shoreRadius } from '../core/oceanShores';
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { shoreSurface } from '../nodes/shore';
-import { shapeNormal, shapeShell } from '../nodes/shape';
+import { shapeNormal, shapeShell, shapeMask } from '../nodes/shape';
 import { blendedAt } from '../nodes/oceanSurface';
 import {
   float,
@@ -167,6 +167,7 @@ export class OceanShores {
     geometry.setAttribute('terrain', new Float32BufferAttribute(terrain, 1));
     geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
     const material = new MeshStandardNodeMaterial();
+    material.maskNode = shapeMask(normalize(positionGeometry));
     // whether the sim's own water stands here (the sea, or a wave running up the beach), and how wet it has left
     // the sand
     const water = varyingProperty('float', 'vWater');
@@ -201,7 +202,7 @@ export class OceanShores {
         steep.assign(0);
         down.assign(vec3(0, 0, 1));
       }
-      return shapeShell(positionLocal.add(p.mul(change)));
+      return shapeShell(positionLocal.add(p.mul(change)), p);
     })();
     const surface = shoreSurface(
       water,

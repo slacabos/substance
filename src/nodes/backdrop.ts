@@ -29,6 +29,7 @@ export interface BackdropUniforms {
   floor: ColorUniform;
   horizon: ColorUniform;
   halo: ColorUniform;
+  hazeHalf: FloatUniform;
 }
 
 /**
@@ -53,9 +54,7 @@ export function backdropColor(u: BackdropUniforms, d: Node<'vec3'> = normalize(p
 /** The backdrop sphere's radius (scene/backdrop.ts). */
 export const BACKDROP_RADIUS = 40;
 
-/** How thick the haze over the plane is: it covers half the ground's colour by about this far from the camera. */
-const HAZE_HALF = 45;
-/** And covers it all from here on, where the chart's far ring begins (core/chart.ts). */
+/** Fully conceal the chart's far boundary; half-density distance comes from the setting. */
 const HAZE_FULL: readonly [number, number] = [90, 140];
 
 /**
@@ -63,26 +62,32 @@ const HAZE_FULL: readonly [number, number] = [90, 140];
  * without a seam: the view ray carried on to the backdrop sphere gives the direction its colour is read at.
  * Nothing on the orb or the cube is hazed.
  */
-export function backdropHaze(u: BackdropUniforms): Node<'vec4'> {
-  const ray = positionWorld.sub(cameraPosition);
+export function hazeAt(u: BackdropUniforms, point: Node<'vec3'>, eye: Node<'vec3'>) {
+  const ray = point.sub(eye);
   const far = length(ray);
   const v = ray.div(max(far, 1e-6));
-  const b = dot(cameraPosition, v);
+  const b = dot(eye, v);
   const reach = b.negate().add(
     sqrt(
       max(
         b
           .mul(b)
-          .sub(dot(cameraPosition, cameraPosition))
+          .sub(dot(eye, eye))
           .add(BACKDROP_RADIUS ** 2),
         0,
       ),
     ),
   );
-  const sky = backdropColor(u, normalize(cameraPosition.add(v.mul(reach))));
-  const density = Math.sqrt(Math.log(2)) / HAZE_HALF;
+  const sky = backdropColor(u, normalize(eye.add(v.mul(reach))));
+  const density = float(Math.sqrt(Math.log(2))).div(u.hazeHalf);
   const thick = float(1).sub(exp(far.mul(density).mul(far.mul(density)).negate()));
-  return fog(sky, max(thick, smoothstep(HAZE_FULL[0], HAZE_FULL[1], far)).mul(planeUniform)) as Node<'vec4'>;
+  return { color: sky, amount: max(thick, smoothstep(HAZE_FULL[0], HAZE_FULL[1], far)).mul(planeUniform) };
+}
+
+/** Visible scene colour only; data passes opt out of fog. */
+export function backdropHaze(u: BackdropUniforms): Node<'vec4'> {
+  const haze = hazeAt(u, positionWorld, cameraPosition);
+  return fog(haze.color, haze.amount) as Node<'vec4'>;
 }
 
 /**

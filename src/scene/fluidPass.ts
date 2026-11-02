@@ -173,7 +173,12 @@ export class FluidPass {
    * The composite: `scene` is the scene pass's colour and `sceneViewZ` its view-space depth; `environment` the
    * ocean's sky reflection (PMREM).
    */
-  composite(scene: TextureNode, sceneViewZ: Node<'float'>, environment: Texture): Node<'vec4'> {
+  composite(
+    scene: TextureNode,
+    sceneViewZ: Node<'float'>,
+    environment: Texture,
+    hazeColor: (color: Vec3, point: Vec3, eye: Vec3) => Vec3,
+  ): Node<'vec4'> {
     return Fn(() => {
       const fluid = this.blurB.texture;
       const sample = (uv: Node<'vec2'>) => texture(fluid, uv);
@@ -223,7 +228,9 @@ export class FluidPass {
         );
         const glint = pow(max(dot(n, normalize(sun.add(v))), 0), 300).mul(3);
         const shaded = mix(water, sky.rgb, fresnel).add(this.sunColor.mul(glint));
-        out.assign(vec4(mix(background.rgb, shaded, visible), background.a));
+        const world = this.viewToWorld.mul(vec4(p, 1)).xyz;
+        const eye = this.viewToWorld.mul(vec4(0, 0, 0, 1)).xyz;
+        out.assign(vec4(mix(background.rgb, hazeColor(shaded, world, eye), visible), background.a));
       });
       return out;
     })();

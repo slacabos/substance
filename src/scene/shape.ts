@@ -1,4 +1,5 @@
 import { uniform } from 'three/tsl';
+import { unfurlSolidWeight } from '../core/transition';
 import { Spring, stepSprings } from '../core/spring';
 import type { ShapeId } from '../materials/types';
 
@@ -13,12 +14,14 @@ export const planeUniform = uniform(0);
 /** Springs the morph uniforms toward the chosen shape. */
 export class ShapeMorph {
   private readonly spring = new Spring(70, 9);
-  private readonly flat = new Spring(16, 8);
+  // A critically damped opening: enough time to read the unfurl, with no ground overshoot.
+  private readonly flat = new Spring(9, 6);
   shape: ShapeId = 'orb';
 
   set(shape: ShapeId, instant: boolean): void {
     this.shape = shape;
-    this.spring.target = shape === 'cube' ? 1 : 0;
+    // Remember the source solid while the plane is open; rounding follows the unfolding timeline.
+    if (shape !== 'plane') this.spring.target = shape === 'cube' ? 1 : 0;
     this.flat.target = shape === 'plane' ? 1 : 0;
     if (instant) {
       for (const s of [this.spring, this.flat]) {
@@ -29,7 +32,7 @@ export class ShapeMorph {
   }
 
   get value(): number {
-    return this.spring.value;
+    return unfurlSolidWeight(this.spring.value, this.flat.value);
   }
 
   /** How far toward the plane, 0 to 1. */
@@ -47,7 +50,7 @@ export class ShapeMorph {
       this.flat.value = this.flat.target;
       this.flat.velocity = 0;
     }
-    morphUniform.value = this.spring.value;
+    morphUniform.value = this.value;
     planeUniform.value = this.flat.value;
   }
 }

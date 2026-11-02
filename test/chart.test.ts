@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   PLANE,
   planeDirection,
+  planeDetailPoint,
+  planeWeight,
   planeNormal,
   planePoint,
   planePull,
@@ -194,5 +196,47 @@ describe('the plane’s mesh coverage', () => {
     const { visible, rows } = coverage(1.78);
     expect(visible).toBeGreaterThan(0.55);
     for (const pixels of rows.slice(4)) expect(pixels).toBeLessThan(16);
+  });
+});
+
+describe('fixed ground detail and progressive unfolding', () => {
+  it('keeps a detail wavelength constant at the centre, sides and distance', () => {
+    const wavelength = 0.33;
+    for (const [x, z] of [
+      [0, 1],
+      [-12, -10],
+      [20, -40],
+      [0, -100],
+    ]) {
+      const a = planeDetailPoint(planeDirection(x!, z!));
+      const b = planeDetailPoint(planeDirection(x! + wavelength * PLANE.detail, z!));
+      expect(b.x - a.x).toBeCloseTo(wavelength, 9);
+      expect(b.z).toBeCloseTo(a.z, 9);
+    }
+  });
+
+  it('finishes near ground before far ground, and retracts far ground first', () => {
+    const near = planeDirection(0, 4);
+    const far = planeDirection(0, -80);
+    expect(planeWeight(near, 0.65)).toBe(1);
+    expect(planeWeight(far, 0.65)).toBeLessThan(0.5);
+    for (const progress of [0.2, 0.5, 0.8]) {
+      expect(planeWeight(near, progress)).toBeGreaterThan(planeWeight(far, progress));
+    }
+    let previous = 1;
+    for (let i = 100; i >= 0; i--) {
+      const weight = planeWeight(far, i / 100);
+      expect(weight).toBeLessThanOrEqual(previous);
+      previous = weight;
+    }
+  });
+
+  it('has exact endpoints everywhere, including instant and interrupted transitions', () => {
+    for (const p of fibonacci(1000)) {
+      expect(planeWeight(p, 0)).toBe(0);
+      expect(planeWeight(p, 1)).toBe(1);
+      const sequence = [0.1, 0.7, 0.4, 0.9, 0];
+      for (const progress of sequence) expect(planeWeight(p, progress)).toBeGreaterThanOrEqual(0);
+    }
   });
 });

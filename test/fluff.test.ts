@@ -69,3 +69,13 @@ describe('fluff material', () => {
     expect(calls).toHaveLength(before);
   });
 });
+
+describe('fluff plane hints', () => {
+  it.each([false, true])('offers brushing without spinning (touch: %s)', (coarse) => {
+    const { renderer } = stubRenderer();
+    const fluff = new Fluff(coarse, renderer, new Group());
+    expect(fluff.hint(coarse, 'plane')).not.toContain('Spin');
+    expect(fluff.hint(coarse, 'orb')).toContain('Spin');
+    expect(fluff.hint(coarse, 'cube')).toContain('Spin');
+  });
+});

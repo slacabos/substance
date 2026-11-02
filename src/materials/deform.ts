@@ -62,7 +62,15 @@ import { snoise } from '../nodes/noise';
 import { SAND_KEY_LIGHT } from '../nodes/sand';
 import { driftBasis } from '../nodes/oceanSurface';
 import { oceanWaveSurface, type OceanWaveFields } from '../nodes/oceanWaves';
-import { baseN, baseR, shapeNormal, shapeShell } from '../nodes/shape';
+import {
+  baseN,
+  baseR,
+  groundDetail,
+  shapePlaneWeight,
+  shapeNormal,
+  shapeShell,
+  shapeMask,
+} from '../nodes/shape';
 
 export { DeformMode, type DeformUniforms };
 
@@ -177,13 +185,14 @@ export function createDeformMaterial(
   uniforms: DeformUniforms = createDeformUniforms(),
 ): { material: MeshPhysicalNodeMaterial; uniforms: DeformUniforms } {
   const material = new MeshPhysicalNodeMaterial(params);
+  material.maskNode = shapeMask(normalize(positionGeometry));
 
   if (mode !== DeformMode.Ocean || !ocean) {
     material.positionNode = Fn(() => {
       const p = normalize(positionGeometry);
       const { pos, nrm } = orbDeform(p, mode, uniforms);
       normalLocal.assign(shapeNormal(p, nrm));
-      return shapeShell(pos);
+      return shapeShell(pos, p);
     })();
     return { material, uniforms };
   }
@@ -266,6 +275,7 @@ export function createDeformMaterial(
     const leaning = coastal ? smoothstep(0.004, 0.012, depth) : float(1);
     return shapeShell(
       surface.pos.add(normalize(surface.pos).mul(simHeight.add(lift))).add(shift.mul(leaning)),
+      p,
     );
   })();
 
@@ -293,6 +303,7 @@ export function createDeformMaterial(
     shore,
     coastal ? alongCurrent : undefined,
     impact,
+    p,
   );
   // Where the water meets the sand: how far the sand behind lies from it (from the depth buffer, so along the
   // sand's own contours rather than the water's triangles). Over its last couple of millimetres the water fades
@@ -312,7 +323,9 @@ export function createDeformMaterial(
   // piled at the very edge drew it as a white rim
   // (over a wider band than the water's own fade, ragged with noise: cut sharply where the water meets the sand,
   // white foam traced the water's triangles there as a sawtooth)
-  const fray = coastal ? snoise(p.mul(160)).mul(0.0025) : float(0);
+  const fray = coastal
+    ? mix(snoise(p.mul(160)), snoise(groundDetail(p).mul(160)), shapePlaneWeight(p)).mul(0.0025)
+    : float(0);
   const foam = seaFoam.amount.mul(coastal ? smoothstep(0.0005, 0.007, behind.add(fray)) : float(1));
   const base = materialRoughness.add(turbulence.mul(0.1));
   // GGX alpha^2 grows by twice the hidden slope variance
@@ -340,7 +353,7 @@ export function createDeformMaterial(
   // where the water runs out it ends, by its own depth, rather than wherever its surface dips under the sand
   // (dry ground next to water carries the water's level just under the sand, however steeply the sand rises
   // there, and the sand hides it; ground further from water sinks its surface DRY_SINK under, which this cuts)
-  if (column) material.maskNode = column.greaterThan(-0.015);
+  if (column) material.maskNode = shapeMask(p).and(column.greaterThan(-0.015));
   const color = oceanColor(wave, simWave, foam, weatherAmount, uniforms, seaFoam.color);
   // (transmitted light is tinted by the colour, so over the shallows the colour is clear and the absorption alone
   // tints it)

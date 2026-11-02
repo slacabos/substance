@@ -72,6 +72,10 @@ export class Controls {
     });
   }
 
+  showHint(hint: string): void {
+    this.hint.textContent = hint;
+  }
+
   showMaterial(id: MaterialId, hint: string): void {
     document.body.dataset['mat'] = id;
     this.hint.textContent = hint;

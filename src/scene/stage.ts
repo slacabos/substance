@@ -10,8 +10,11 @@ import {
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PMREMGenerator, RenderPipeline, WebGPURenderer } from 'three/webgpu';
 import { pass } from 'three/tsl';
-import { FIT_RADIUS, SUPERSAMPLE_PIXELS } from '../config';
+import { FIT_RADIUS } from '../config';
 import { planeView, type PlaneView } from '../core/chart';
+import { unfurlCameraWeight } from '../core/transition';
+import { setSceneDetailMode } from '../nodes/detail';
+import { renderPixelRatio } from '../core/renderResolution';
 import { Backdrop } from './backdrop';
 import { FluidPass } from './fluidPass';
 import { oceanSkyReflection } from './oceanSky';
@@ -38,11 +41,14 @@ export class Stage {
   private readonly pipeline: RenderPipeline;
   private fluidOn = false;
   private readonly supersample: boolean;
+  private readonly coarse: boolean;
+  private planeResolution = false;
   /** Where the camera stands for the orb, and the plane's fixed view, both for the current screen. */
   private readonly orbEye = new Vector3();
   private planeView: PlaneView = planeView(1);
   /** How far toward the plane's view the camera is, 0 to 1. */
   private plane = 0;
+  private detailMode = 0;
   private readonly target = new Vector3();
   /** The screen's size, and how far down the free space between the top bar and the dock is centred. */
   private screen = { width: 1, height: 1, shift: 0 };
@@ -51,7 +57,12 @@ export class Stage {
    * Starts WebGPU and builds the stage. Throws without WebGPU: the renderer would quietly fall back to WebGL,
    * which this app doesn't support.
    */
-  static async create(canvas: HTMLCanvasElement, setting: SettingId, supersample: boolean): Promise<Stage> {
+  static async create(
+    canvas: HTMLCanvasElement,
+    setting: SettingId,
+    supersample: boolean,
+    coarse = false,
+  ): Promise<Stage> {
     const gpu = (navigator as GpuNavigator).gpu;
     if (!gpu || !(await gpu.requestAdapter())) throw new Error('WebGPU is not available');
     // (an opaque canvas: the backdrop always fills it, and hair's alpha-to-coverage leaves alpha under 1 where a
@@ -67,11 +78,12 @@ export class Stage {
       renderer.dispose();
       throw new Error('WebGPU failed to start');
     }
-    return new Stage(renderer, setting, supersample);
+    return new Stage(renderer, setting, supersample, coarse);
   }
 
-  private constructor(renderer: WebGPURenderer, setting: SettingId, supersample: boolean) {
+  private constructor(renderer: WebGPURenderer, setting: SettingId, supersample: boolean, coarse: boolean) {
     this.supersample = supersample;
+    this.coarse = coarse;
     this.renderer = renderer;
     this.renderer.toneMapping = ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -84,13 +96,18 @@ export class Stage {
 
     this.backdrop = new Backdrop(setting);
     this.scene.add(this.backdrop.sphere, this.backdrop.pool, this.anchor);
-    // set once, so no pipeline is rebuilt when the plane comes in: it only hazes the plane
+    // Install haze once; its uniforms drive it throughout the morph.
     this.scene.fogNode = this.backdrop.haze;
 
     const scenePass = pass(this.scene, this.camera);
     this.pipeline = new RenderPipeline(
       this.renderer,
-      this.fluid.composite(scenePass.getTextureNode(), scenePass.getViewZNode(), this.oceanEnvironment),
+      this.fluid.composite(
+        scenePass.getTextureNode(),
+        scenePass.getViewZNode(),
+        this.oceanEnvironment,
+        (color, point, eye) => this.backdrop.hazeColor(color, point, eye),
+      ),
     );
   }
 
@@ -104,10 +121,8 @@ export class Stage {
    * the top bar (`topInset` px) and the bottom dock (`bottomInset` px).
    */
   fit(width: number, height: number, topInset: number, bottomInset: number): void {
-    const dpr = window.devicePixelRatio || 1;
-    const budget = Math.sqrt(SUPERSAMPLE_PIXELS / (width * height));
-    this.renderer.setPixelRatio(Math.min(2, this.supersample ? Math.max(dpr, budget) : dpr));
-    this.renderer.setSize(width, height, false);
+    this.screen = { width, height, shift: (bottomInset - topInset) / 2 };
+    this.sizeRenderer();
     this.camera.aspect = width / height;
     const available = Math.max(height * 0.45, height - topInset - bottomInset);
     const tanHalf = Math.tan(MathUtils.degToRad(ORB_FOV / 2));
@@ -115,8 +130,28 @@ export class Stage {
     const distance = FIT_RADIUS / (tanHalf * fraction);
     this.orbEye.set(0, distance * 0.12, distance);
     this.planeView = planeView(width / height);
-    this.screen = { width, height, shift: (bottomInset - topInset) / 2 };
     this.place();
+  }
+
+  /** Select the phone budget at entry, retaining it until the return morph ends. */
+  preparePlane(): void {
+    if (this.planeResolution) return;
+    this.planeResolution = true;
+    this.sizeRenderer();
+  }
+
+  private sizeRenderer(): void {
+    const { width, height } = this.screen;
+    const ratio = renderPixelRatio(
+      width,
+      height,
+      window.devicePixelRatio || 1,
+      this.supersample,
+      this.coarse,
+      this.planeResolution,
+    );
+    this.renderer.setPixelRatio(ratio);
+    this.renderer.setSize(width, height, false);
   }
 
   /** The direction whose ground point is in the middle of the plane's view. */
@@ -126,14 +161,24 @@ export class Stage {
 
   /** Moves the camera between the orb's view and the plane's (0 to 1). */
   setPlane(plane: number): void {
-    if (plane === this.plane) return;
+    if (plane === this.plane && !(plane === 0 && this.planeResolution)) return;
     this.plane = plane;
+    const detailMode = plane === 0 ? 0 : plane === 1 ? 1 : 0.5;
+    if (detailMode !== this.detailMode) {
+      setSceneDetailMode(this.scene, detailMode);
+      this.detailMode = detailMode;
+    }
+    if (plane > 0) this.preparePlane();
+    else if (this.planeResolution) {
+      this.planeResolution = false;
+      this.sizeRenderer();
+    }
     this.backdrop.setPlane(plane);
     this.place();
   }
 
   private place(): void {
-    const w = this.plane;
+    const w = unfurlCameraWeight(this.plane);
     const view = this.planeView;
     this.camera.position.lerpVectors(this.orbEye, view.eye, w);
     this.camera.lookAt(this.target.set(0, 0, 0).lerp(view.target, w));

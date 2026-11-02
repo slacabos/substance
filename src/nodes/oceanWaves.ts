@@ -10,6 +10,7 @@ import {
   log2,
   max,
   min,
+  mat3,
   select,
   smoothstep,
   sqrt,
@@ -17,6 +18,10 @@ import {
   vec2,
   vec3,
 } from 'three/tsl';
+import { PLANE } from '../core/chart';
+import { groundDetail } from './shape';
+import { blendDetail, detailColumn } from './detail';
+import { planePullNode, planeScaleNode } from './chart';
 import type { OceanCascade } from '../core/oceanFFT';
 import { OCEAN_GUSTS } from '../core/oceanWind';
 import type { DeformUniforms } from './deform';
@@ -127,8 +132,9 @@ function sampleFace(
   weight: (c: number) => Float,
   lod: (c: number) => Float,
   withFoam = false,
+  planarCoords?: ReturnType<typeof faceCoords>,
 ): FaceWaves & ReturnType<typeof faceCoords> {
-  const coords = faceCoords(p, face);
+  const coords = planarCoords ?? faceCoords(p, face);
   const sum: FaceWaves = {
     height: float(0),
     du: float(0),
@@ -202,6 +208,40 @@ function sampleFace(
   return { ...sum, ...coords };
 }
 
+/** Sample the same cascades in a flat world metric. Results are pulled back to the orb's
+ * tangent space so every existing consumer (including compute emission) uses one wave field.
+ * The shell map then restores fixed world-space heights and offsets at the plane endpoint.
+ */
+function samplePlane(
+  p: Vec3,
+  fields: OceanWaveFields,
+  u: DeformUniforms,
+  weather: Float,
+  gust: Float,
+  lod: (c: number) => Float,
+  withFoam = false,
+) {
+  const q = groundDetail(p);
+  const scale = planeScaleNode(p);
+  const x = planePullNode(p, vec3(1, 0, 0));
+  const z = planePullNode(p, vec3(0, 0, 1));
+  const coords = {
+    u: q.x,
+    v: q.z,
+    alongU: x.mul(float(PLANE.detail).div(scale.x.mul(scale.x))),
+    alongV: z.mul(float(PLANE.detail).div(scale.x.mul(scale.x))),
+    gradU: x.div(scale.y),
+    gradV: z.div(scale.y),
+  };
+  const f = sampleFace(p, ringFace(p), fields, u, weather, gust, () => float(1), lod, withFoam, coords);
+  return { ...f, height: f.height.mul(float(PLANE.detail).div(scale.y)) };
+}
+
+function planeVertexLod(p: Vec3, fields: OceanWaveFields, spacing: number) {
+  const footprint = planeScaleNode(p).x.mul(spacing / PLANE.detail);
+  return (c: number) => max(log2(footprint.mul(fields.size / fields.cascades[c]!.tile)), 0);
+}
+
 /** Variance-keeping blend weights into the polar face for each cascade: [ring, polar]. */
 function blend(p: Vec3, fields: OceanWaveFields): (c: number) => [Float, Float] {
   const q = abs(p.y).div(max(max(abs(p.x), abs(p.z)), 1e-4));
@@ -226,23 +266,42 @@ export function oceanWaveVertex(
   weather: Float,
   spacing: number,
 ): { offset: Vec3; height: Float; gradient: Vec3 } {
-  const weights = blend(p, fields);
-  const lod = (c: number) =>
-    float(Math.max(0, Math.log2((spacing * fields.size) / fields.cascades[c]!.tile)));
   const gust = oceanGustAt(p, u);
-  const ring = sampleFace(p, ringFace(p), fields, u, weather, gust, (c) => weights(c)[0], lod);
-  const polar = sampleFace(p, polarFace(p), fields, u, weather, gust, (c) => weights(c)[1], lod);
-  const offset = ring.alongU
-    .mul(ring.du)
-    .add(ring.alongV.mul(ring.dv))
-    .add(polar.alongU.mul(polar.du))
-    .add(polar.alongV.mul(polar.dv));
-  const gradient = ring.gradU
-    .mul(ring.su)
-    .add(ring.gradV.mul(ring.sv))
-    .add(polar.gradU.mul(polar.su))
-    .add(polar.gradV.mul(polar.sv));
-  return { offset, height: ring.height.add(polar.height), gradient };
+  const sampled = blendDetail(
+    p,
+    mat3(vec3(0), vec3(0), vec3(0)),
+    () => {
+      const weights = blend(p, fields);
+      const lod = (c: number) =>
+        float(Math.max(0, Math.log2((spacing * fields.size) / fields.cascades[c]!.tile)));
+      const ring = sampleFace(p, ringFace(p), fields, u, weather, gust, (c) => weights(c)[0], lod);
+      const polar = sampleFace(p, polarFace(p), fields, u, weather, gust, (c) => weights(c)[1], lod);
+      const offset = ring.alongU
+        .mul(ring.du)
+        .add(ring.alongV.mul(ring.dv))
+        .add(polar.alongU.mul(polar.du))
+        .add(polar.alongV.mul(polar.dv));
+      const gradient = ring.gradU
+        .mul(ring.su)
+        .add(ring.gradV.mul(ring.sv))
+        .add(polar.gradU.mul(polar.su))
+        .add(polar.gradV.mul(polar.sv));
+      return mat3(offset, vec3(ring.height.add(polar.height), 0, 0), gradient);
+    },
+    () => {
+      const f = samplePlane(p, fields, u, weather, gust, planeVertexLod(p, fields, spacing));
+      return mat3(
+        f.alongU.mul(f.du).add(f.alongV.mul(f.dv)),
+        vec3(f.height, 0, 0),
+        f.gradU.mul(f.su).add(f.gradV.mul(f.sv)),
+      );
+    },
+  );
+  return {
+    offset: detailColumn(sampled, 0),
+    height: detailColumn(sampled, 1).x,
+    gradient: detailColumn(sampled, 2),
+  };
 }
 
 /**
@@ -257,13 +316,30 @@ export function oceanWaveFoam(
   weather: Float,
   spacing: number,
 ): Float {
-  const weights = blend(p, fields);
-  const lod = (c: number) =>
-    float(Math.max(0, Math.log2((spacing * fields.size) / fields.cascades[c]!.tile)));
-  // gusts roughen the water without breaking it
-  const ring = sampleFace(p, ringFace(p), fields, u, weather, float(0), (c) => weights(c)[0], lod, true);
-  const polar = sampleFace(p, polarFace(p), fields, u, weather, float(0), (c) => weights(c)[1], lod, true);
-  return ring.foam.add(polar.foam);
+  return blendDetail(
+    p,
+    vec3(0),
+    () => {
+      const weights = blend(p, fields);
+      const lod = (c: number) =>
+        float(Math.max(0, Math.log2((spacing * fields.size) / fields.cascades[c]!.tile)));
+      // gusts roughen the water without breaking it
+      const ring = sampleFace(p, ringFace(p), fields, u, weather, float(0), (c) => weights(c)[0], lod, true);
+      const polar = sampleFace(
+        p,
+        polarFace(p),
+        fields,
+        u,
+        weather,
+        float(0),
+        (c) => weights(c)[1],
+        lod,
+        true,
+      );
+      return vec3(ring.foam.add(polar.foam));
+    },
+    () => vec3(samplePlane(p, fields, u, weather, float(0), planeVertexLod(p, fields, spacing), true).foam),
+  ).x;
 }
 
 /**
@@ -278,20 +354,51 @@ export function oceanWaveSurface(
   u: DeformUniforms,
   weather: Float,
 ): { gradient: Vec3; jacobian: Float; lostVariance: Float; foam: Float } {
-  const weights = blend(p, fields);
-  // one texel per pixel footprint
+  // Derivatives are taken before the uniform branches, including on GPUs with strict uniformity validation.
+  const q = groundDetail(p);
   const footprint = max(length(p.dFdx()), length(p.dFdy()));
-  const lod = (c: number) => max(log2(footprint.mul(fields.size / fields.cascades[c]!.tile)), 0);
+  const groundFootprint = max(length(q.dFdx()), length(q.dFdy()));
   const gust = oceanGustAt(p, u);
-  const ring = sampleFace(p, ringFace(p), fields, u, weather, gust, (c) => weights(c)[0], lod, true);
-  const polar = sampleFace(p, polarFace(p), fields, u, weather, gust, (c) => weights(c)[1], lod, true);
-  const corrected = (f: typeof ring) =>
-    f.gradU.mul(f.su.div(max(f.duu.add(1), 0.25))).add(f.gradV.mul(f.sv.div(max(f.dvv.add(1), 0.25))));
-  const jacobian = (f: typeof ring) => f.duu.add(1).mul(f.dvv.add(1)).sub(f.duv.mul(f.duv)).sub(1);
-  return {
-    gradient: corrected(ring).add(corrected(polar)),
-    jacobian: clamp(jacobian(ring).add(jacobian(polar)).add(1), -1, 2),
-    lostVariance: ring.lost.add(polar.lost),
-    foam: ring.foam.add(polar.foam),
-  };
+  const pack = (f: ReturnType<typeof sampleFace>) => ({
+    gradient: f.gradU
+      .mul(f.su.div(max(f.duu.add(1), 0.25)))
+      .add(f.gradV.mul(f.sv.div(max(f.dvv.add(1), 0.25)))),
+    jacobian: f.duu.add(1).mul(f.dvv.add(1)).sub(f.duv.mul(f.duv)).sub(1),
+  });
+  const sampled = blendDetail(
+    p,
+    mat3(vec3(0), vec3(0), vec3(0)),
+    () => {
+      const weights = blend(p, fields);
+      const lod = (c: number) => max(log2(footprint.mul(fields.size / fields.cascades[c]!.tile)), 0);
+      const ring = sampleFace(p, ringFace(p), fields, u, weather, gust, (c) => weights(c)[0], lod, true);
+      const polar = sampleFace(p, polarFace(p), fields, u, weather, gust, (c) => weights(c)[1], lod, true);
+      const a = pack(ring),
+        b = pack(polar);
+      return mat3(
+        a.gradient.add(b.gradient),
+        vec3(
+          clamp(a.jacobian.add(b.jacobian).add(1), -1, 2),
+          ring.lost.add(polar.lost),
+          ring.foam.add(polar.foam),
+        ),
+        vec3(0),
+      );
+    },
+    () => {
+      const f = samplePlane(
+        p,
+        fields,
+        u,
+        weather,
+        gust,
+        (c) => max(log2(groundFootprint.mul(fields.size / fields.cascades[c]!.tile)), 0),
+        true,
+      );
+      const surface = pack(f);
+      return mat3(surface.gradient, vec3(clamp(surface.jacobian.add(1), -1, 2), f.lost, f.foam), vec3(0));
+    },
+  );
+  const data = detailColumn(sampled, 1);
+  return { gradient: detailColumn(sampled, 0), jacobian: data.x, lostVariance: data.y, foam: data.z };
 }

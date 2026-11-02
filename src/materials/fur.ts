@@ -13,7 +13,7 @@ import { strandsDrawn } from '../nodes/strandCopies';
 import { planeUniform } from '../scene/shape';
 import { createFurUniforms, createSkinNodes, createStrandNodes } from '../nodes/fur';
 import { FurSim } from './furSim';
-import type { FrameContext, Readout, Substance } from './types';
+import type { ShapeId, FrameContext, Readout, Substance } from './types';
 
 /** How many strands cover the skin at a given density (strands per unit length). */
 export function strandCount(density: number): number {
@@ -89,6 +89,7 @@ export class Fur implements Substance {
     const skinMaterial = new MeshBasicNodeMaterial();
     skinMaterial.positionNode = skinNodes.position;
     skinMaterial.colorNode = skinNodes.color;
+    skinMaterial.maskNode = skinNodes.mask;
     const skin = new Mesh(new SphereGeometry(1, coarse ? 96 : 128, coarse ? 64 : 96), skinMaterial);
     skin.frustumCulled = false;
 
@@ -98,7 +99,8 @@ export class Fur implements Substance {
     this.sim.reset(anchor);
   }
 
-  hint(coarse: boolean): string {
+  hint(coarse: boolean, shape?: ShapeId): string {
+    if (shape === 'plane') return coarse ? 'Stroke the fur to comb it.' : 'Brush the fur with your cursor.';
     return coarse
       ? 'Stroke the fur to comb it. Spin it to fluff it up.'
       : 'Brush the fur with your cursor. Spin it to fluff it up.';

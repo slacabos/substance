@@ -36,6 +36,8 @@ export const PLANE = {
    * shrank them, and the background looked magnified.
    */
   detail: 0.35 * 6,
+  /** Distance-based unfolding schedule, shared by the CPU reference and shaders. */
+  unfold: { near: 3, far: 60, delay: 0.35, duration: 0.65 },
   /**
    * The fixed camera: its height over the ground, and where the horizon sits on screen, as a fraction of the way
    * from the middle to the top edge. A wide view lets it look down steeply and still leave a band of sky.
@@ -166,4 +168,18 @@ export function planeView(aspect: number): PlaneView {
   const eye = new Vector3(0, PLANE.groundY + PLANE.eyeHeight, PLANE.footZ);
   const target = new Vector3(0, PLANE.groundY, PLANE.footZ - PLANE.eyeHeight / Math.tan(pitch));
   return { eye, target, fov, focus: planeDirection(target.x, target.z) };
+}
+
+/** Fixed ground coordinates in the units used to author the orb's detail. */
+export function planeDetailPoint(p: Vector3, out = new Vector3()): Vector3 {
+  planePoint(p, out);
+  return out.set(out.x / PLANE.detail, 0, (out.z - 1) / PLANE.detail);
+}
+
+/** Near ground unfolds first; reversing progress retracts the far ground first. */
+export function planeWeight(p: Vector3, progress: number): number {
+  const q = planePoint(p);
+  const distance = Math.hypot(q.x, PLANE.footZ - q.z);
+  const delay = PLANE.unfold.delay * MathUtils.smoothstep(distance, PLANE.unfold.near, PLANE.unfold.far);
+  return MathUtils.smoothstep(progress, delay, delay + PLANE.unfold.duration);
 }
