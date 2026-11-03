@@ -61,3 +61,7 @@ src/
 - **Plane** keeps every simulation on the orb and only draws it flat, through a conformal chart (`core/chart.ts`, with its GPU twin in `nodes/chart.ts`): stereographic projection about the face toward the camera, then a log-polar fan round the camera's foot, so round ripples, dents and craters stay round on the ground. The orb is turned so its top, the coast's land, comes out on the right: seen steeply from above, almost isometric, the beach runs diagonally down the screen with the sea on its left, and the orb's back folds away off screen. Every renderer draws through `shapeShell` and `shapeNormal` (`nodes/shape.ts`), which carry heights off the surface up with the ground's scale; haze the colour of the sky behind it fades the far ground into the backdrop.
 
 To add a material, implement `Substance` (`src/materials/types.ts`), register it in `App`, and add a button to the picker in `index.html`.
+
+## License
+
+[MIT](LICENSE) © 2026 Stefano Giudici.
