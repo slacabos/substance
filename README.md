@@ -1,66 +1,148 @@
 # Substance
 
-A mobile-first Three.js toy: a touchable 3D object you can switch between materials and shapes, then poke with a finger or mouse to see how each one reacts. It renders with WebGPU, so it needs a browser that supports it (recent Chrome, Edge or Safari); others get a short message instead.
+**A little world you can poke, stir, dig and brush.**
 
-Try the [live demo hosted on GitHub Pages](https://slacabos.github.io/substance/).
+Seven materials. Three shapes. Turn a water orb into an ocean stretching to the horizon, comb a cube of fur, or dig a channel and watch the sea find its way in.
 
-## Materials
+**[Play the live demo →](https://slacabos.github.io/substance/)** · [Run locally](#run-locally) · [Under the surface](#under-the-surface)
 
-- **Water**: a clear, refractive blob. Tap for ripples, drag to stir, hold to drip.
-- **Ocean**: a deep-blue miniature sea of FFT-simulated waves, with sun glitter, light glowing through crests and whitecaps where waves fold over. Holding a press loads the spherical free surface; releasing it sends a larger wave the longer it was held. Dragging stirs a tangential current and can build rough weather, whitewater, drifting foam, droplets and mist (the Beaufort readout follows the live wind and the strongest patch). The round button by the readout sets the wind, Beaufort 0 to 6: each tap blows harder, wrapping back to calm, and the wind keeps veering and gusting around the level chosen.
-- **Coast**: press the sea for waves; tap the land to dig and drag to plough it. Dig down to the sea and water runs in. A beach ball: one beach round the orb, dunes at the top, a broad bay of sand across the middle and the sea below, shelving gently into wide, clear turquoise shallows over a sandbar. Shoaling crests break on the bar, run on as whitewater, break again on the beach and throw spray. The open Ocean stays free of land.
-- **Slime**: press to dent it (hold to push deeper), let go and it jiggles. Spinning it hard wobbles it too.
-- **Fur**: stroke to comb it (it stays combed, then slowly relaxes), press to part it, flick it to watch the hair swing and settle. Mouse hover brushes it.
-- **Sand**: tap to dig a crater, hold for a deeper footprint, drag to plough a trench, flick to throw grains that land back in the sand. Dug sand is darker and damp, and every slope slides back to sand's angle of repose; spinning it hard shakes the steepest loose.
-- **Fluff**: the original long, springy coat, now purple. Brush to comb it, press to part it, and spin it to watch the strands bounce and trail behind.
+Built for touch and mouse with Three.js and WebGPU. You'll need a WebGPU-capable browser; unsupported browsers show a message instead.
 
-Switch between **Orb**, **Cube** and **Plane** in the bottom panel; the shape morphs and every material works on all three. The plane lays the orb out flat as endless ground running to a hazy horizon, seen from a fixed view: nothing spins there, and every touch lands on the ground. The play/pause button starts or stops the slow idle spin; the three dots pick the setting: a white **Studio**, **Dusk** or **Night** (the default). The UI goes dark on the two dark settings. Drag the background to spin. On desktop, keys 1–5 switch material (5 selects Coast), 6 selects Sand, 7 selects Fluff, O / C / P switch shape, B cycles the setting and S starts or stops the idle spin.
+## Start here
 
-The URL follows the scene, so a reload (or a shared link) opens on the same view, e.g. `?material=fur&shape=cube&setting=studio&spin=off`. Each part is optional and defaults to water, orb, night and spin on.
+- **[Make some waves](https://slacabos.github.io/substance/?material=ocean&shape=plane&spin=off)** — hold, release, then drag to churn the sea. Tap the wind dial to build a storm.
+- **[Meet the shore](https://slacabos.github.io/substance/?material=coast&shape=plane&spin=off)** — dig into the beach and connect a channel to the water.
+- **[Comb a furry cube](https://slacabos.github.io/substance/?material=fur&shape=cube&setting=studio&spin=off)** — brush with your cursor or finger, then flick the coat.
 
-Ocean uses wind speed **0.90×** (stronger wind builds higher seas), peak wavelength **0.23 orb radii**, wave height **0.95×**, choppiness **2.00×** and foam **1.40×** by default. Its surface has roughly **13k vertices on touch devices** and **53k on desktop**. The five wave values can still be overridden in a link with `oceanWind`, `oceanWavelength`, `oceanAmplitude`, `oceanChop` and `oceanFoam`; mesh detail is chosen by device.
+## Pick your material
 
-## Development
+| Material  | What to try                                                                         |
+| --------- | ----------------------------------------------------------------------------------- |
+| **Water** | Tap for ripples, drag to stir, hold to drip.                                        |
+| **Ocean** | Hold for bigger waves. Drag to stir up currents, foam and spray.                    |
+| **Coast** | Make waves in the sea; dig and plough the beach. Open a channel and water flows in. |
+| **Slime** | Press a dent, let go and watch it jiggle. Give it a spin for extra wobble.          |
+| **Fur**   | Stroke to comb, press to part, flick to watch the hairs swing and settle.           |
+| **Sand**  | Dig craters, plough trenches and flick grains. Steep slopes slide back down.        |
+| **Fluff** | Brush a long purple coat, or spin the orb to make the strands bounce.               |
 
-Requires Node 20+.
+Every material works as an **Orb**, **Cube** or **Plane**. Switch shapes to watch the object unfurl into ground, with the camera following, then fold back again. The plane has a fixed view and a hazy horizon.
+
+## Make it your own
+
+Use the bottom panel to choose a material, shape and lighting: **Studio**, **Dusk** or **Night**. The play/pause button toggles idle spin; drag the background to spin an orb or cube yourself.
+
+Ocean's wind dial cycles through **Beaufort 0–6**. Wind veers and gusts around the level you choose.
+
+<details>
+<summary><strong>Keyboard shortcuts</strong></summary>
+
+| Key                   | Action                      |
+| --------------------- | --------------------------- |
+| `1` / `2` / `3` / `4` | Water / Ocean / Slime / Fur |
+| `5` / `6` / `7`       | Coast / Sand / Fluff        |
+| `O` / `C` / `P`       | Orb / Cube / Plane          |
+| `B`                   | Cycle lighting              |
+| `S`                   | Toggle idle spin            |
+
+</details>
+
+<details>
+<summary><strong>Share a scene & tune the ocean</strong></summary>
+
+The URL follows your scene. Copy it to share a view, or set it directly:
+
+```text
+?material=fur&shape=cube&setting=studio&spin=off
+```
+
+All parameters are optional. The defaults are Water, Orb, Night and spin on.
+
+For finer ocean control, add these query parameters:
+
+| Parameter         | Controls                     | Default |
+| ----------------- | ---------------------------- | ------- |
+| `oceanWind`       | Wind speed multiplier        | `0.90`  |
+| `oceanWavelength` | Peak wavelength in orb radii | `0.23`  |
+| `oceanAmplitude`  | Wave height multiplier       | `0.95`  |
+| `oceanChop`       | Choppiness multiplier        | `2.00`  |
+| `oceanFoam`       | Foam multiplier              | `1.40`  |
+
+</details>
+
+## Run locally
+
+Requires **Node.js 20+**.
 
 ```sh
 npm install
-npm run dev        # local dev server with hot reload
-npm run build      # typecheck + production build into dist/
-npm test           # unit tests (Vitest)
-npm run lint       # ESLint
-npm run format     # Prettier
+npm run dev
 ```
 
-Pushes to `main` deploy to GitHub Pages through `.github/workflows/pages.yml` once Pages is set to "GitHub Actions" in the repository settings.
+Open the local URL printed by Vite. To check or build the project:
 
-## How it's built
+| Command                | Purpose                              |
+| ---------------------- | ------------------------------------ |
+| `npm test`             | Run unit tests with Vitest           |
+| `npm run typecheck`    | Check TypeScript                     |
+| `npm run lint`         | Run ESLint                           |
+| `npm run format:check` | Check formatting                     |
+| `npm run format`       | Apply Prettier formatting            |
+| `npm run build`        | Typecheck and build into `dist/`     |
+| `npm run preview`      | Preview the production build locally |
 
-```
-src/
-  app.ts                 wires stage, materials, input and UI; runs the frame loop
-  core/                  pure logic with unit tests: springs, ray/shape hit-testing
-  scene/                 renderer + camera fit, backdrop settings, orb↔cube morph
-  interaction/           pointer handling (touch vs spin) and spin inertia
-  materials/             one class per material behind the `Substance` interface
-  nodes/                 shaders, written in TSL (three.js node language)
-  ui/                    material picker, shape and setting toggles, readout, keyboard
-```
+The [live site](https://slacabos.github.io/substance/) is hosted on GitHub Pages. Pushes to `main` deploy through [the Pages workflow](.github/workflows/pages.yml).
 
-- Rendering is three.js `WebGPURenderer`. Every custom effect is a TSL node graph plugged into a node material, so there's no hand-written GLSL or WGSL.
-- **Water, Ocean, Slime** use `MeshPhysicalNodeMaterial` surfaces displaced by TSL nodes (`nodes/deform.ts`). Water and Slime use interaction ring buffers; the ocean solves a wave field over the indexed sphere mesh and uploads its height, foam, turbulence and normal gradients each frame.
-- **Ocean** waves are a Tessendorf FFT ocean on the GPU (`materials/oceanFFT.ts`): a JONSWAP spectrum with Donelan–Banner spreading in two or three cascades, inverse-FFT'd by Stockham compute passes into tiling, mipmapped displacement and slope textures. They're mapped onto the orb through equal-angle cube faces (`nodes/oceanWaves.ts`); every cascade tiles a face a whole number of times, so the equator joins seamlessly and only the polar faces blend in. Normals come per pixel, the slope variance the mips filter away becomes roughness (so tiny waves spread the sun into a glitter path), and whitecaps grow where the surface folds and linger for a few seconds, covering about as much of the sea as Monahan measured for the wind (folding grows faster than the slopes, so it's taken back by the wind's gain). The wind is never steady (`core/oceanWind.ts`): it veers, backs, freshens and gusts, and every wave's amplitude relaxes toward the spectrum for the live wind in proportion to its period (growing with the wind by its slopes, as Cox and Munk measured, rather than steepening until every crest breaks), so ripples turn within seconds while swell from the old wind runs on for half a minute. Cat's paws, patches of gusting air, sweep downwind and roughen the short waves beneath them; the surface current's drift, the foam flecks and the Beaufort readout follow the live wind too. On top, the waves you make run on the GPU (`materials/oceanSim.ts`, with CPU references in `core/waveKernel.ts` and `core/shallowWater.ts`): iWave with a finite-depth operator fitted to the mesh, so a tap throws a tall, short ring whose ripples disperse behind it, blended by depth into the nonlinear shallow-water equations near coasts, where waves steepen, surge and break. Taps push a volume-neutral footprint (down in the middle, up in a rim), taps that keep a steady beat push harder (`core/oceanRhythm.ts`), and the sea's volume is kept exact each frame. A tangential current carries foam and turbulence: the FFT's whitecaps leave foam in the sim (so a tap's ring sweeps it aside), steep crests break and splashes leave foam. Foam is drawn in three layers, each with its own pattern, colour and coverage (`FOAM_LAYERS` in `nodes/ocean.ts`): whitecaps where the waves break; ambient foam the water churned up, drawn as white water full of round bubbles (baked Worley cells, `core/foamLace.ts`, projected along three axes), gathered into clumps: pinholes in thick foam, growing and merging into a thin, translucent web as it thins; its pattern follows the current in two crossfaded, restarting drifts, so swirls carry it without shearing it into moiré. Lagrangian foam flecks start and move entirely on the GPU: a pass over the vertices starts them where the water is aerated, claiming slots in a ring with an atomic counter, and another carries them on the current. Splashes are a particle fluid on the GPU too (`materials/oceanFluid.ts`, CPU reference in `core/oceanFluid.ts`): MLS-MPM in the compact mpm88 form, droplets that push against each other through a grid under radial gravity, with mist riding ballistic in the same pool. Breaking surf, aerated whitecaps, drags and, from Beaufort 4 up, wind-torn whitecap crests start them, each droplet taking a trace of water from the sea it leaves and giving it back with some foam where it lands; nothing is read back to the CPU. Dense spray is drawn with screen-space fluid rendering (`scene/fluidPass.ts`): sphere impostors into a half-resolution depth layer, smoothed by two 2D bilateral passes, then shaded as one water surface with Fresnel sky reflection, refraction of the scene behind, an aerated tint and the sun's glint. Isolated droplets and mist are short, clear streaks along their motion. An ocean-only sky reflection and water absorption shade the volume. This is a surface-flow model with particles, not a volumetric FLIP solver.
-- **Sand** is a height field on the GPU (`materials/sandField.ts`, CPU reference in `core/sand.ts`): every frame each pair of neighbours whose slope is steeper than the angle of repose (33° dry, 45° damp, 28° under water) settles some of the excess, gathered from both ends so no sand is made or lost. Digs (a hat footprint, down in the middle and up in a rim) and ploughs (a trench with banks either side) are exactly volume-neutral, and flicked grains (`materials/sandGrains.ts`) take their sand from the bed as they leave and give it back atomically where they land. Its look is shared with the coast's beaches (`nodes/sand.ts`): grains drawn at about a pixel and a half whatever the orb's size (a speckle of tan, dark, white and rusty grains, each tilted a little, a few glinting in the light), wind ripples with a steep lee, damp crumbs thrown out of a fresh dig, and streaks down steep dug walls where grains slid.
-- **Coast** runs an independent ocean simulation over the whole orb, land included. Surf is three trains of swell of slightly different periods (`SURF_TRAINS` in `core/oceanShores.ts`), each refracted until its crests run along the beach and bent a little by the seabed's unevenness, so waves come in all sizes and no two alike along the beach: they come straight in, slowing and crowding together over the seabed's real profile on the wide, shallow shelf (`SHELF`: a steady slope with a sandbar), with a slight slant so each wave breaks along the beach in turn, and grow as they shoal, never standing taller than half the water's depth. Inside the bar each is a bore, a steep front and a long back. They break hardest on the bar and at the beach, run on as whitewater between them (the shoreline foam layer: a net of cells round open water, warped by the water, with torn white fronts where the waves break, carried on up the beach by the water). The surf comes in sets, groups of bigger waves about a minute apart that ride in with the crests. Its strength follows the wind slowly, and its clock only ever advances by the swell's frequency. The surf is the sim's own water: a wave maker past the bar (`SURF_MAKER` in `materials/oceanSim.ts`) draws the water there toward the incoming swell, and the sim carries each wave on, shoaling and steepening into a bore that breaks where its front rises fastest (that's where its foam comes from), runs up the sand and drains back, the backwash baring the beach face; the water's edge, its foam and the dark wet sand it leaves all follow where the water actually went. Surf throws its spray in a burst as each wave plunges on the bar or the beach (while its breaking rises, not for as long as it lasts, and not from the whitewater between), and comes down on the elevated terrain. The water is coloured by its depth, as real water is: light through it is absorbed red first (Beer–Lambert over the sim's own column), so a film over the sand barely tints the dark wet sand, a centimetre or two is turquoise and the open sea deep blue, with no line where water meets sand. The wind's waves die down as the water shallows, so no trough bares the seabed. Close up, the sand gets the sand orb's grains and ripples (`nodes/sand.ts`), darker and glossy where it's wet, lit by its own key light (as emissive, so the sea isn't). Its land is the sand orb's engine (`materials/sandField.ts`), and land and sea share one simulation: every vertex has a sand bed the water stands on, wet wherever a column stands (wetting and drying in `core/shallowWater.ts`), so a hole dug below the sea stays dry behind its bank and floods once a channel reaches it, the sea giving up exactly what flows in. Water running over wet sand smooths it, and damp sand holds steeper slopes. Shore normals and distances share one attribute so the water stays within WebGPU's eight-buffer baseline. The shore mesh follows the orb-to-cube morph.
-- **Fur** is a plush double coat: a device-dependent density of short undercoat and longer guard hairs, all tunable in `core/fur.ts`. Seeded Poisson placement breaks up rows, and fibres mix warm tan, the original light gold, copper and chestnut. The coat has a natural lay, slight crimp and loose tufts, over a softly shaded coat base. Coat, colour, grooming and physics defaults live together in `core/fur.ts`.
-- A compute shader (`materials/furSim.ts`) simulates only 4,096 guides on desktop and 1,536 on touch devices. Each visible hair blends the displacements of its three nearest guides while keeping its own root. Short hairs sample the stiffer lower part of a guide; combing and pressing bend whole patches. Damped Verlet integration, bend resistance and body collision let the coat yield and settle, with history rescaled when the substep duration changes. Steps stay at or below 1/240 second, with catch-up capped at ten steps.
-- The fibres are drawn in one instanced draw as fine camera-facing ribbons. Subpixel hairs are widened with matching coverage and antialiased with alpha-to-coverage. Strand width compensates for the cube's stretched surface, and the readout counts visible fibres rather than simulated guides.
-- **Fluff** keeps the earlier independent-strand simulation and ribbon shading, with a purple palette and its own defaults in `core/fluff.ts`. Its longer hairs have softer springs and more bounce than Fur; both support combing, pressing, spinning and the shape morph. Its Verlet history is rescaled when the integration step changes, and it pauses while hidden.
-- **Cube** is a superellipsoid. Every shader maps a unit direction through `baseR()` in `nodes/shape.ts`, and a spring drives the morph uniform.
-- **Plane** keeps every simulation on the orb and only draws it flat, through a conformal chart (`core/chart.ts`, with its GPU twin in `nodes/chart.ts`): stereographic projection about the face toward the camera, then a log-polar fan round the camera's foot, so round ripples, dents and craters stay round on the ground. The orb is turned so its top, the coast's land, comes out on the right: seen steeply from above, almost isometric, the beach runs diagonally down the screen with the sea on its left, and the orb's back folds away off screen. Every renderer draws through `shapeShell` and `shapeNormal` (`nodes/shape.ts`), which carry heights off the surface up with the ground's scale; haze the colour of the sky behind it fades the far ground into the backdrop.
+## Under the surface
 
-To add a material, implement `Substance` (`src/materials/types.ts`), register it in `App`, and add a button to the picker in `index.html`.
+Rendering uses Three.js `WebGPURenderer`. Custom shaders are written as **TSL node graphs**, and compute shaders drive waves, sand and hair.
+
+| Code                                   | Responsibility                                            |
+| -------------------------------------- | --------------------------------------------------------- |
+| [`src/app.ts`](src/app.ts)             | Scene setup, material switching and the frame loop        |
+| [`src/core/`](src/core/)               | Simulation math, tuning and CPU reference implementations |
+| [`src/materials/`](src/materials/)     | Material implementations and GPU simulations              |
+| [`src/nodes/`](src/nodes/)             | TSL shaders for surfaces, detail and shape transforms     |
+| [`src/scene/`](src/scene/)             | Camera, renderer, lighting and fluid rendering            |
+| [`src/interaction/`](src/interaction/) | Touch, pointer input and spin inertia                     |
+| [`src/ui/`](src/ui/)                   | Pickers, controls and readouts                            |
+
+<details>
+<summary><strong>Waves, foam & splashes</strong></summary>
+
+Ocean combines two kinds of motion: ambient **FFT waves** and an interactive wave field that responds to touch. A JONSWAP spectrum feeds GPU FFT cascades; changing wind gradually reshapes the sea, with short ripples responding before long swell.
+
+The interaction simulation blends dispersive deep-water waves into nonlinear shallow-water flow near the coast. Currents carry foam and turbulence. GPU particles handle foam flecks, spray and droplets; dense splashes are reconstructed into a water surface with screen-space fluid rendering.
+
+Coast adds a seabed, sandbar and incoming swell. Waves shoal, break and run up the beach. Land and sea share wetting and drying state, so a dug hole floods when a channel reaches the water.
+
+Start with [`oceanFFT.ts`](src/materials/oceanFFT.ts), [`oceanSim.ts`](src/materials/oceanSim.ts), [`oceanFluid.ts`](src/materials/oceanFluid.ts) and [`fluidPass.ts`](src/scene/fluidPass.ts).
+
+</details>
+
+<details>
+<summary><strong>Sand, fur & fluff</strong></summary>
+
+Sand is a GPU height field. Neighbouring slopes settle toward the angle of repose, while digging and ploughing move sand into surrounding banks. Thrown grains take volume from the bed and return it when they land. Coast reuses the same sand engine and shading.
+
+Fur simulates a small set of guides, then blends their motion across a much denser coat of camera-facing ribbons. Damped Verlet integration, bending resistance and body collision give the hairs weight and spring. Fluff uses longer, softer strands with its own simulation and purple palette.
+
+Start with [`sandField.ts`](src/materials/sandField.ts), [`furSim.ts`](src/materials/furSim.ts) and [`fluff.ts`](src/materials/fluff.ts).
+
+</details>
+
+<details>
+<summary><strong>One object, three shapes</strong></summary>
+
+The cube is a superellipsoid driven by a spring. The plane maps the orb onto ground through a stereographic, log-polar chart, keeping the existing interaction simulations in orb space.
+
+During the unfurl, nearby ground opens first, distant ground follows and the camera moves with it. Ambient waves and sand detail use ground coordinates on the plane, so their size stays consistent across the terrain. Setting-specific haze hides the chart's far edge.
+
+Start with [`shape.ts`](src/nodes/shape.ts), [`chart.ts`](src/core/chart.ts) and [`transition.ts`](src/core/transition.ts).
+
+</details>
+
+Want to add a material? Implement [`Substance`](src/materials/types.ts), register it in [`App`](src/app.ts), and add a picker button in [`index.html`](index.html).
 
 ## License
 
