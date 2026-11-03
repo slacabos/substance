@@ -2,6 +2,8 @@
 
 A mobile-first Three.js toy: a touchable 3D object you can switch between materials and shapes, then poke with a finger or mouse to see how each one reacts. It renders with WebGPU, so it needs a browser that supports it (recent Chrome, Edge or Safari); others get a short message instead.
 
+Try the [live demo hosted on GitHub Pages](https://slacabos.github.io/substance/).
+
 ## Materials
 
 - **Water**: a clear, refractive blob. Tap for ripples, drag to stir, hold to drip.
